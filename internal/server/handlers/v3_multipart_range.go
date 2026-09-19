@@ -33,48 +33,80 @@ func (h *Handlers) handleV3MultipartRangeRequest(w http.ResponseWriter, r *http.
 		return
 	}
 
-	// Build the plaintext by fetching and decrypting only the needed blocks
+	// Build the plaintext by fetching and decrypting only the needed blocks.
+	// Contiguous runs of blocks are fetched with one ranged request per run:
+	// the backend's pipelined reader then parallelizes the round trips, which
+	// keeps a large range (hundreds of blocks) within the client's read
+	// timeout. One request per block does not — see armor-817d9d92.
 	var plaintextBuilder []byte
 
-	for _, blockReq := range rangeInfo.BlockRequests {
-		// Fetch this block's ciphertext
-		blockCiphertext, err := h.fetchV3MultipartBlock(ctx, bucket, prefixedKey, sidecar, blockReq.PartIdx, blockReq.BlockIdx)
+	for _, run := range rangeInfo.BlockRuns {
+		partNum := sidecar.Sidecar.Parts[run.PartIdx].N
+
+		runBody, err := h.fetchV3MultipartBlockRun(ctx, bucket, prefixedKey, sidecar, run)
 		if err != nil {
-			h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to fetch block (part %d, block %d): %v", blockReq.PartIdx, blockReq.BlockIdx, err), 500)
+			h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to fetch blocks (part %d, blocks %d-%d): %v", run.PartIdx, run.StartBlock, run.EndBlock, err), 500)
 			return
 		}
 
-		// Verify HMAC
-		partNum := sidecar.Sidecar.Parts[blockReq.PartIdx].N
-		if err := verifyV3BlockHMAC(blockCiphertext, blockReq.ExpectedHMAC, decryptor.HMACKey(), partNum, uint32(blockReq.BlockIdx)); err != nil {
-			h.writeError(w, r, "InternalError", fmt.Sprintf("HMAC verification failed (part %d, block %d): %v", blockReq.PartIdx, blockReq.BlockIdx, err), 500)
-			return
-		}
-
-		// Decrypt
-		decryptedBlock, err := crypto.DecryptBlockV3(decryptor.DEK(), armorMeta.IV, uint16(partNum), uint32(blockReq.BlockIdx), blockCiphertext, blockReq.ExpectedHMAC, blockSize)
-		if err != nil {
-			h.writeError(w, r, "InternalError", fmt.Sprintf("Decryption failed (part %d, block %d): %v", blockReq.PartIdx, blockReq.BlockIdx, err), 500)
-			return
-		}
-
-		// Decompress if needed
-		isCompressed, err := sidecar.IsBlockCompressed(blockReq.PartIdx, blockReq.BlockIdx)
-		if err != nil {
-			h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to check compression (part %d, block %d): %v", blockReq.PartIdx, blockReq.BlockIdx, err), 500)
-			return
-		}
-
-		if isCompressed {
-			decryptedBlock, err = crypto.DecompressBlock(decryptedBlock, true)
+		for blockIdx := run.StartBlock; blockIdx <= run.EndBlock; blockIdx++ {
+			// Slice this block's ciphertext off the run's stream
+			blockLen, err := sidecar.GetBlockLength(run.PartIdx, blockIdx)
 			if err != nil {
-				h.writeError(w, r, "InternalError", fmt.Sprintf("Decompression failed (part %d, block %d): %v", blockReq.PartIdx, blockReq.BlockIdx, err), 500)
+				runBody.Close()
+				h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to get block length (part %d, block %d): %v", run.PartIdx, blockIdx, err), 500)
 				return
 			}
+			blockCiphertext := make([]byte, blockLen)
+			if _, err := io.ReadFull(runBody, blockCiphertext); err != nil {
+				runBody.Close()
+				h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to read block ciphertext (part %d, block %d): %v", run.PartIdx, blockIdx, err), 500)
+				return
+			}
+
+			// Verify HMAC
+			expectedHMAC, err := sidecar.GetBlockHMAC(run.PartIdx, blockIdx)
+			if err != nil {
+				runBody.Close()
+				h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to get HMAC (part %d, block %d): %v", run.PartIdx, blockIdx, err), 500)
+				return
+			}
+			if err := verifyV3BlockHMAC(blockCiphertext, expectedHMAC, decryptor.HMACKey(), partNum, uint32(blockIdx)); err != nil {
+				runBody.Close()
+				h.writeError(w, r, "InternalError", fmt.Sprintf("HMAC verification failed (part %d, block %d): %v", run.PartIdx, blockIdx, err), 500)
+				return
+			}
+
+			// Decrypt
+			decryptedBlock, err := crypto.DecryptBlockV3(decryptor.DEK(), armorMeta.IV, uint16(partNum), uint32(blockIdx), blockCiphertext, expectedHMAC, blockSize)
+			if err != nil {
+				runBody.Close()
+				h.writeError(w, r, "InternalError", fmt.Sprintf("Decryption failed (part %d, block %d): %v", run.PartIdx, blockIdx, err), 500)
+				return
+			}
+
+			// Decompress if needed
+			isCompressed, err := sidecar.IsBlockCompressed(run.PartIdx, blockIdx)
+			if err != nil {
+				runBody.Close()
+				h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to check compression (part %d, block %d): %v", run.PartIdx, blockIdx, err), 500)
+				return
+			}
+
+			if isCompressed {
+				decryptedBlock, err = crypto.DecompressBlock(decryptedBlock, true)
+				if err != nil {
+					runBody.Close()
+					h.writeError(w, r, "InternalError", fmt.Sprintf("Decompression failed (part %d, block %d): %v", run.PartIdx, blockIdx, err), 500)
+					return
+				}
+			}
+
+			// Append to builder
+			plaintextBuilder = append(plaintextBuilder, decryptedBlock...)
 		}
 
-		// Append to builder
-		plaintextBuilder = append(plaintextBuilder, decryptedBlock...)
+		runBody.Close()
 	}
 
 	// Slice to the exact requested range
@@ -98,15 +130,18 @@ func (h *Handlers) handleV3MultipartRangeRequest(w http.ResponseWriter, r *http.
 
 // V3MultipartRangeInfo describes how to fetch a plaintext range from a v3 multipart object.
 type V3MultipartRangeInfo struct {
-	BlockRequests    []V3BlockRequest // Blocks to fetch (in order)
-	FirstBlockOffset int64            // Offset within the first block's plaintext where the range starts
+	BlockRuns        []V3BlockRun // Contiguous runs of blocks to fetch, in order
+	FirstBlockOffset int64        // Offset within the first block's plaintext where the range starts
 }
 
-// V3BlockRequest describes a single block to fetch for a range request.
-type V3BlockRequest struct {
-	PartIdx      int    // Part index (0-based)
-	BlockIdx     int    // Block index within part (0-based)
-	ExpectedHMAC []byte // HMAC for this block
+// V3BlockRun describes a contiguous run of blocks within one part. The
+// ciphertext of consecutive blocks is contiguous in the stored object, so a
+// run is fetched with a single ranged request instead of one request per
+// block.
+type V3BlockRun struct {
+	PartIdx    int // Part index (0-based)
+	StartBlock int // First block index within the part (0-based, inclusive)
+	EndBlock   int // Last block index within the part (0-based, inclusive)
 }
 
 // mapV3MultipartRange maps a plaintext byte range to the parts and blocks needed.
@@ -115,7 +150,7 @@ func (h *Handlers) mapV3MultipartRange(sidecar *backend.MultipartSidecarEntry, r
 		return nil, fmt.Errorf("invalid range: %d-%d (size: %d)", rangeStart, rangeEnd, sidecar.TotalPlaintextSize())
 	}
 
-	var blockRequests []V3BlockRequest
+	var blockRuns []V3BlockRun
 	firstBlockOffset := int64(-1)
 
 	// Process each part that intersects the range
@@ -154,82 +189,58 @@ func (h *Handlers) mapV3MultipartRange(sidecar *backend.MultipartSidecarEntry, r
 			endBlock = len(part.Blocks) - 1
 		}
 
-		// Add block requests for this part
-		for blockIdx := startBlock; blockIdx <= endBlock; blockIdx++ {
-			expectedHMAC, err := sidecar.GetBlockHMAC(partIdx, blockIdx)
-			if err != nil {
-				return nil, fmt.Errorf("failed to get HMAC for part %d block %d: %w", partIdx, blockIdx, err)
-			}
+		// Track offset within first block
+		if firstBlockOffset < 0 {
+			blockOffsetInPart := int64(startBlock) * int64(blockSize)
+			firstBlockOffset = overlapStart - partStart - blockOffsetInPart
+		}
 
-			blockRequests = append(blockRequests, V3BlockRequest{
-				PartIdx:      partIdx,
-				BlockIdx:     blockIdx,
-				ExpectedHMAC: expectedHMAC,
+		// Merge this part's blocks into a single contiguous run: blocks are
+		// generated in ascending order and parts are processed in order, so a
+		// run only ever extends forward or starts fresh.
+		if n := len(blockRuns); n > 0 && blockRuns[n-1].PartIdx == partIdx && blockRuns[n-1].EndBlock == startBlock-1 {
+			blockRuns[n-1].EndBlock = endBlock
+		} else {
+			blockRuns = append(blockRuns, V3BlockRun{
+				PartIdx:    partIdx,
+				StartBlock: startBlock,
+				EndBlock:   endBlock,
 			})
-
-			// Track offset within first block
-			if firstBlockOffset < 0 {
-				blockOffsetInPart := int64(blockIdx) * int64(blockSize)
-				firstBlockOffset = overlapStart - partStart - blockOffsetInPart
-			}
 		}
 	}
 
-	if len(blockRequests) == 0 {
+	if len(blockRuns) == 0 {
 		return nil, fmt.Errorf("no blocks found for range %d-%d", rangeStart, rangeEnd)
 	}
 
 	return &V3MultipartRangeInfo{
-		BlockRequests:    blockRequests,
+		BlockRuns:        blockRuns,
 		FirstBlockOffset: firstBlockOffset,
 	}, nil
 }
 
-// fetchV3MultipartBlock fetches a single block from a v3 multipart object.
-// The block is identified by its part index and block index within that part.
-func (h *Handlers) fetchV3MultipartBlock(ctx context.Context, bucket, prefixedKey string, sidecar *backend.MultipartSidecarEntry, partIdx, blockIdx int) ([]byte, error) {
-	if partIdx < 0 || partIdx >= sidecar.PartCount() {
-		return nil, fmt.Errorf("invalid part index: %d", partIdx)
+// fetchV3MultipartBlockRun fetches the ciphertext of a contiguous run of
+// blocks within one part with a single ranged request. The returned reader
+// yields the run's ciphertext in block order; the caller reads exactly
+// GetBlockLength(part, block) bytes per block and must Close the reader.
+func (h *Handlers) fetchV3MultipartBlockRun(ctx context.Context, bucket, prefixedKey string, sidecar *backend.MultipartSidecarEntry, run V3BlockRun) (io.ReadCloser, error) {
+	if run.PartIdx < 0 || run.PartIdx >= sidecar.PartCount() {
+		return nil, fmt.Errorf("invalid part index: %d", run.PartIdx)
 	}
 
-	part := sidecar.Sidecar.Parts[partIdx]
-	if blockIdx < 0 || blockIdx >= len(part.Blocks) {
-		return nil, fmt.Errorf("invalid block index: %d for part %d", blockIdx, partIdx)
+	// Sum the previous parts' ciphertext lengths in int64: the concatenated
+	// ciphertext of a large multipart object exceeds 4GiB, which silently
+	// wraps a uint32 accumulator and addresses the wrong bytes.
+	var partOffset int64
+	for i := 0; i < run.PartIdx; i++ {
+		partOffset += sidecar.Sidecar.Parts[i].CiphertextLen
 	}
 
-	// Calculate the byte offset of this block within the concatenated ciphertext
-	// First, sum all previous parts' ciphertext lengths
-	var partOffset uint32
-	for i := 0; i < partIdx; i++ {
-		prevPart := sidecar.Sidecar.Parts[i]
-		partOffset += uint32(prevPart.CiphertextLen)
-	}
-
-	// Then add the offset of this block within its part
-	blockOffset, err := sidecar.GetCiphertextOffset(partIdx, blockIdx)
+	// The run's ciphertext span within the part
+	spanStart, spanEnd, err := sidecar.GetCiphertextSpan(run.PartIdx, run.StartBlock, run.EndBlock)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get block offset: %w", err)
+		return nil, fmt.Errorf("failed to get block span: %w", err)
 	}
 
-	totalOffset := uint64(partOffset) + uint64(blockOffset)
-
-	// Get the block length
-	blockLen, err := sidecar.GetBlockLength(partIdx, blockIdx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get block length: %w", err)
-	}
-
-	// Fetch this block from B2
-	blockBody, err := h.backend.GetRange(ctx, bucket, prefixedKey, int64(totalOffset), int64(blockLen))
-	if err != nil {
-		return nil, fmt.Errorf("failed to fetch block (part %d, block %d): %w", partIdx, blockIdx, err)
-	}
-	defer blockBody.Close()
-
-	blockCiphertext, err := io.ReadAll(blockBody)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read block ciphertext: %w", err)
-	}
-
-	return blockCiphertext, nil
+	return h.backend.GetRange(ctx, bucket, prefixedKey, partOffset+spanStart, spanEnd-spanStart)
 }

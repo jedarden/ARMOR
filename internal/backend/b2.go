@@ -386,24 +386,45 @@ func (b *B2Backend) fetchRange(ctx context.Context, bucket, key string, offset, 
 
 	// Construct Cloudflare download URL.
 	cfURL := fmt.Sprintf("https://%s/file/%s/%s", b.cfDomain, bucket, url.PathEscape(key))
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, cfURL, nil)
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to create request: %w", err)
-	}
-	req.Header.Set("Range", rangeHeader)
 
 	httpClient := b.httpClient
 	if httpClient == nil {
 		httpClient = http.DefaultClient
 	}
-	resp, err := httpClient.Do(req)
-	if err != nil {
-		return nil, nil, fmt.Errorf("cloudflare request failed: %w", err)
+
+	// A ranged request with a nonzero offset must be answered with 206. B2
+	// occasionally answers 200 with the whole object instead — observed live
+	// on well-formed Range requests under concurrency (armor-817d9d92), and
+	// reproducibly on any malformed Range. Reading that body surfaces as a
+	// confusing length mismatch, so retry once and then fail with an explicit
+	// message. For offset 0 a 200 is indistinguishable from a fulfilled range
+	// and reads the correct bytes either way, so it is accepted.
+	var resp *http.Response
+	for attempt := 0; ; attempt++ {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, cfURL, nil)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to create request: %w", err)
+		}
+		req.Header.Set("Range", rangeHeader)
+
+		resp, err = httpClient.Do(req)
+		if err != nil {
+			return nil, nil, fmt.Errorf("cloudflare request failed: %w", err)
+		}
+		if resp.StatusCode != http.StatusOK || offset == 0 || attempt > 0 {
+			break
+		}
+		// The origin ignored the Range header. Close without draining (the
+		// body may be the entire object) and retry.
+		resp.Body.Close()
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusPartialContent {
 		return nil, nil, fmt.Errorf("cloudflare returned status %d", resp.StatusCode)
+	}
+	if resp.StatusCode == http.StatusOK && offset > 0 {
+		return nil, nil, fmt.Errorf("cloudflare ignored Range header (status 200 for bytes %d-%d)", offset, offset+length-1)
 	}
 
 	data, err := readRangeBody(resp.Body, length)

@@ -94,16 +94,17 @@ func (h *Handlers) fetchPartCiphertext(ctx context.Context, bucket, prefixedKey 
 
 	part := sidecar.Sidecar.Parts[partIdx]
 
-	// Calculate the byte offset of this part in the concatenated ciphertext
-	// For v3 multipart, B2 simply concatenates all parts
-	var partOffset uint32
+	// Calculate the byte offset of this part in the concatenated ciphertext.
+	// For v3 multipart, B2 simply concatenates all parts. The sum is int64:
+	// a large multipart object's ciphertext exceeds 4GiB, which silently
+	// wraps a uint32 accumulator and fetches the wrong bytes (armor-817d9d92).
+	var partOffset int64
 	for i := 0; i < partIdx; i++ {
-		prevPart := sidecar.Sidecar.Parts[i]
-		partOffset += uint32(prevPart.CiphertextLen)
+		partOffset += sidecar.Sidecar.Parts[i].CiphertextLen
 	}
 
 	// Fetch this part's range from B2
-	partCiphertext, err := h.backend.GetRange(ctx, bucket, prefixedKey, int64(partOffset), part.CiphertextLen)
+	partCiphertext, err := h.backend.GetRange(ctx, bucket, prefixedKey, partOffset, part.CiphertextLen)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch part %d range: %w", part.N, err)
 	}

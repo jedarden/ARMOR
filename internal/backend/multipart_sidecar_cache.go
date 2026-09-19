@@ -22,10 +22,12 @@ type MultipartSidecarCache struct {
 // MultipartSidecarEntry represents a cached v3 multipart sidecar.
 type MultipartSidecarEntry struct {
 	Sidecar         *HMACTableSidecarV3
-	ETag            string     // ETag of the object when cached
-	PartPrefixSums  []int64    // Cumulative plaintext lengths per part: [0, len(part1), len(part1)+len(part2), ...]
-	BlockPrefixSums [][]uint32 // Per-part cumulative ciphertext lengths per block
-	ExpiresAt       time.Time
+	ETag            string  // ETag of the object when cached
+	PartPrefixSums  []int64 // Cumulative plaintext lengths per part: [0, len(part1), len(part1)+len(part2), ...]
+	BlockPrefixSums [][]int64
+	// Per-part cumulative ciphertext lengths per block. int64, not uint32:
+	// B2 allows parts up to 5GiB, so per-part ciphertext can exceed 2^32.
+	ExpiresAt time.Time
 }
 
 // NewMultipartSidecarCache creates a new v3 multipart sidecar cache.
@@ -136,7 +138,7 @@ func (c *MultipartSidecarCache) evictOldest() {
 // Returns:
 // - partPrefixSums: [0, len(part1), len(part1)+len(part2), ...] for offset→part mapping
 // - blockPrefixSums: per-part array of cumulative ciphertext lengths per block
-func buildPrefixSums(sidecar *HMACTableSidecarV3) ([]int64, [][]uint32, error) {
+func buildPrefixSums(sidecar *HMACTableSidecarV3) ([]int64, [][]int64, error) {
 	if len(sidecar.Parts) == 0 {
 		return nil, nil, fmt.Errorf("no parts in sidecar")
 	}
@@ -149,13 +151,13 @@ func buildPrefixSums(sidecar *HMACTableSidecarV3) ([]int64, [][]uint32, error) {
 	}
 
 	// Build cumulative ciphertext lengths per block for each part
-	blockPrefixSums := make([][]uint32, len(sidecar.Parts))
+	blockPrefixSums := make([][]int64, len(sidecar.Parts))
 	for partIdx, part := range sidecar.Parts {
 		if len(part.Blocks) == 0 {
 			continue
 		}
 
-		prefixSums := make([]uint32, len(part.Blocks)+1)
+		prefixSums := make([]int64, len(part.Blocks)+1)
 		prefixSums[0] = 0
 
 		for blockIdx, blockData := range part.Blocks {
@@ -170,7 +172,7 @@ func buildPrefixSums(sidecar *HMACTableSidecarV3) ([]int64, [][]uint32, error) {
 				return nil, nil, fmt.Errorf("failed to parse block length at part %d block %d: %w", part.N, blockIdx, err)
 			}
 
-			prefixSums[blockIdx+1] = prefixSums[blockIdx] + clen
+			prefixSums[blockIdx+1] = prefixSums[blockIdx] + int64(clen)
 		}
 
 		blockPrefixSums[partIdx] = prefixSums
@@ -249,7 +251,7 @@ func (e *MultipartSidecarEntry) MapOffsetToBlock(partIdx int, offsetInPart int64
 
 // GetCiphertextOffset returns the ciphertext byte offset for a specific block within a part.
 // Uses the cached prefix sums to compute the offset efficiently.
-func (e *MultipartSidecarEntry) GetCiphertextOffset(partIdx int, blockIdx int) (uint32, error) {
+func (e *MultipartSidecarEntry) GetCiphertextOffset(partIdx int, blockIdx int) (int64, error) {
 	if partIdx < 0 || partIdx >= len(e.BlockPrefixSums) {
 		return 0, fmt.Errorf("invalid part index: %d", partIdx)
 	}
@@ -260,6 +262,25 @@ func (e *MultipartSidecarEntry) GetCiphertextOffset(partIdx int, blockIdx int) (
 	}
 
 	return prefixSums[blockIdx], nil
+}
+
+// GetCiphertextSpan returns the half-open ciphertext byte span [start, end)
+// within a part covered by the inclusive block range startBlock..endBlock.
+// Blocks within a part are contiguous in the stored ciphertext, so a span can
+// be fetched with a single ranged request. The offsets are relative to the
+// start of the part; add the part's offset in the concatenated object to
+// address the stored object.
+func (e *MultipartSidecarEntry) GetCiphertextSpan(partIdx, startBlock, endBlock int) (int64, int64, error) {
+	if partIdx < 0 || partIdx >= len(e.BlockPrefixSums) {
+		return 0, 0, fmt.Errorf("invalid part index: %d", partIdx)
+	}
+
+	prefixSums := e.BlockPrefixSums[partIdx]
+	if startBlock < 0 || endBlock < startBlock || endBlock >= len(prefixSums)-1 {
+		return 0, 0, fmt.Errorf("invalid block range: %d-%d for part %d (%d blocks)", startBlock, endBlock, partIdx, len(prefixSums)-1)
+	}
+
+	return prefixSums[startBlock], prefixSums[endBlock+1], nil
 }
 
 // GetBlockLength returns the ciphertext length for a specific block.
