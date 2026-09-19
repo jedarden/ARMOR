@@ -5,6 +5,7 @@ import (
 	"compress/gzip"
 	"context"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"strconv"
@@ -28,15 +29,19 @@ import (
 const prefixedSidecarTestPrefix = "commitgraph/"
 
 // armorEncryptV3Multipart builds a v3 ADR-015 multipart-completed object the way
-// the server writes it: raw concatenated block ciphertext (no envelope header),
-// a gzip-compressed JSON sidecar carrying [hmac, clen] per block, and metadata
-// carrying the IV, the wrapped DEK and the multipart dispatch marker.
+// the server writes it: raw concatenated per-part block ciphertext (no envelope
+// header), a gzip-compressed JSON sidecar carrying [hmac, clen] per block with
+// clen = base64 of a 4-byte big-endian length (CompleteMultipartUpload's wire
+// format), and metadata carrying the IV, the wrapped DEK and the multipart
+// dispatch marker.
 //
-// It writes exactly ONE part covering the whole object (part N=1), which is what
-// a single-part multipart upload produces. Both verifier restore paths decrypt
-// the merged sidecar table with part=1 (verifier.go), so a multi-part fixture
-// would fail HMAC verification for the later parts — a separate limitation, not
-// the sidecar-naming defect under test here.
+// The plaintext is split into parts of exactly blockSize plaintext bytes (the
+// uniform part size P the metadata declares) and each part's blocks are
+// encrypted under the part's own (part number, block index) pair — part
+// numbers 1-based, block indices restarting at zero within each part — because
+// that binding is exactly what the former flat whole-object table got wrong
+// (armor-86a90341): every block past the first part failed HMAC verification,
+// and the old single-part fixture could not notice.
 func armorEncryptV3Multipart(t *testing.T, mek []byte, blockSize int, plaintext []byte) (ciphertext, sidecarJSON []byte, meta map[string]string) {
 	t.Helper()
 
@@ -53,35 +58,53 @@ func armorEncryptV3Multipart(t *testing.T, mek []byte, blockSize int, plaintext 
 		t.Fatalf("WrapDEK: %v", err)
 	}
 
-	blockCount := crypto.ComputeBlockCount(int64(len(plaintext)), blockSize)
-	blocks := make([][]string, 0, blockCount)
-	for blockIdx := uint32(0); blockIdx < blockCount; blockIdx++ {
-		start := int64(blockIdx) * int64(blockSize)
-		end := start + int64(blockSize)
-		if end > int64(len(plaintext)) {
-			end = int64(len(plaintext))
+	var parts []backend.HMACPartV3
+	for partStart := int64(0); partStart < int64(len(plaintext)); partStart += int64(blockSize) {
+		partEnd := partStart + int64(blockSize)
+		if partEnd > int64(len(plaintext)) {
+			partEnd = int64(len(plaintext))
 		}
-		blockCT, blockHMAC, err := crypto.EncryptBlockV3(dek, iv, 1, blockIdx, plaintext[start:end], blockSize)
-		if err != nil {
-			t.Fatalf("EncryptBlockV3 block %d: %v", blockIdx, err)
+		partPlaintext := plaintext[partStart:partEnd]
+		partNum := len(parts) + 1
+
+		blockCount := crypto.ComputeBlockCount(int64(len(partPlaintext)), blockSize)
+		blocks := make([][]string, 0, blockCount)
+		var partCiphertext []byte
+		for blockIdx := uint32(0); blockIdx < blockCount; blockIdx++ {
+			start := int64(blockIdx) * int64(blockSize)
+			end := start + int64(blockSize)
+			if end > int64(len(partPlaintext)) {
+				end = int64(len(partPlaintext))
+			}
+			blockCT, blockHMAC, err := crypto.EncryptBlockV3(dek, iv, uint16(partNum), blockIdx, partPlaintext[start:end], blockSize)
+			if err != nil {
+				t.Fatalf("EncryptBlockV3 part %d block %d: %v", partNum, blockIdx, err)
+			}
+			partCiphertext = append(partCiphertext, blockCT...)
+			// Uncompressed block: clen is the ciphertext length as a 4-byte
+			// big-endian uint32, base64-encoded — byte-for-byte what
+			// CompleteMultipartUpload writes (no compression flag set).
+			lengthBytes := make([]byte, 4)
+			binary.BigEndian.PutUint32(lengthBytes, uint32(len(blockCT)))
+			blocks = append(blocks, []string{
+				base64.StdEncoding.EncodeToString(blockHMAC),
+				base64.StdEncoding.EncodeToString(lengthBytes),
+			})
 		}
-		ciphertext = append(ciphertext, blockCT...)
-		// Uncompressed blocks: clen is the plain ciphertext length (no flag bit).
-		blocks = append(blocks, []string{
-			base64.StdEncoding.EncodeToString(blockHMAC),
-			strconv.FormatUint(uint64(len(blockCT)), 10),
+
+		parts = append(parts, backend.HMACPartV3{
+			N:             partNum,
+			PlaintextLen:  int64(len(partPlaintext)),
+			CiphertextLen: int64(len(partCiphertext)),
+			Blocks:        blocks,
 		})
+		ciphertext = append(ciphertext, partCiphertext...)
 	}
 
 	sidecarV3 := &backend.HMACTableSidecarV3{
 		Version:   3,
 		BlockSize: blockSize,
-		Parts: []backend.HMACPartV3{{
-			N:             1,
-			PlaintextLen:  int64(len(plaintext)),
-			CiphertextLen: int64(len(ciphertext)),
-			Blocks:        blocks,
-		}},
+		Parts:     parts,
 	}
 	var buf bytes.Buffer
 	gz := gzip.NewWriter(&buf)
@@ -208,6 +231,98 @@ func TestVerifyObject_PrefixedBucket_MultipartSidecarNamedByClientKey(t *testing
 					result.ARMORSHA256, result.DirectSHA256)
 			}
 		})
+	}
+}
+
+// TestV3MultipartFixtureCoversMultipleParts guards the property the per-part
+// regression depends on: the v3 fixture must split its plaintext into more
+// than one part, so the restore paths are exercised across part boundaries
+// with per-part (part number, block index) pairs. A fixture that degrades to a
+// single part would pass every test here while the defect it exists to catch
+// regresses.
+func TestV3MultipartFixtureCoversMultipleParts(t *testing.T) {
+	const blockSize = 4096
+	mek := bytes.Repeat([]byte{0xA5}, 32)
+	plaintext := fixture(t, "valid.sqlite")
+
+	_, sidecarJSON, _ := armorEncryptV3Multipart(t, mek, blockSize, plaintext)
+
+	gz, err := gzip.NewReader(bytes.NewReader(sidecarJSON))
+	if err != nil {
+		t.Fatalf("gzip reader: %v", err)
+	}
+	var sidecar backend.HMACTableSidecarV3
+	if err := json.NewDecoder(gz).Decode(&sidecar); err != nil {
+		t.Fatalf("decode v3 sidecar: %v", err)
+	}
+	if len(sidecar.Parts) < 2 {
+		t.Fatalf("fixture produced %d parts for %d plaintext bytes at block size %d, want multiple parts",
+			len(sidecar.Parts), len(plaintext), blockSize)
+	}
+}
+
+// TestRestorePaths_V3Multipart_CorruptSidecarEntryIsAnError pins the
+// no-silent-skip property the former flat-table converter violated: a sidecar
+// block entry whose clen field does not parse must fail both restore paths
+// with an error. Silently skipping the entry would truncate the restored
+// plaintext — in the live case to zero bytes — and hand back a bogus success
+// shaped object with no signal (armor-86a90341).
+func TestRestorePaths_V3Multipart_CorruptSidecarEntryIsAnError(t *testing.T) {
+	const (
+		bucket    = "test-bucket"
+		storedKey = prefixedSidecarTestPrefix + "backups/db.snapshot"
+		clientKey = "backups/db.snapshot"
+		blockSize = 4096
+	)
+	mek := bytes.Repeat([]byte{0xA5}, 32)
+	plaintext := fixture(t, "valid.sqlite")
+
+	ciphertext, sidecarJSON, meta := armorEncryptV3Multipart(t, mek, blockSize, plaintext)
+
+	// Corrupt one clen field in the SECOND part: unparseable under the wire
+	// format (base64 of a 4-byte big-endian length), invisible to a decoder
+	// that skips what it cannot parse.
+	gz, err := gzip.NewReader(bytes.NewReader(sidecarJSON))
+	if err != nil {
+		t.Fatalf("gzip reader: %v", err)
+	}
+	var sidecar backend.HMACTableSidecarV3
+	if err := json.NewDecoder(gz).Decode(&sidecar); err != nil {
+		t.Fatalf("decode v3 sidecar: %v", err)
+	}
+	if len(sidecar.Parts) < 2 || len(sidecar.Parts[1].Blocks) < 1 {
+		t.Fatalf("fixture shape unexpected: %d parts", len(sidecar.Parts))
+	}
+	sidecar.Parts[1].Blocks[0][1] = "!!! not a clen !!!"
+	var corrupted bytes.Buffer
+	gzOut := gzip.NewWriter(&corrupted)
+	if err := json.NewEncoder(gzOut).Encode(&sidecar); err != nil {
+		t.Fatalf("marshal corrupted sidecar: %v", err)
+	}
+	if err := gzOut.Close(); err != nil {
+		t.Fatalf("gzip close: %v", err)
+	}
+
+	fb := &fakeBackend{
+		ciphertext: ciphertext,
+		plaintext:  plaintext,
+		info: &backend.ObjectInfo{
+			Key:      storedKey,
+			Size:     int64(len(plaintext)),
+			Metadata: meta,
+		},
+		sidecars: map[string][]byte{sidecarKeyFor(clientKey): corrupted.Bytes()},
+	}
+	v := New(fb, mek, nil, blockSize, nil, Config{
+		Buckets: []BucketConfig{{Bucket: bucket, Prefix: prefixedSidecarTestPrefix, Enabled: true}},
+	})
+	ctx := context.Background()
+
+	if _, err := v.restoreViaARMOR(ctx, bucket, storedKey); err == nil {
+		t.Fatal("restoreViaARMOR succeeded against a sidecar with an unparseable clen field, want an error")
+	}
+	if _, err := v.restoreViaDirectDecrypt(ctx, bucket, storedKey); err == nil {
+		t.Fatal("restoreViaDirectDecrypt succeeded against a sidecar with an unparseable clen field, want an error")
 	}
 }
 

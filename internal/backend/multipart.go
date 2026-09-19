@@ -16,8 +16,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-
-	"github.com/jedarden/armor/internal/crypto"
 )
 
 // EmptyPlaintextSHA256Hex is the SHA-256 of the empty byte sequence. Before
@@ -411,50 +409,6 @@ type HMACPartV3 struct {
 	PlaintextLen  int64      `json:"plaintext_len"`  // Length of plaintext part
 	CiphertextLen int64      `json:"ciphertext_len"` // Length of encrypted part
 	Blocks        [][]string `json:"blocks"`         // Array of [hmac_base64, clen] for each block
-}
-
-// ToBlockTable converts a v3 sidecar to a crypto.BlockTable for decryption.
-// This method processes all parts in the sidecar and creates a flat block table
-// with entries for all blocks across all parts.
-func (s *HMACTableSidecarV3) ToBlockTable(blockSize int) *crypto.BlockTable {
-	// Count total blocks across all parts
-	totalBlocks := 0
-	for _, part := range s.Parts {
-		totalBlocks += len(part.Blocks)
-	}
-
-	table := crypto.NewBlockTable(blockSize, totalBlocks)
-
-	// Process each part's blocks
-	for _, part := range s.Parts {
-		for _, blockData := range part.Blocks {
-			if len(blockData) != 2 {
-				continue // Skip malformed entries
-			}
-
-			// Decode HMAC from base64
-			hmacBytes, err := base64.StdEncoding.DecodeString(blockData[0])
-			if err != nil {
-				continue // Skip entries with invalid HMAC
-			}
-
-			// Parse ciphertext length (with compression flag)
-			var clen uint32
-			if _, err := fmt.Sscanf(blockData[1], "%d", &clen); err != nil {
-				continue // Skip entries with invalid length
-			}
-
-			// Create block table entry
-			entry := &crypto.BlockTableEntry{}
-			copy(entry.HMAC[:], hmacBytes)
-			entry.CiphertextLength = clen
-
-			// Add to table
-			table.AddEntry(entry)
-		}
-	}
-
-	return table
 }
 
 // SaveHMACTable saves the HMAC table as a sidecar object.

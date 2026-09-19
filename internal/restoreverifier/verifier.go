@@ -14,6 +14,7 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -602,6 +603,123 @@ func (v *Verifier) clientKey(bucket, storedKey string) string {
 	return strings.TrimPrefix(storedKey, v.getBucketPrefix(bucket))
 }
 
+// manifestObjectSuffix completes a stored object key to the name of the
+// ADR-016 manifest sidecar CompleteMultipartUpload writes beside every
+// multipart-completed object. Must match the server's manifestSuffix
+// (internal/server/handlers/manifest_repair.go); the manifest is stored under
+// the prefixed data key, so no client-key stripping applies here.
+const manifestObjectSuffix = ".armor-manifest"
+
+// isManifestObject reports whether a STORED key names an ADR-016 manifest
+// sidecar rather than a data object. Manifests are internal bookkeeping that
+// happens to live OUTSIDE the .armor/ namespace (the suffix is appended to the
+// data key), so the .armor/ filter in sampling cannot hide them — and their own
+// object metadata is a copy of the data object's ARMOR metadata, so a sampled
+// manifest heads as ARMOR-encrypted and both restore paths would attempt to
+// decrypt manifest JSON as if it were ciphertext: a guaranteed restore_error
+// (or a 10-GiB-range read) plus an escalation bead per sampled manifest.
+func isManifestObject(storedKey string) bool {
+	return strings.HasSuffix(storedKey, manifestObjectSuffix)
+}
+
+// loadManifestMetadata reads the ADR-016 manifest sidecar for a stored object
+// key and returns the ARMOR metadata map it carries. The manifest object is
+// written by an ordinary single-PUT, so — unlike the finished multipart large
+// file — its metadata persists: the manifest object's own x-amz-meta-* headers
+// carry the full map, and CompleteMultipartUpload embeds the same map in the
+// manifest JSON body. The headers are preferred (what the server's
+// readManifest parses); the body is the fallback. ok is false when there is no
+// manifest, or neither source yields ARMOR key material.
+func (v *Verifier) loadManifestMetadata(ctx context.Context, bucket, storedKey string) (map[string]string, bool) {
+	body, info, err := v.backend.GetDirect(ctx, bucket, storedKey+manifestObjectSuffix)
+	if err != nil {
+		return nil, false
+	}
+	defer body.Close()
+
+	if info != nil {
+		if _, ok := backend.ParseARMORMetadata(info.Metadata); ok {
+			return info.Metadata, true
+		}
+	}
+	data, err := io.ReadAll(body)
+	if err != nil {
+		return nil, false
+	}
+	var manifest backend.ManifestBody
+	if err := json.Unmarshal(data, &manifest); err != nil {
+		return nil, false
+	}
+	if _, ok := backend.ParseARMORMetadata(manifest.Metadata); ok {
+		return manifest.Metadata, true
+	}
+	return nil, false
+}
+
+// resolveARMORMetadata returns the ARMOR encryption parameters for a stored
+// object key, falling back to the ADR-016 manifest sidecar when the object's
+// own metadata carries none. B2 does not persist CreateMultipartUpload S3
+// metadata onto the finished large file (armor-86a90341), so every
+// multipart-completed object on B2 heads with an EMPTY metadata map and
+// ParseARMORMetadata fails on it even though the object is ARMOR-encrypted;
+// the manifest beside it is the only place the IV, wrapped DEK, block size,
+// plaintext size, part size and multipart dispatch marker still exist. This
+// mirrors the server's GetObject, which already prefers the manifest as the
+// source of truth for multipart objects (handlers.go, ADR-016).
+//
+// The returned map — not the head metadata — is what callers must consult for
+// the multipart dispatch marker and part size. ok is false when neither source
+// yields ARMOR metadata: the object is genuinely not ARMOR-encrypted, or is a
+// pre-ADR-016 multipart object whose parameters nothing on B2 describes any
+// more.
+func (v *Verifier) resolveARMORMetadata(ctx context.Context, bucket, storedKey string, headMeta map[string]string) (*backend.ARMORMetadata, map[string]string, bool) {
+	if am, ok := backend.ParseARMORMetadata(headMeta); ok {
+		return am, headMeta, true
+	}
+	meta, ok := v.loadManifestMetadata(ctx, bucket, storedKey)
+	if !ok {
+		return nil, headMeta, false
+	}
+	am, ok := backend.ParseARMORMetadata(meta)
+	if !ok {
+		return nil, headMeta, false
+	}
+	return am, meta, true
+}
+
+// withManifestMetadata fills a sample's metadata from the ADR-016 manifest
+// sidecar when the listing provided no ARMOR metadata. backend.List (S3
+// ListObjectsV2) never returns per-object user metadata, so obj.Metadata
+// arrives empty for every object on B2 and the declared plaintext digest, the
+// part size that digest is split at, artifact-assertion hints and the
+// envelope-version provenance are all invisible to verification — for a
+// multipart object on B2 the manifest is the only place they exist at all
+// (armor-86a90341). With the metadata filled, verifyObject enforces the
+// declared combined per-part digest exactly as it does for objects whose
+// metadata arrived inline. The lookup is one small GetDirect per object; on a
+// miss (single-PUT objects carry their parameters inside the envelope header)
+// it costs one 404 and changes nothing.
+func (v *Verifier) withManifestMetadata(ctx context.Context, obj ObjectSample) ObjectSample {
+	if obj.Metadata["x-amz-meta-armor-wrapped-dek"] != "" {
+		return obj // the listing already carried ARMOR metadata
+	}
+	meta, ok := v.loadManifestMetadata(ctx, obj.Bucket, obj.Key)
+	if !ok {
+		return obj
+	}
+	merged := make(map[string]string, len(obj.Metadata)+len(meta))
+	for k, val := range obj.Metadata {
+		merged[k] = val
+	}
+	for k, val := range meta {
+		if merged[k] == "" {
+			merged[k] = val
+		}
+	}
+	obj.Metadata = merged
+	return obj
+}
+
 // lookupMEKByFingerprint looks up a MEK by fingerprint in the active key and ring.
 // Returns the MEK and true if found, nil and false otherwise.
 func (v *Verifier) lookupMEKByFingerprint(keyID, fingerprint string) ([]byte, bool) {
@@ -792,6 +910,13 @@ func (v *Verifier) verifyBucket(ctx context.Context, bucket string, state *Bucke
 
 	// Verify each object
 	for _, obj := range objectsToVerify {
+		// Fill metadata from the ADR-016 manifest when the listing could not
+		// provide it (backend List carries no per-object metadata), so the
+		// declared digest, part size and provenance checks below compare real
+		// declared values — on B2 the manifest is the only place a multipart
+		// object's parameters exist (armor-86a90341).
+		obj = v.withManifestMetadata(ctx, obj)
+
 		result := v.verifyObject(ctx, obj, mode)
 
 		// Update state (mode-specific fields so the drill and dual paths keep
@@ -1136,10 +1261,15 @@ func (v *Verifier) restoreViaARMOR(ctx context.Context, bucket, key string) ([]b
 	if err != nil {
 		return nil, fmt.Errorf("ARMOR path: HeadObject failed: %w", err)
 	}
-	armorMeta, ok := backend.ParseARMORMetadata(info.Metadata)
+	// B2 drops CreateMultipartUpload metadata when it finishes the large file,
+	// so a multipart-completed object can head with an empty map; the ADR-016
+	// manifest beside it is the surviving source of the ARMOR parameters (see
+	// resolveARMORMetadata).
+	armorMeta, meta, ok := v.resolveARMORMetadata(ctx, bucket, key, info.Metadata)
 	if !ok {
 		return nil, errors.New("ARMOR path: object is not ARMOR-encrypted")
 	}
+	info.Metadata = meta
 
 	// Step 2: unwrap the DEK with the escrowed MEK (same crypto operation as direct path)
 	// Use ring-based key selection with fingerprint matching
@@ -1231,16 +1361,13 @@ func (v *Verifier) restoreViaARMOR(ctx context.Context, bucket, key string) ([]b
 			if err != nil {
 				return nil, fmt.Errorf("ARMOR path: failed to load v3 sidecar: %w", err)
 			}
-			// Convert v3 sidecar to block table
-			blockTable := sidecar.ToBlockTable(armorMeta.BlockSize)
-			// Decrypt v3 multipart (part numbers start at 1 for multipart)
-			decryptor, err := crypto.NewDecryptorWithVersion(dek, iv, armorMeta.BlockSize, crypto.Version3)
+			// Per-part decrypt: the block HMACs and counters are bound to the
+			// (part number, block index) pair, so the flat whole-object table a
+			// single DecryptV3 call consumes silently produced an empty
+			// plaintext for every multi-part sidecar (armor-86a90341).
+			plaintext, err := decryptV3Multipart(encryptedData, sidecar, dek, iv, armorMeta.BlockSize)
 			if err != nil {
-				return nil, fmt.Errorf("ARMOR path: failed to create v3 decryptor: %w", err)
-			}
-			plaintext, err := decryptor.DecryptV3(encryptedData, 1, blockTable)
-			if err != nil {
-				return nil, fmt.Errorf("ARMOR path: v3 decryption failed: %w", err)
+				return nil, fmt.Errorf("ARMOR path: %w", err)
 			}
 			return plaintext, nil
 		}
@@ -1313,6 +1440,92 @@ func (v *Verifier) restoreViaARMOR(ctx context.Context, bucket, key string) ([]b
 	return plaintext, nil
 }
 
+// decryptV3Multipart decrypts a whole v3 multipart object from its
+// concatenated part ciphertext, part by part and block by block — the same
+// per-part walk handleV3MultipartGet performs on the server. The per-block
+// HMACs and CTR counters are bound to the (part number, block index) pair, so
+// the flat whole-object table a single DecryptV3 call consumes cannot verify
+// anything past the first part; both former restore paths did exactly that and
+// silently produced an EMPTY plaintext for every multi-part sidecar
+// (armor-86a90341). Ciphertext for part N starts at the sum of the preceding
+// parts' CiphertextLen — B2 stores the parts concatenated.
+func decryptV3Multipart(ciphertext []byte, sidecar *backend.HMACTableSidecarV3, dek, iv []byte, blockSize int) ([]byte, error) {
+	entry, err := backend.NewMultipartSidecarEntry(sidecar)
+	if err != nil {
+		return nil, fmt.Errorf("v3 sidecar does not parse: %w", err)
+	}
+
+	var plaintext []byte
+	offset := int64(0)
+	for partIdx, part := range sidecar.Parts {
+		if offset+part.CiphertextLen > int64(len(ciphertext)) {
+			return nil, fmt.Errorf("part %d extends beyond the stored ciphertext (need %d bytes at offset %d, have %d)",
+				part.N, part.CiphertextLen, offset, len(ciphertext))
+		}
+		partPlaintext, err := decryptV3MultipartPart(ciphertext[offset:offset+part.CiphertextLen], entry, partIdx, dek, iv, blockSize)
+		if err != nil {
+			return nil, err
+		}
+		plaintext = append(plaintext, partPlaintext...)
+		offset += part.CiphertextLen
+	}
+	if offset != int64(len(ciphertext)) {
+		return nil, fmt.Errorf("stored ciphertext has %d bytes outside any declared part", int64(len(ciphertext))-offset)
+	}
+	return plaintext, nil
+}
+
+// decryptV3MultipartPart verifies and decrypts one part's ciphertext. Each
+// block's HMAC is bound to (part.N, block index within the part); the
+// compression flag lives in the high bit of the sidecar's clen field and
+// DecompressBlock's zstd mode follows the server's decryptV3Part.
+func decryptV3MultipartPart(partCiphertext []byte, entry *backend.MultipartSidecarEntry, partIdx int, dek, iv []byte, blockSize int) ([]byte, error) {
+	part := entry.Sidecar.Parts[partIdx]
+
+	var plaintext []byte
+	offset := int64(0)
+	for blockIdx := 0; blockIdx < len(part.Blocks); blockIdx++ {
+		blockLen, err := entry.GetBlockLength(partIdx, blockIdx)
+		if err != nil {
+			return nil, fmt.Errorf("part %d block %d: %w", part.N, blockIdx, err)
+		}
+		if offset+int64(blockLen) > int64(len(partCiphertext)) {
+			return nil, fmt.Errorf("part %d block %d extends beyond the part ciphertext", part.N, blockIdx)
+		}
+		blockCiphertext := partCiphertext[offset : offset+int64(blockLen)]
+		offset += int64(blockLen)
+
+		expectedHMAC, err := entry.GetBlockHMAC(partIdx, blockIdx)
+		if err != nil {
+			return nil, fmt.Errorf("part %d block %d: %w", part.N, blockIdx, err)
+		}
+
+		// DecryptBlockV3 verifies the (part, block)-bound HMAC before touching
+		// the counter, so a mismatch aborts here as a verification failure.
+		blockPlaintext, err := crypto.DecryptBlockV3(dek, iv, uint16(part.N), uint32(blockIdx), blockCiphertext, expectedHMAC, blockSize)
+		if err != nil {
+			return nil, fmt.Errorf("part %d block %d: %w", part.N, blockIdx, err)
+		}
+
+		compressed, err := entry.IsBlockCompressed(partIdx, blockIdx)
+		if err != nil {
+			return nil, fmt.Errorf("part %d block %d: %w", part.N, blockIdx, err)
+		}
+		if compressed {
+			blockPlaintext, err = crypto.DecompressBlock(blockPlaintext, true)
+			if err != nil {
+				return nil, fmt.Errorf("part %d block %d: decompression failed: %w", part.N, blockIdx, err)
+			}
+		}
+
+		plaintext = append(plaintext, blockPlaintext...)
+	}
+	if offset != int64(len(partCiphertext)) {
+		return nil, fmt.Errorf("part %d ciphertext has %d bytes outside any declared block", part.N, int64(len(partCiphertext))-offset)
+	}
+	return plaintext, nil
+}
+
 // restoreViaDirectDecrypt restores an object using direct B2 access + armor-decrypt
 // logic. This simulates the "ARMOR server is gone" disaster recovery scenario by
 // decrypting directly from B2 ciphertext using the escrowed MEK, touching only
@@ -1338,10 +1551,14 @@ func (v *Verifier) restoreViaDirectDecrypt(ctx context.Context, bucket, key stri
 	if err != nil {
 		return nil, fmt.Errorf("direct path: HeadObject failed: %w", err)
 	}
-	armorMeta, ok := backend.ParseARMORMetadata(info.Metadata)
+	// Same manifest fallback as the ARMOR path above: on B2 a
+	// multipart-completed object heads with an empty metadata map and the
+	// ADR-016 manifest beside it is the only source for the parameters.
+	armorMeta, meta, ok := v.resolveARMORMetadata(ctx, bucket, key, info.Metadata)
 	if !ok {
 		return nil, errors.New("direct path: object is not ARMOR-encrypted")
 	}
+	info.Metadata = meta
 
 	// Step 2: unwrap the DEK with the escrowed MEK.
 	// Use ring-based key selection with fingerprint matching
@@ -1372,13 +1589,15 @@ func (v *Verifier) restoreViaDirectDecrypt(ctx context.Context, bucket, key stri
 	if armorMeta.Version == 3 {
 		// v3 format: use block table for single-PUT or sidecar for multipart
 		if isMultipart {
-			// v3 multipart: load sidecar
+			// v3 multipart: load sidecar, then decrypt part by part — the
+			// per-block HMACs and counters are bound to the (part number,
+			// block index) pair, so the flat whole-object table a single
+			// DecryptV3 call consumes silently produced an empty plaintext for
+			// every multi-part sidecar (armor-86a90341).
 			sidecar, err := backend.NewMultipartStateManager(v.backend, bucket).LoadHMACTableV3(ctx, v.clientKey(bucket, key))
 			if err != nil {
 				return nil, fmt.Errorf("direct path: failed to load v3 sidecar: %w", err)
 			}
-			blockTable = sidecar.ToBlockTable(armorMeta.BlockSize)
-			iv = armorMeta.IV
 			encryptedData = make([]byte, armorMeta.PlaintextSize)
 			dataReader, err := v.backend.GetRange(ctx, bucket, key, 0, armorMeta.PlaintextSize)
 			if err != nil {
@@ -1388,6 +1607,12 @@ func (v *Verifier) restoreViaDirectDecrypt(ctx context.Context, bucket, key stri
 			if _, err := io.ReadFull(dataReader, encryptedData); err != nil {
 				return nil, fmt.Errorf("direct path: failed to read multipart ciphertext bytes: %w", err)
 			}
+
+			plaintext, err := decryptV3Multipart(encryptedData, sidecar, dek, armorMeta.IV, armorMeta.BlockSize)
+			if err != nil {
+				return nil, fmt.Errorf("direct path: %w", err)
+			}
+			return plaintext, nil
 		} else {
 			// v3 single-PUT: read envelope header and trailer block table
 			headerReader, err := v.backend.GetRange(ctx, bucket, key, 0, crypto.HeaderSize)
@@ -1433,18 +1658,13 @@ func (v *Verifier) restoreViaDirectDecrypt(ctx context.Context, bucket, key stri
 			iv = header.IV[:]
 		}
 
-		// Decrypt v3 data
+		// Decrypt v3 data (single-PUT: one part numbered 0)
 		decryptor, err := crypto.NewDecryptorWithVersion(dek, iv, armorMeta.BlockSize, crypto.Version3)
 		if err != nil {
 			return nil, fmt.Errorf("direct path: failed to create v3 decryptor: %w", err)
 		}
 
-		part := uint16(0)
-		if isMultipart {
-			part = 1 // Part numbers start at 1 for multipart
-		}
-
-		plaintext, err := decryptor.DecryptV3(encryptedData, part, blockTable)
+		plaintext, err := decryptor.DecryptV3(encryptedData, 0, blockTable)
 		if err != nil {
 			return nil, fmt.Errorf("direct path: v3 decryption failed: %w (possible data corruption or wrong MEK)", err)
 		}
@@ -1586,7 +1806,9 @@ func (v *Verifier) readMultipartCiphertext(ctx context.Context, bucket, key stri
 // getLatestObject returns the most recent backup object for a bucket.
 // It paginates through all objects (honoring IsTruncated / NextToken) until it
 // finds a non-.armor/ object, so .armor/* bookkeeping cannot swamp discovery.
-// This mirrors the pagination pattern used by getHistoricalSample.
+// ADR-016 manifest sidecars (<key>.armor-manifest, which live outside the
+// .armor/ namespace) are skipped for the same reason. This mirrors the
+// pagination pattern used by getHistoricalSample.
 func (v *Verifier) getLatestObject(ctx context.Context, bucket string) (ObjectSample, error) {
 	prefix := v.getBucketPrefix(bucket)
 
@@ -1620,7 +1842,7 @@ func (v *Verifier) getLatestObject(ctx context.Context, bucket string) (ObjectSa
 		// Find the most recent non-.armor/ object in this page
 		for i := range listResult.Objects {
 			obj := &listResult.Objects[i]
-			if strings.HasPrefix(obj.Key, ".armor/") {
+			if strings.HasPrefix(obj.Key, ".armor/") || isManifestObject(obj.Key) {
 				continue
 			}
 			if latest == nil || obj.LastModified.After(latest.LastModified) {
@@ -1663,7 +1885,9 @@ func (v *Verifier) getLatestObject(ctx context.Context, bucket string) (ObjectSa
 // Phase 6 / ADR-004 restorability guarantee meaningful: no subset of objects
 // can be permanently starved of verification the way a fixed tail slice would.
 //
-// Internal .armor/ bookkeeping objects are skipped (they are not user backups).
+// Internal .armor/ bookkeeping objects are skipped (they are not user backups),
+// as are ADR-016 manifest sidecars — internal bookkeeping that lives outside
+// the .armor/ namespace and so needs its own filter (isManifestObject).
 // The latest object is fetched separately by getLatestObject and verified
 // unconditionally; it is not excluded here and may also appear in the sample.
 func (v *Verifier) getHistoricalSample(ctx context.Context, bucket string, sampleSize int) ([]ObjectSample, error) {
@@ -1690,7 +1914,7 @@ func (v *Verifier) getHistoricalSample(ctx context.Context, bucket string, sampl
 		}
 
 		for _, obj := range listResult.Objects {
-			if strings.HasPrefix(obj.Key, ".armor/") {
+			if strings.HasPrefix(obj.Key, ".armor/") || isManifestObject(obj.Key) {
 				continue
 			}
 			seen++

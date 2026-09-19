@@ -181,6 +181,28 @@ func buildPrefixSums(sidecar *HMACTableSidecarV3) ([]int64, [][]int64, error) {
 	return partPrefixSums, blockPrefixSums, nil
 }
 
+// NewMultipartSidecarEntry builds a MultipartSidecarEntry for an already
+// loaded v3 sidecar, without going through the cache. It is the entry point
+// for readers that verify or decrypt whole objects themselves (the
+// restore-verifier, the offline verifier): it yields the same parsed view —
+// prefix sums plus the per-block accessors handleV3MultipartGet uses — that
+// cache.Set builds for the server's own GET path.
+//
+// A sidecar whose block entries do not parse is an error here, never a
+// partial table: skipping a malformed entry silently would decrypt to a
+// truncated plaintext with no signal (armor-86a90341).
+func NewMultipartSidecarEntry(sidecar *HMACTableSidecarV3) (*MultipartSidecarEntry, error) {
+	partPrefixSums, blockPrefixSums, err := buildPrefixSums(sidecar)
+	if err != nil {
+		return nil, err
+	}
+	return &MultipartSidecarEntry{
+		Sidecar:         sidecar,
+		PartPrefixSums:  partPrefixSums,
+		BlockPrefixSums: blockPrefixSums,
+	}, nil
+}
+
 // parseBlockLength parses the ciphertext length from a block entry.
 // The length may have the compression flag in the high bit.
 func parseBlockLength(clenStr string) (uint32, error) {

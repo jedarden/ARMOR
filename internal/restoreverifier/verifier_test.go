@@ -187,7 +187,23 @@ type fakeBackend struct {
 	info           *backend.ObjectInfo
 	sidecars       map[string][]byte // JSON HMAC sidecars keyed by ".armor/hmac/<hex>"; multipart only
 	armorGet       int               // calls to Get (the ARMOR read path); a drill run must leave this 0
-	sidecarLookups []string          // sidecar object names passed to GetDirect, in call order
+	sidecarLookups []string          // object names passed to GetDirect, in call order
+
+	// direct serves additional raw objects by key (ADR-016 manifest sidecars in
+	// the manifest-metadata tests): info stands in for the stored object's
+	// headers, body for its content. Consulted before sidecars.
+	direct map[string]fakeDirectObject
+
+	// listObjects, when non-nil, is exactly what List returns — so the
+	// verifyBucket sampling paths (latest + historical) run against a
+	// controlled listing.
+	listObjects []backend.ObjectInfo
+}
+
+// fakeDirectObject is one raw object served by fakeBackend.GetDirect.
+type fakeDirectObject struct {
+	info *backend.ObjectInfo
+	body []byte
 }
 
 func (f *fakeBackend) Get(_ context.Context, _, _ string) (io.ReadCloser, *backend.ObjectInfo, error) {
@@ -196,7 +212,15 @@ func (f *fakeBackend) Get(_ context.Context, _, _ string) (io.ReadCloser, *backe
 }
 
 func (f *fakeBackend) Head(_ context.Context, _, _ string) (*backend.ObjectInfo, error) {
-	return f.info, nil
+	// Copy the info (and its metadata map) per call: a real HeadObject parses
+	// a fresh map every time, and callers may replace info.Metadata wholesale.
+	info := *f.info
+	meta := make(map[string]string, len(f.info.Metadata))
+	for k, v := range f.info.Metadata {
+		meta[k] = v
+	}
+	info.Metadata = meta
+	return &info, nil
 }
 
 func (f *fakeBackend) GetRange(_ context.Context, _, _ string, offset, length int64) (io.ReadCloser, error) {
@@ -215,14 +239,32 @@ func (f *fakeBackend) GetRange(_ context.Context, _, _ string, offset, length in
 
 // GetDirect serves a JSON HMAC sidecar for a multipart object. The key is the
 // sidecar object name ".armor/hmac/<hex(sha256(key))>" that the verifier (via
-// MultipartStateManager.LoadHMACTable) fetches without an ARMOR server.
+// MultipartStateManager.LoadHMACTable) fetches without an ARMOR server. Raw
+// objects registered in direct (ADR-016 manifest sidecars) are served first.
 func (f *fakeBackend) GetDirect(_ context.Context, _, key string) (io.ReadCloser, *backend.ObjectInfo, error) {
 	f.sidecarLookups = append(f.sidecarLookups, key)
+	if d, ok := f.direct[key]; ok {
+		info := d.info
+		if info == nil {
+			info = &backend.ObjectInfo{Key: key}
+		}
+		return io.NopCloser(bytes.NewReader(d.body)), info, nil
+	}
 	data, ok := f.sidecars[key]
 	if !ok {
 		return nil, nil, fmt.Errorf("fakeBackend: no sidecar registered for %q", key)
 	}
 	return io.NopCloser(bytes.NewReader(data)), &backend.ObjectInfo{Key: key}, nil
+}
+
+// List returns the controlled listing when one is registered, mirroring the
+// real backends' behavior of returning NO per-object metadata (S3
+// ListObjectsV2 does not carry user metadata).
+func (f *fakeBackend) List(_ context.Context, _, _, _, _ string, _ int) (*backend.ListResult, error) {
+	if f.listObjects == nil {
+		return &backend.ListResult{}, nil
+	}
+	return &backend.ListResult{Objects: f.listObjects}, nil
 }
 
 // armorEncrypt builds a real ARMOR envelope (header + ciphertext + inline HMAC
