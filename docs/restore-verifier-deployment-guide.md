@@ -149,18 +149,21 @@ When rotating MEKs (Plan §8.13):
 
 ## Image
 
-CI publishes the restore-verifier image to two registries on every release:
+CI publishes the restore-verifier image as
+`ronaldraygun/armor-restore-verifier:<version>` on Docker Hub, **private**
+to the ardenone fleet (pulled with the `docker-hub-registry` pull secret).
+There is no public mirror: by operator decision (2026-09-19) the ARMOR
+server image is the only public artifact. Only released semver tags exist;
+there is no floating tag.
 
-- `ghcr.io/jedarden/armor-restore-verifier:<version>` — the **public**
-  mirror, anonymously pullable with no Docker Hub credential. Use this name
-  unless your cluster already pulls the private Docker Hub namespace (the
-  fleet does, via its pull-through cache).
-- `ronaldraygun/armor-restore-verifier:<version>` — Docker Hub, **private**
-  (fleet-internal pulls only). An outsider cannot pull this name.
+Running the verifier outside the fleet means building it from source at the
+release tag; it is a named stage of the repository's Dockerfile:
 
-Only released semver tags exist — there is no floating tag. Pin a tag from
-the [GHCR package page](https://github.com/jedarden/armor-restore-verifier/pkgs/container/armor-restore-verifier).
-The `armor-fleet` image is internal and has no public mirror.
+```bash
+git clone --branch v<version> https://github.com/jedarden/ARMOR.git && cd ARMOR
+docker build --target restore-verifier-runtime --build-arg VERSION=<version> \
+  -t armor-restore-verifier:<version> .
+```
 
 ## Deployment Example
 
@@ -183,7 +186,7 @@ spec:
     spec:
       containers:
       - name: restore-verifier
-        image: ghcr.io/jedarden/armor-restore-verifier:<released-version>
+        image: ronaldraygun/armor-restore-verifier:<released-version>   # private; needs the pull secret, or use the locally built tag
         envFrom:
         - configMapRef:
             name: restore-verifier-config

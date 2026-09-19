@@ -49,14 +49,11 @@ DEFAULT_REPO = "jedarden/ARMOR"
 DEFAULT_FORGEJO_API = "https://git.ardenone.com/api/v1"
 DEFAULT_GITHUB_API = "https://api.github.com"
 PUBLIC_IMAGE = "ghcr.io/jedarden/armor"
-# Public GHCR mirrors. The digest lookup is deliberately anonymous: a row that
-# reads "digest unavailable" means the package is missing or still private,
-# which is a finding an outside consumer would hit too. armor-fleet has no
-# mirror by design (internal console).
-PUBLIC_IMAGES = (
-    PUBLIC_IMAGE,
-    "ghcr.io/jedarden/armor-restore-verifier",
-)
+# The server image is the ONLY public mirror (operator decision 2026-09-19:
+# restore-verifier and armor-fleet stay private). The digest lookup is
+# deliberately anonymous: a row that reads "digest unavailable" means the
+# package is missing or not public, which is what an outside consumer hits.
+PUBLIC_IMAGES = (PUBLIC_IMAGE,)
 PRIVATE_IMAGES = (
     "ronaldraygun/armor",
     "ronaldraygun/armor-restore-verifier",
@@ -255,7 +252,7 @@ def release_body(
         f"go install github.com/jedarden/armor/cmd/armor@v{version}",
         "```",
         "",
-        "The `ghcr.io/jedarden/*` images are the public mirrors (server and restore-verifier; the fleet console has none by design). The `ronaldraygun/*` images are private to the ardenone fleet.",
+        "The GHCR image is the public server image and the only public artifact. The `ronaldraygun/*` images (server, restore-verifier, fleet console) are private to the ardenone fleet.",
     ]
     return "\n".join(lines) + "\n"
 

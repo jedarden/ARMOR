@@ -29,7 +29,6 @@ FJ = pr.DEFAULT_FORGEJO_API
 GH = pr.DEFAULT_GITHUB_API
 REPO = pr.DEFAULT_REPO
 GHCR_DIGEST = "sha256:" + "ab" * 32
-GHCR_RV_DIGEST = "sha256:" + "ef" * 32
 HUB_DIGEST = "sha256:" + "cd" * 32
 
 
@@ -86,7 +85,7 @@ class FakeApi:
 def api(monkeypatch):
     fake = FakeApi()
     monkeypatch.setattr(pr, "urlopen", fake)
-    # Public GHCR digests are always resolvable in these tests.
+    # The public GHCR digest is always resolvable in these tests.
     fake.route("GET", "https://ghcr.io/token", 200, {"token": "anon"})
     fake.route(
         "HEAD",
@@ -94,13 +93,6 @@ def api(monkeypatch):
         200,
         None,
         {"Docker-Content-Digest": GHCR_DIGEST},
-    )
-    fake.route(
-        "HEAD",
-        f"https://ghcr.io/v2/jedarden/armor-restore-verifier/manifests/{VERSION}",
-        200,
-        None,
-        {"Docker-Content-Digest": GHCR_RV_DIGEST},
     )
     return fake
 
@@ -169,9 +161,10 @@ def test_fresh_publish_creates_tag_and_both_releases(tokens, api, capsys):
     assert gh_rel["tag_name"] == TAG and gh_rel["target_commitish"] == COMMIT
     body = gh_rel["body"]
     assert f"`ghcr.io/jedarden/armor:{VERSION}` | public | `{GHCR_DIGEST}`" in body
-    assert f"`ghcr.io/jedarden/armor-restore-verifier:{VERSION}` | public | `{GHCR_RV_DIGEST}`" in body
     assert f"`ronaldraygun/armor:{VERSION}` | private | digest unavailable" in body
-    assert "armor-fleet" in body and "ghcr.io/jedarden/armor-fleet" not in body
+    # Only the server image is public: no other ghcr.io row may appear.
+    assert body.count("ghcr.io/") == 2  # the digest row and the docker pull line
+    assert "ghcr.io/jedarden/armor-restore-verifier" not in body
     assert "armor-build-abc12" in body
     assert f"go install github.com/jedarden/armor/cmd/armor@v{VERSION}" in body
     # Every Forgejo/GitHub call carried a credential; none was printed.

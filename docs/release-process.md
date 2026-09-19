@@ -21,7 +21,7 @@ fleet, and how a correctness fix is proven to have reached every deployment.
 |---|---|---|
 | `VERSION` (`0.1.<counter>`) and a `CHANGELOG.md` entry | this repo, one commit `release: armor <version>` | `scripts/cut-release.sh` |
 | `ronaldraygun/armor:<version>` (server), `ronaldraygun/armor-restore-verifier:<version>`, `ronaldraygun/armor-fleet:<version>` | Docker Hub (private namespace) | CI |
-| `ghcr.io/jedarden/armor:<version>` (server), `ghcr.io/jedarden/armor-restore-verifier:<version>` | GHCR (public, anonymous-pull mirrors; `armor-fleet` deliberately has none) | CI |
+| `ghcr.io/jedarden/armor:<version>` (server) | GHCR (public, anonymous-pull mirror; the only public image — `armor-restore-verifier` and `armor-fleet` stay private by operator decision, 2026-09-19) | CI |
 | Annotated git tag `v<version>` at the release commit | Forgejo, mirrored to GitHub | CI |
 | Release `ARMOR v<version>` with the CHANGELOG entry as body | Forgejo and GitHub | CI |
 
@@ -146,7 +146,6 @@ V=$(cat VERSION)
 docker manifest inspect ronaldraygun/armor:$V >/dev/null && echo "hub armor ok"
 docker manifest inspect ronaldraygun/armor-restore-verifier:$V >/dev/null && echo "hub restore-verifier ok"
 docker manifest inspect ghcr.io/jedarden/armor:$V >/dev/null && echo "ghcr ok"
-docker manifest inspect ghcr.io/jedarden/armor-restore-verifier:$V >/dev/null && echo "ghcr restore-verifier ok"
 git fetch --tags origin && git tag --list "v$V"                       # tag on Forgejo
 gh release view "v$V" -R jedarden/ARMOR --json isDraft,tagName        # GitHub release, isDraft must be false
 awk "/^## $V /{f=1;next} /^## /{f=0} f" CHANGELOG.md | head           # the notes CI used
