@@ -614,7 +614,7 @@ fixtures:
 
   # ==================== CONTRADICTORY FIXTURES ====================
   contradictory_version_says_v1_layout_v2:
-    description: "Contradictory: version says V1, layout uses V2 counter derivation"
+    description: "Contradictory: version says V1, layout uses V2 counter derivation (multi-block, 4 x 64 KiB)"
     source:
       version: "contradictory"
       defect: "version_layout_mismatch"
@@ -622,9 +622,9 @@ fixtures:
       counter_derivation: "v2_fixed"
     v3_expected: null
     expected_outcome: "failure"
-    expected_failure_reason: "Version header says V1 but counter derivation uses V2 stride - contradictory format"
+    expected_failure_reason: "V1 header over a V2-written layout: V1 derivation decrypts garbage from block 1 on and the envelope header plaintext SHA-256 check fails the object closed"
     failure_mode: "contradictory_format"
-    resolution_strategy: "Skip and log - cannot trust version field, manual inspection required"
+    resolution_strategy: "Fail closed: the migrator records the failure and leaves the object untouched; manual inspection required"
     security_implication: "Cannot determine if keystream reuse vulnerability applies"
 
   contradictory_multipart_flag_mismatch:

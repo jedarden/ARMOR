@@ -496,17 +496,6 @@ func TestGoldenFixturesDryRun(t *testing.T) {
 				}
 				t.Logf("GOLDEN %s dryrun=ok", f.Name)
 			case "failure":
-				if result.FailedObjects == 0 && result.ProcessedObjects > 0 {
-					// Mirror the matrix's vacuous-contradiction skip: V1 and V2
-					// counter derivation coincide on block 0, so a single-block
-					// object cannot express the contradiction and the dry run
-					// legitimately records no failure for it. Re-arms when
-					// armor-be6e5146 regenerates the fixture with multi-block
-					// plaintext.
-					if vacuous := goldenVersionContradictionVacuous(f); vacuous != "" {
-						t.Skipf("vacuous committed fixture (dry run processes it): %s", vacuous)
-					}
-				}
 				if result.FailedObjects != 1 || len(result.Failures) != 1 || result.Failures[0].Reason == "" {
 					t.Fatalf("corrupt fixture was not caught in dry run: FailedObjects=%d failures=%+v",
 						result.FailedObjects, result.Failures)
@@ -605,15 +594,6 @@ func TestGoldenFixturesMigrate(t *testing.T) {
 				verifyGoldenMigration(t, g, f, key, computed.Fixtures[strings.ReplaceAll(f.Name, "/", "_")])
 				t.Logf("GOLDEN %s migrate=ok version=3", f.Name)
 			case "failure":
-				if result.FailedObjects == 0 && result.ProcessedObjects > 0 {
-					// Same vacuous-contradiction skip as the dry run: a live
-					// migration of the single-block fixture legitimately
-					// processes (and rewrites) it, which the fail-closed
-					// assertions below would otherwise misread as a miss.
-					if vacuous := goldenVersionContradictionVacuous(f); vacuous != "" {
-						t.Skipf("vacuous committed fixture (migrator processes it): %s", vacuous)
-					}
-				}
 				if result.FailedObjects != 1 || len(result.Failures) != 1 || result.Failures[0].Reason == "" {
 					t.Fatalf("corrupt fixture was not caught: FailedObjects=%d failures=%+v",
 						result.FailedObjects, result.Failures)
