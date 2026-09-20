@@ -12,8 +12,9 @@ import (
 // payload may span at most V3MaxBlockSize = 1 MiB. The historical
 // per-16-byte loop wrapped uint16(aesBlockIdx) back to 0 beyond that and
 // silently reused keystream; validateV3BlockPayload fails closed instead.
-// Pinned by armor-7b40cb59 alongside the one-CTR-stream-per-ARMOR-block
-// decrypt paths.
+// The decrypt-side rejection is pinned by armor-7b40cb59 alongside the
+// one-CTR-stream-per-ARMOR-block decrypt paths, the encrypt-side rejection
+// by armor-2164a738 alongside the one-CTR-stream encrypt path.
 func TestV3DecryptRejectsOversizedBlockPayload(t *testing.T) {
 	dek := make([]byte, 32)
 	for i := range dek {
@@ -78,4 +79,43 @@ func TestV3DecryptRejectsOversizedBlockPayload(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, plaintext, framed)
 	})
+}
+
+// TestV3EncryptRejectsOversizedBlockPayload pins the same fail-closed bound
+// on the encrypt side: a plaintext one byte past the u16 aesBlock capacity
+// must be rejected before any keystream is generated — the historical
+// EncryptBlockV3 wrapped uint16(aesBlockIdx) back to 0 there and silently
+// reused keystream — and must release neither ciphertext nor HMAC.
+func TestV3EncryptRejectsOversizedBlockPayload(t *testing.T) {
+	dek := make([]byte, 32)
+	for i := range dek {
+		dek[i] = byte(i + 3)
+	}
+	iv := make([]byte, 16)
+	for i := range iv {
+		iv[i] = byte(i + 90)
+	}
+	hmacKey, err := DeriveHMACKey(dek)
+	require.NoError(t, err)
+
+	// Valid blockSize parameter, oversized plaintext: the payload guard —
+	// not the blockSize check — is what must reject it.
+	plaintext := make([]byte, V3MaxBlockSize+1)
+	for i := range plaintext {
+		plaintext[i] = byte(i * 7)
+	}
+
+	ciphertext, macValue, err := EncryptBlockV3(dek, iv, 1, 2, plaintext, V3MaxBlockSize)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "exceeds Version3 maximum")
+	assert.Nil(t, ciphertext, "no ciphertext may be released for an oversized block payload")
+	assert.Nil(t, macValue, "no HMAC may be released for an oversized block payload")
+
+	// Exactly V3MaxBlockSize stays encryptable and matches the historical
+	// keystream at the boundary where the u16 aesBlock field is exhausted.
+	boundary := plaintext[:V3MaxBlockSize]
+	ciphertext, macValue, err = EncryptBlockV3(dek, iv, 1, 2, boundary, V3MaxBlockSize)
+	require.NoError(t, err)
+	assert.Equal(t, referenceV3Keystream(t, dek, iv, 1, 2, boundary), ciphertext)
+	assert.Equal(t, referenceV3BlockHMAC(t, hmacKey, 1, 2, ciphertext), macValue)
 }

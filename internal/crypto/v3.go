@@ -69,15 +69,13 @@ func ComputeV3BlockHMAC(hmacKey []byte, part uint16, block uint32, ciphertext []
 
 	mac := hmac.New(sha256.New, hmacKey)
 
-	// Write part number (big-endian)
-	partBytes := make([]byte, 2)
-	binary.BigEndian.PutUint16(partBytes, part)
-	mac.Write(partBytes)
-
-	// Write block index (big-endian)
-	blockBytes := make([]byte, 4)
-	binary.BigEndian.PutUint32(blockBytes, block)
-	mac.Write(blockBytes)
+	// Write part number and block index (big-endian) from one stack buffer
+	// to keep the hot path allocation-free beyond the hash state.
+	var prefix [4]byte
+	binary.BigEndian.PutUint16(prefix[0:2], part)
+	mac.Write(prefix[0:2])
+	binary.BigEndian.PutUint32(prefix[0:4], block)
+	mac.Write(prefix[0:4])
 
 	// Write ciphertext
 	mac.Write(ciphertext)
@@ -170,44 +168,27 @@ func validateV3BlockPayload(payload []byte) error {
 // Returns:
 //   - ciphertext: Encrypted block (same length as plaintext)
 //   - hmac: 32-byte HMAC-SHA256 of the encrypted block
-//   - err: Error if encryption fails
+//   - err: Error if encryption fails. A plaintext longer than V3MaxBlockSize
+//     is rejected: the u16 aesBlock counter field would wrap or carry into
+//     the part/block namespace and reuse keystream.
 func EncryptBlockV3(dek, iv []byte, part uint16, block uint32, plaintext []byte, blockSize int) (ciphertext []byte, hmacValue []byte, err error) {
-	if len(dek) != 32 {
-		return nil, nil, fmt.Errorf("DEK must be 32 bytes")
+	if err := validateV3BlockParams(dek, iv, blockSize); err != nil {
+		return nil, nil, err
 	}
-	if len(iv) != 16 {
-		return nil, nil, fmt.Errorf("IV must be 16 bytes")
-	}
-	if blockSize > V3MaxBlockSize {
-		return nil, nil, fmt.Errorf("block size %d exceeds Version3 maximum %d", blockSize, V3MaxBlockSize)
+	if err := validateV3BlockPayload(plaintext); err != nil {
+		return nil, nil, err
 	}
 
 	// Create AES cipher
-	aesBlock, err := aes.NewCipher(dek)
+	blockCipher, err := aes.NewCipher(dek)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to create AES cipher: %w", err)
 	}
 
-	// Allocate ciphertext buffer
+	// Encrypt the whole ARMOR block with one CTR stream (see newV3CTR for
+	// why this is byte-identical to the historical per-16-byte construction).
 	ciphertext = make([]byte, len(plaintext))
-
-	// Encrypt each 16-byte AES block within the ARMOR block
-	numAESBlocks := (len(plaintext) + 15) / 16
-	for aesBlockIdx := 0; aesBlockIdx < numAESBlocks; aesBlockIdx++ {
-		// Create counter for this AES block
-		counter := MakeV3Counter(iv, part, block, uint16(aesBlockIdx))
-		stream := cipher.NewCTR(aesBlock, counter)
-
-		// Encrypt this AES block's worth of data
-		start := aesBlockIdx * 16
-		end := start + 16
-		if end > len(plaintext) {
-			end = len(plaintext)
-		}
-		if end > start {
-			stream.XORKeyStream(ciphertext[start:end], plaintext[start:end])
-		}
-	}
+	newV3CTR(blockCipher, iv, part, block).XORKeyStream(ciphertext, plaintext)
 
 	// Compute HMAC
 	hmacKey, err := DeriveHMACKey(dek)
