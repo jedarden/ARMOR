@@ -90,8 +90,12 @@ func (v *Verifier) TriggerHandler(metrics *metrics.Metrics) http.HandlerFunc {
 		// Trigger verification in background
 		go func() {
 			startTime := time.Now()
-			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
-			defer cancel()
+			// The run applies its own configured deadline internally
+			// (Config.RunTimeout; armor-851dca86). The former hardcoded
+			// 30-minute cap here fought that knob: a triggered run on a
+			// large bucket died at 30 minutes while the scheduled loop ran
+			// the same discovery to completion.
+			ctx := context.Background()
 
 			switch mode {
 			case ModeDRDrill:

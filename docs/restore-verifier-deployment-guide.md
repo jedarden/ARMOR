@@ -93,6 +93,7 @@ This means:
 - `VERIFIER_SAMPLE_SIZE`: Historical sample size (default: `10`)
 - `VERIFIER_HTTP_LISTEN`: HTTP listen address (default: `:9002`)
 - `VERIFIER_DR_DRILL_INTERVAL`: Direct-only DR drill interval (default: disabled)
+- `VERIFIER_RUN_TIMEOUT`: Per-run deadline for verification and DR-drill runs (default: `2h`). A run that exceeds it — a discovery walk wedged in a slow bucket region, or a stalled restore — fails visibly (failed-enumeration ledger and gauges, a log line naming the deadline) instead of silently blocking the loop. Discovery also logs progress roughly every 30s, so a long enumeration is observable rather than presenting as a hung verifier.
 
 ## HTTP Endpoints
 

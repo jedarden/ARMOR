@@ -19,6 +19,9 @@
 //	VERIFIER_SAMPLE_SIZE         Number of historical objects to sample (default: 10)
 //	VERIFIER_HTTP_LISTEN         HTTP listen address (default: :9002)
 //	VERIFIER_DR_DRILL_INTERVAL   Cadence of the periodic direct-only DR drill (default: disabled)
+//	VERIFIER_RUN_TIMEOUT         Per-run deadline for verification and DR-drill runs (default: 2h)
+//	VERIFIER_EXCLUDE_PREFIXES    Comma-separated stored-key prefixes to skip during sampling
+//	                             (tenant namespaces holding MEKs this instance does not have)
 //
 // HTTP:
 //
@@ -64,6 +67,22 @@ var (
 	checkInterval = flag.Duration("check-interval", parseDuration(os.Getenv("VERIFIER_CHECK_INTERVAL"), 6*time.Hour), "Verification check interval")
 	sampleSize    = flag.Int("sample-size", parseInt(os.Getenv("VERIFIER_SAMPLE_SIZE"), 10), "Number of historical objects to sample")
 	httpListen    = flag.String("http-listen", os.Getenv("VERIFIER_HTTP_LISTEN"), "HTTP listen address (default :9002)")
+
+	// Per-run deadline (armor-851dca86): bounds discovery + restores of ONE
+	// verification or drill run so a wedged walk or stalled restore fails
+	// visibly (failed-enumeration ledger and gauges, a log line naming the
+	// deadline) instead of silently blocking the loop. The default fits the
+	// slowest healthy fleet bucket (~1h enumeration after the single-walk
+	// rework); set it larger for buckets that legitimately need more, never
+	// smaller to force failures quiet.
+	runTimeout = flag.Duration("run-timeout", parseDuration(os.Getenv("VERIFIER_RUN_TIMEOUT"), restoreverifier.DefaultRunTimeout), "Per-run deadline for verification and DR-drill runs (0/negative = default)")
+
+	// Shared-bucket scoping: prefixes holding MEK domains this instance does
+	// not possess (other tenants' ARMOR_PREFIXes, ADR-001). Discovery skips
+	// candidates under them rather than false-alarming on DEK wraps no held
+	// key can unwrap — the rs-manager/tradegraph-platform 0/11 incident
+	// (armor-bf592560). Comma-separated, normalized like ARMOR_PREFIX.
+	excludePrefixes = flag.String("exclude-prefixes", os.Getenv("VERIFIER_EXCLUDE_PREFIXES"), "Comma-separated stored-key prefixes to exclude from sampling (tenant namespaces in a shared bucket)")
 
 	// DR-drill cadence (ModeDRDrill). Independent of -check-interval so a
 	// deployment can run the frequent dual-path verification yet exercise the
@@ -279,6 +298,11 @@ func main() {
 		EscrowMEKPath:   "", // MEK passed directly, not from file
 		Metrics:         metricsCollector,
 		DRDrillInterval: *drillInterval,
+		RunTimeout:      *runTimeout,
+	}
+	if *excludePrefixes != "" {
+		cfg.ExcludePrefixes = strings.Split(*excludePrefixes, ",")
+		log.Printf("Excluding tenant prefixes from sampling: %v", cfg.ExcludePrefixes)
 	}
 
 	// Escalation (ADR-004 §5). Disabled by default — the running fleet has no
@@ -386,6 +410,12 @@ Environment Variables:
   VERIFIER_SAMPLE_SIZE         Historical sample size (default: 10)
   VERIFIER_HTTP_LISTEN         HTTP listen address (default: :9002)
   VERIFIER_DR_DRILL_INTERVAL   Direct-only DR drill interval (default: disabled)
+  VERIFIER_RUN_TIMEOUT         Per-run deadline for verification and DR-drill runs;
+                               a run that exceeds it fails visibly instead of
+                               blocking the loop forever (default: 2h)
+  VERIFIER_EXCLUDE_PREFIXES    Comma-separated stored-key prefixes to skip during
+                               sampling — tenant namespaces in a shared bucket whose
+                               MEKs this instance does not hold (ADR-001)
 
 Flags:
 `)

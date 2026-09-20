@@ -79,6 +79,23 @@ const (
 	ModeDRDrill Mode = "dr-drill"
 )
 
+// DefaultRunTimeout bounds one verification or DR-drill run (discovery plus
+// restores) when Config.RunTimeout is unset. It is generous against the
+// slowest healthy fleet bucket — the largest needs roughly an hour to
+// enumerate after the armor-851dca86 single-walk rework, the rest finish in
+// minutes — yet finite, so a run wedged on a slow backend region or a stalled
+// restore surfaces as a failed enumeration within hours instead of freezing
+// the loop silently for days.
+const DefaultRunTimeout = 2 * time.Hour
+
+// enumerationProgressInterval bounds how often the shared discovery walk logs
+// its progress (pages listed, candidates seen, current position). One line per
+// interval keeps a multi-hour walk observable in logs — the ord-devimprint
+// incident showed a silent 16h enumeration is indistinguishable from a hung
+// verifier (armor-851dca86) — without flooding them on small buckets where the
+// whole walk finishes between ticks.
+const enumerationProgressInterval = 30 * time.Second
+
 // emptyStringSHA256Hex is the SHA-256 of the empty string. Before bf-1v2ehf,
 // CompleteMultipartUpload wrote it as a placeholder plaintext digest for every
 // multipart object (ADR-003 residual gap), so it could not be trusted as a real
@@ -442,6 +459,16 @@ type BucketState struct {
 	DrillTotalObjects     int64     `json:"drill_total_objects"`
 	DrillVerifiedObjects  int64     `json:"drill_verified_objects"`
 	DrillFailedObjects    int64     `json:"drill_failed_objects"`
+
+	// Last completed discovery walk, shared between run modes
+	// (armor-851dca86): a DR drill reuses the most recent enumeration
+	// instead of re-walking the bucket. Unexported, so the diagnostic JSON
+	// (snapshot/GetStatus) does not carry it. Guarded by mu like the rest
+	// of the state; verifyBucket holds the lock across a run, so the
+	// read/write here is serialized against other runs of this bucket.
+	enumerated  bool
+	enumLatest  ObjectSample
+	enumSample  []ObjectSample
 }
 
 // snapshot returns a copy of the state's data fields, excluding the mutex.
@@ -490,6 +517,13 @@ type Verifier struct {
 	buckets       map[string]*BucketState // bucket name -> state
 	bucketConfigs []BucketConfig          // configured buckets
 
+	// excludePrefixes are stored-key namespaces this instance cannot verify:
+	// other tenants' ARMOR_PREFIXes in a shared bucket, each holding its own
+	// MEK domain (ADR-001). Discovery skips candidates under them so a
+	// bucket-root verifier neither false-alarms on keys it cannot unwrap nor
+	// spends its sample on the most active foreign writer. Normalized in New.
+	excludePrefixes []string
+
 	// Control
 	stopCh chan struct{}
 	doneCh chan struct{}
@@ -497,6 +531,7 @@ type Verifier struct {
 	// Configuration
 	interval      time.Duration
 	drillInterval time.Duration // cadence of the periodic direct-only DR drill; 0 = disabled
+	runTimeout    time.Duration // per-run deadline for discovery + restores; see DefaultRunTimeout
 	sampleSize    int           // number of objects to verify per run per bucket
 	escrowMekPath string        // path to escrowed MEK for direct decryption
 	logOutput     io.Writer
@@ -527,10 +562,29 @@ type Config struct {
 	// its own (typically longer) schedule.
 	DRDrillInterval time.Duration
 
+	// RunTimeout bounds a single verification or drill run — discovery walk
+	// plus per-object restores — so a run wedged on a slow backend region or
+	// a stalled restore fails loudly (failed-enumeration ledger, zero-ratio
+	// gauges, a log line naming the deadline) instead of blocking the loop
+	// indefinitely with the process Looking healthy. The ord-devimprint
+	// incident ran ~16h enumerations unnoticed for days (armor-851dca86).
+	// Zero or negative selects DefaultRunTimeout; the deadline applies to
+	// scheduled runs and /trigger runs alike.
+	RunTimeout time.Duration
+
 	// Escalator files verification-failure and staleness beads (ADR-004 §5).
 	// Optional: nil disables escalation entirely, leaving verifier behavior
 	// unchanged. Construct with NewEscalator (escalation.go).
 	Escalator *Escalator
+
+	// ExcludePrefixes lists stored-key prefixes holding MEK domains this
+	// instance does not possess — other tenants' namespaces in a shared bucket
+	// (ADR-001). Candidates under them are skipped by both discovery paths
+	// (latest object and historical sample), so the instance verifies only
+	// the key domain it holds instead of false-alarming on foreign DEK wraps.
+	// Entries are normalized like ARMOR_PREFIX (see the ADR-004 shared-bucket
+	// addendum); empty means no exclusion.
+	ExcludePrefixes []string
 }
 
 // New creates a new restore verifier.
@@ -556,9 +610,26 @@ func New(
 		doneCh:        make(chan struct{}),
 		interval:      cfg.Interval,
 		drillInterval: cfg.DRDrillInterval,
+		runTimeout:    cfg.RunTimeout,
 		sampleSize:    cfg.SampleSize,
 		escrowMekPath: cfg.EscrowMEKPath,
 		logOutput:     log.Writer(),
+	}
+
+	// Unset (or negative) RunTimeout means the default, not "no deadline":
+	// an accidentally-empty config must not reintroduce the unbounded run.
+	if v.runTimeout <= 0 {
+		v.runTimeout = DefaultRunTimeout
+	}
+
+	// Normalize exclusions once, with the same rule as ARMOR_PREFIX
+	// (internal/config/config.go): no leading slash, exactly one trailing
+	// slash, empty entries dropped — so "tenant", "/tenant" and "tenant/"
+	// all exclude the same namespace.
+	for _, p := range cfg.ExcludePrefixes {
+		if p = normalizeExcludedPrefix(p); p != "" {
+			v.excludePrefixes = append(v.excludePrefixes, p)
+		}
 	}
 
 	// Initialize bucket states
@@ -586,6 +657,35 @@ func (v *Verifier) getBucketPrefix(bucket string) string {
 		}
 	}
 	return ""
+}
+
+// isExcludedKey reports whether a stored key sits under an excluded prefix —
+// a MEK domain this instance does not hold (another tenant's namespace in a
+// shared bucket). Both discovery paths consult it before treating a listed
+// object as a verification candidate.
+func (v *Verifier) isExcludedKey(key string) bool {
+	for _, p := range v.excludePrefixes {
+		if strings.HasPrefix(key, p) {
+			return true
+		}
+	}
+	return false
+}
+
+// normalizeExcludedPrefix mirrors internal/config's ARMOR_PREFIX rule:
+// strip leading slashes and all trailing slashes, then re-append exactly one
+// trailing slash. Empty stays empty.
+func normalizeExcludedPrefix(prefix string) string {
+	prefix = strings.TrimSpace(prefix)
+	if prefix == "" {
+		return ""
+	}
+	prefix = strings.TrimLeft(prefix, "/")
+	prefix = strings.TrimRight(prefix, "/")
+	if prefix == "" {
+		return ""
+	}
+	return prefix + "/"
 }
 
 // clientKey maps a backend-STORED object key to the client key the server's
@@ -760,8 +860,8 @@ func (v *Verifier) legacyFallback(wrappedDEK []byte) ([]byte, error) {
 
 // Start begins the verification loop.
 func (v *Verifier) Start(ctx context.Context) {
-	log.Printf("Starting restore verifier with %d buckets, interval %v",
-		len(v.buckets), v.interval)
+	log.Printf("Starting restore verifier with %d buckets, interval %v, run timeout %v",
+		len(v.buckets), v.interval, v.runTimeout)
 
 	ticker := time.NewTicker(v.interval)
 	defer ticker.Stop()
@@ -771,26 +871,42 @@ func (v *Verifier) Start(ctx context.Context) {
 	// below never fires on it; the drill is still available on demand via the
 	// trigger handler's ?mode=dr-drill query.
 	var drillC <-chan time.Time
+	var drillTicker *time.Ticker
 	if v.drillInterval > 0 {
 		log.Printf("DR-drill (direct-only) enabled: interval %v", v.drillInterval)
-		drillTicker := time.NewTicker(v.drillInterval)
+		drillTicker = time.NewTicker(v.drillInterval)
 		drillC = drillTicker.C
 		defer drillTicker.Stop()
 	}
 	defer close(v.doneCh)
 
-	// Run initial verification
+	// Run the initial verification only. The initial drill is deliberately
+	// NOT chained behind it (armor-851dca86): a synchronous startup drill
+	// back-to-back with the startup verification kept the loop busy for two
+	// full run lengths before it first idled, and on a bucket whose
+	// enumeration takes ~an hour it delayed the first scheduled tick by that
+	// much again. The drill ticker below schedules the first drill one full
+	// drillInterval after start; on-demand drills remain available via
+	// POST /trigger?mode=dr-drill.
 	v.runVerification(ctx)
-	if v.drillInterval > 0 {
-		v.runDRDrill(ctx)
-	}
 
 	for {
 		select {
 		case <-ticker.C:
 			v.runVerification(ctx)
+			// A tick that queued while the run was executing would fire the
+			// instant the loop returns to this select, chaining runs
+			// back-to-back with no gap — on ord-devimprint the loop never
+			// idled: each ~16h run ended and the next started in the same
+			// millisecond (armor-851dca86). Drop the queued tick; the next
+			// run starts on the NEXT tick, preserving "at most one run per
+			// interval, always separated by a full interval of idle".
+			drainTicker(ticker)
 		case <-drillC:
 			v.runDRDrill(ctx)
+			if drillTicker != nil {
+				drainTicker(drillTicker)
+			}
 		case <-v.stopCh:
 			log.Println("Restore verifier stopping")
 			return
@@ -798,6 +914,16 @@ func (v *Verifier) Start(ctx context.Context) {
 			log.Println("Restore verifier context cancelled")
 			return
 		}
+	}
+}
+
+// drainTicker discards one buffered tick so a run that outlasted the interval
+// does not chain immediately into the next when the loop returns to its select.
+// It is a no-op when no tick is pending.
+func drainTicker(t *time.Ticker) {
+	select {
+	case <-t.C:
+	default:
 	}
 }
 
@@ -809,6 +935,16 @@ func (v *Verifier) Stop() {
 
 // runVerification executes dual-path verification for all configured buckets.
 func (v *Verifier) runVerification(ctx context.Context) {
+	started := time.Now()
+	// Per-run deadline (armor-851dca86): discovery and restores share one
+	// bound, so a walk wedged in a slow bucket region or a stalled restore
+	// fails visibly — failed-enumeration ledger, zero-ratio gauges, a log
+	// line naming the deadline — instead of blocking the loop indefinitely
+	// with the pod Looking healthy. A triggered run's parent context can
+	// only tighten this, never loosen it.
+	ctx, cancel := context.WithTimeout(ctx, v.runTimeout)
+	defer cancel()
+
 	log.Println("Starting verification run")
 
 	var wg sync.WaitGroup
@@ -821,7 +957,13 @@ func (v *Verifier) runVerification(ctx context.Context) {
 	}
 	wg.Wait()
 
-	log.Println("Verification run completed")
+	switch {
+	case errors.Is(ctx.Err(), context.DeadlineExceeded):
+		log.Printf("Verification run hit its %v deadline after %s; failing buckets recorded a failed enumeration",
+			v.runTimeout, time.Since(started))
+	default:
+		log.Printf("Verification run completed in %s", time.Since(started))
+	}
 }
 
 // runDRDrill executes a direct-only restore drill for all configured buckets.
@@ -829,6 +971,12 @@ func (v *Verifier) runVerification(ctx context.Context) {
 // loop are shared with the dual path; only the restore path exercised, the
 // state fields written, and the metrics published differ.
 func (v *Verifier) runDRDrill(ctx context.Context) {
+	started := time.Now()
+	// Same per-run deadline as the dual path (armor-851dca86); see
+	// runVerification.
+	ctx, cancel := context.WithTimeout(ctx, v.runTimeout)
+	defer cancel()
+
 	log.Println("Starting DR-drill (direct-only) verification run")
 
 	var wg sync.WaitGroup
@@ -841,7 +989,13 @@ func (v *Verifier) runDRDrill(ctx context.Context) {
 	}
 	wg.Wait()
 
-	log.Println("DR-drill verification run completed")
+	switch {
+	case errors.Is(ctx.Err(), context.DeadlineExceeded):
+		log.Printf("DR-drill run hit its %v deadline after %s; failing buckets recorded a failed enumeration",
+			v.runTimeout, time.Since(started))
+	default:
+		log.Printf("DR-drill verification run completed in %s", time.Since(started))
+	}
 }
 
 // verifyBucket verifies a single bucket. mode selects which restore path(s) the
@@ -881,21 +1035,21 @@ func (v *Verifier) verifyBucket(ctx context.Context, bucket string, state *Bucke
 		log.Printf("Verifying bucket: %s", bucket)
 	}
 
-	// Get most recent backup object (should be the latest generation)
-	latest, err := v.getLatestObject(ctx, bucket)
+	// Discovery: ONE walk yields both the unconditional latest-generation
+	// check and the uniform historical sample (armor-851dca86 — the previous
+	// shape walked the bucket twice per run, 100-key pages for the latest
+	// object and 1000-key pages for the sample, doubling the enumeration cost
+	// of every run; on the 4.5M-key devimprint bucket that was the entire
+	// 16h run). A drill reuses the most recent dual enumeration rather than
+	// re-walking: discovery is backend-direct in both modes, so the drill
+	// still exercises exactly what it exists to exercise — direct-only
+	// restore — and the loop's busy time is not doubled by it.
+	latest, historical, err := v.sampleForRun(ctx, bucket, state, drill)
 	if err != nil {
-		log.Printf("Failed to get latest object for bucket %s: %v", bucket, err)
+		log.Printf("Failed to enumerate objects for bucket %s: %v", bucket, err)
 		// Record the attempt as a failure so a bucket that cannot be enumerated
 		// still advances its restore-age gauge and trips the verification-failure
 		// alert instead of silently emitting no series.
-		v.recordFailedEnumeration(bucket, state, drill)
-		return
-	}
-
-	// Get historical sample
-	historical, err := v.getHistoricalSample(ctx, bucket, state.HistoricalSampleSize)
-	if err != nil {
-		log.Printf("Failed to get historical sample for bucket %s: %v", bucket, err)
 		v.recordFailedEnumeration(bucket, state, drill)
 		return
 	}
@@ -909,7 +1063,19 @@ func (v *Verifier) verifyBucket(ctx context.Context, bucket string, state *Bucke
 	var runVerified, runFailed int64
 
 	// Verify each object
-	for _, obj := range objectsToVerify {
+	for i, obj := range objectsToVerify {
+		// Per-object progress line (armor-851dca86): a run interrupted
+		// mid-sample must show exactly where it stopped — with runs that can
+		// legitimately take ~an hour, "which object is being restored" is the
+		// first question an operator asks of a slow verifier.
+		if drill {
+			log.Printf("DR-drill %s: restoring object %d/%d: %s (%d bytes)",
+				bucket, i+1, total, obj.Key, obj.Size)
+		} else {
+			log.Printf("verifier %s: verifying object %d/%d: %s (%d bytes)",
+				bucket, i+1, total, obj.Key, obj.Size)
+		}
+
 		// Fill metadata from the ADR-016 manifest when the listing could not
 		// provide it (backend List carries no per-object metadata), so the
 		// declared digest, part size and provenance checks below compare real
@@ -1803,122 +1969,126 @@ func (v *Verifier) readMultipartCiphertext(ctx context.Context, bucket, key stri
 	return encryptedData, flat, armorMeta.IV, nil
 }
 
-// getLatestObject returns the most recent backup object for a bucket.
-// It paginates through all objects (honoring IsTruncated / NextToken) until it
-// finds a non-.armor/ object, so .armor/* bookkeeping cannot swamp discovery.
-// ADR-016 manifest sidecars (<key>.armor-manifest, which live outside the
-// .armor/ namespace) are skipped for the same reason. This mirrors the
-// pagination pattern used by getHistoricalSample.
-func (v *Verifier) getLatestObject(ctx context.Context, bucket string) (ObjectSample, error) {
-	prefix := v.getBucketPrefix(bucket)
-
-	var continuationToken string
-	var latest *backend.ObjectInfo
-
-	for {
-		if err := ctx.Err(); err != nil {
-			return ObjectSample{}, fmt.Errorf("get latest object cancelled: %w", err)
-		}
-
-		listResult, err := v.backend.List(ctx, bucket, prefix, "", continuationToken, 100)
-		if err != nil {
-			return ObjectSample{}, fmt.Errorf("list failed: %w", err)
-		}
-
-		// No empty-page break here. A backend List filters .armor/* internal
-		// keys BEFORE returning a page (B2Backend.List does, at bucket-root or
-		// under the ADR-001 prefix), so a page can legitimately arrive empty
-		// while IsTruncated is still true — e.g. a bucket whose lexicographic
-		// head is thousands of .armor/canary-multipart/* keys, which is what
-		// iad-kalshi's kalshi-tape looks like since the multipart canary
-		// started accumulating (36k internal objects sort ahead of every data
-		// key). Breaking on len(Objects)==0 ended discovery at the first
-		// all-internal page and reported "no non-internal objects found" for a
-		// bucket holding tens of thousands of restorable backups
-		// (armor-8290de05). Termination is driven solely by IsTruncated and
-		// the NextToken-advance guard below; a genuinely empty bucket exits
-		// through !IsTruncated on page one with the same latest==nil result.
-
-		// Find the most recent non-.armor/ object in this page
-		for i := range listResult.Objects {
-			obj := &listResult.Objects[i]
-			if strings.HasPrefix(obj.Key, ".armor/") || isManifestObject(obj.Key) {
-				continue
-			}
-			if latest == nil || obj.LastModified.After(latest.LastModified) {
-				latest = obj
-			}
-		}
-
-		if !listResult.IsTruncated {
-			break
-		}
-		// Guard against a backend that reports truncated without advancing the
-		// continuation token — stop rather than loop forever.
-		if listResult.NextToken == continuationToken {
-			break
-		}
-		continuationToken = listResult.NextToken
+// sampleForRun returns the object sample a run of either mode verifies: the
+// most recent candidate unconditionally, plus the uniform historical sample.
+// A dual run always enumerates fresh and publishes the walk's result to the
+// bucket state; a drill reuses the most recent cached enumeration when one
+// exists — discovery is backend-direct in both modes, so the drill proves the
+// same thing it always did (direct-only restore) without re-walking a bucket
+// whose enumeration can take ~an hour — and falls back to enumerating itself
+// when no prior walk has completed (e.g. a drill triggered before the first
+// dual run finishes). Whichever mode enumerates refreshes the cache, so the
+// frame a drill borrows is never older than the last completed discovery.
+func (v *Verifier) sampleForRun(ctx context.Context, bucket string, state *BucketState, drill bool) (ObjectSample, []ObjectSample, error) {
+	if drill && state.enumerated {
+		return state.enumLatest, state.enumSample, nil
 	}
-
-	if latest == nil {
-		return ObjectSample{}, errors.New("no non-internal objects found")
+	latest, ok, sample, err := v.enumerateCandidates(ctx, bucket, state.HistoricalSampleSize)
+	if err != nil {
+		return ObjectSample{}, nil, err
 	}
-
-	return ObjectSample{
-		Key:          latest.Key,
-		Bucket:       bucket,
-		LastModified: latest.LastModified,
-		Size:         latest.Size,
-		ArtifactType: v.inferArtifactType(latest.Key, latest.Metadata),
-		Metadata:     latest.Metadata,
-	}, nil
+	if !ok {
+		return ObjectSample{}, nil, errors.New("no non-internal objects found")
+	}
+	state.enumLatest, state.enumSample, state.enumerated = latest, sample, true
+	return latest, sample, nil
 }
 
-// getHistoricalSample returns a cryptographically uniform random sample of
-// historical backup objects drawn from the ENTIRE bucket, not just the first
-// List page. It paginates through every object (honoring IsTruncated /
-// NextToken) and feeds the stream into a reservoir sampler (Algorithm R), so
-// memory is bounded by sampleSize regardless of how large the bucket grows and
-// every object — old, new, or oddly-prefixed — has an equal sampleSize/N chance
-// of being restore-verified each cycle. That uniformity is what makes the
-// Phase 6 / ADR-004 restorability guarantee meaningful: no subset of objects
-// can be permanently starved of verification the way a fixed tail slice would.
+// enumerateCandidates performs ONE full walk of the bucket (1000 keys per
+// page) computing everything discovery needs for a run: the most recent
+// candidate object (verified unconditionally as the latest-generation check)
+// and a cryptographically uniform random sample of all candidates. The sample
+// is drawn by reservoir sampling (Algorithm R): every candidate is fed into
+// the reservoir stream, so memory is bounded by sampleSize regardless of how
+// large the bucket grows and every object — old, new, or oddly-prefixed — has
+// an equal sampleSize/N chance of being restore-verified each cycle. That
+// uniformity is what makes the Phase 6 / ADR-004 restorability guarantee
+// meaningful: no subset of objects can be permanently starved of verification
+// the way a fixed tail slice would.
 //
-// Internal .armor/ bookkeeping objects are skipped (they are not user backups),
-// as are ADR-016 manifest sidecars — internal bookkeeping that lives outside
-// the .armor/ namespace and so needs its own filter (isManifestObject).
-// The latest object is fetched separately by getLatestObject and verified
-// unconditionally; it is not excluded here and may also appear in the sample.
-func (v *Verifier) getHistoricalSample(ctx context.Context, bucket string, sampleSize int) ([]ObjectSample, error) {
-	if sampleSize <= 0 {
-		return nil, nil
-	}
-
+// The single shared walk replaced two separate full walks — getLatestObject's
+// 100-key pages plus getHistoricalSample's 1000-key pages — which doubled the
+// enumeration cost of every run; on the 4.5M-key devimprint bucket the two
+// walks were the entire 16h run (armor-851dca86). latestOK reports whether any
+// candidate existed at all.
+//
+// Filtering and pagination contract (unchanged from the two walks it
+// replaced):
+//
+//   - Internal .armor/ bookkeeping objects are skipped (they are not user
+//     backups), as are ADR-016 manifest sidecars — internal bookkeeping that
+//     lives outside the .armor/ namespace and so needs its own filter
+//     (isManifestObject) — and objects under an excluded prefix
+//     (Config.ExcludePrefixes), which belong to a MEK domain this instance
+//     cannot verify (shared-bucket tenants, ADR-004 addendum).
+//   - No empty-page break: a backend List filters .armor/* internal keys
+//     BEFORE returning a page (B2Backend.List does, at bucket-root or under
+//     the ADR-001 prefix), so a page can legitimately arrive empty while
+//     IsTruncated is still true — e.g. a bucket whose lexicographic head is
+//     thousands of .armor/canary-multipart/* keys, which is what iad-kalshi's
+//     kalshi-tape looks like since the multipart canary started accumulating
+//     (36k internal objects sort ahead of every data key). Breaking on
+//     len(Objects)==0 ended discovery at the first all-internal page and
+//     reported "no non-internal objects found" for a bucket holding tens of
+//     thousands of restorable backups (armor-8290de05). Termination is driven
+//     solely by IsTruncated and the NextToken-advance guard below; a genuinely
+//     empty bucket exits through !IsTruncated on page one with the same
+//     latest==nil result.
+//   - A backend that reports truncated without advancing the continuation
+//     token stops rather than looping forever.
+//
+// Progress is logged at most once per enumerationProgressInterval — pages
+// listed, candidates seen, current position — so a walk slow enough to matter
+// (B2's ~10s-per-list region over heavily-versioned .armor/ prefixes) is
+// visible in logs instead of presenting as a hung verifier (armor-851dca86).
+func (v *Verifier) enumerateCandidates(ctx context.Context, bucket string, sampleSize int) (latest ObjectSample, latestOK bool, sample []ObjectSample, err error) {
 	prefix := v.getBucketPrefix(bucket)
 
 	// The reservoir holds at most sampleSize objects, so paginating a bucket
 	// with millions of objects never grows memory beyond the sample size.
 	reservoir := make([]ObjectSample, 0, sampleSize)
 	var seen int // candidate (non-internal) objects fed to the sampler
+	var latestInfo *backend.ObjectInfo
 
 	var continuationToken string
+	var pages, listedKeys int
+	var lastKey string
+	var nextProgress time.Time
+
 	for {
 		if err := ctx.Err(); err != nil {
-			return nil, fmt.Errorf("historical sample cancelled: %w", err)
+			return ObjectSample{}, false, nil, fmt.Errorf("enumeration cancelled: %w", err)
 		}
 
 		listResult, err := v.backend.List(ctx, bucket, prefix, "", continuationToken, 1000)
 		if err != nil {
-			return nil, fmt.Errorf("list failed: %w", err)
+			return ObjectSample{}, false, nil, fmt.Errorf("list failed: %w", err)
 		}
+		pages++
+		listedKeys += len(listResult.Objects)
 
-		for _, obj := range listResult.Objects {
+		for i := range listResult.Objects {
+			obj := &listResult.Objects[i]
 			if strings.HasPrefix(obj.Key, ".armor/") || isManifestObject(obj.Key) {
 				continue
 			}
+			// Another tenant's namespace in a shared bucket: unverifiable with
+			// this instance's keys, and — being typically the bucket's most
+			// active writer — the one a keyless latest-object pick would
+			// false-alarm on every cycle (armor-bf592560).
+			if v.isExcludedKey(obj.Key) {
+				continue
+			}
 			seen++
-			sample := ObjectSample{
+			lastKey = obj.Key
+			if latestInfo == nil || obj.LastModified.After(latestInfo.LastModified) {
+				latestInfo = obj
+			}
+			if sampleSize <= 0 {
+				// Latest-only walk (sampling disabled): nothing to feed.
+				continue
+			}
+			cand := ObjectSample{
 				Key:          obj.Key,
 				Bucket:       bucket,
 				LastModified: obj.LastModified,
@@ -1928,7 +2098,7 @@ func (v *Verifier) getHistoricalSample(ctx context.Context, bucket string, sampl
 			}
 			if seen <= sampleSize {
 				// Fill phase: the first sampleSize candidates seed the reservoir.
-				reservoir = append(reservoir, sample)
+				reservoir = append(reservoir, cand)
 				continue
 			}
 			// Replacement phase (Algorithm R): for the seen-th candidate, draw a
@@ -1936,8 +2106,14 @@ func (v *Verifier) getHistoricalSample(ctx context.Context, bucket string, sampl
 			// inside the reservoir. Each candidate ends up retained with
 			// probability sampleSize/N, giving a uniform sample of the full set.
 			if j := cryptoRandInt(seen); j < sampleSize {
-				reservoir[j] = sample
+				reservoir[j] = cand
 			}
+		}
+
+		if now := time.Now(); now.After(nextProgress) {
+			log.Printf("verifier discovery: bucket %s prefix %q: %d pages / %d listed keys / %d candidates so far, last key %q",
+				bucket, prefix, pages, listedKeys, seen, lastKey)
+			nextProgress = now.Add(enumerationProgressInterval)
 		}
 
 		if !listResult.IsTruncated {
@@ -1951,7 +2127,45 @@ func (v *Verifier) getHistoricalSample(ctx context.Context, bucket string, sampl
 		continuationToken = listResult.NextToken
 	}
 
-	return reservoir, nil
+	if latestInfo == nil {
+		return ObjectSample{}, false, reservoir, nil
+	}
+	return ObjectSample{
+		Key:          latestInfo.Key,
+		Bucket:       bucket,
+		LastModified: latestInfo.LastModified,
+		Size:         latestInfo.Size,
+		ArtifactType: v.inferArtifactType(latestInfo.Key, latestInfo.Metadata),
+		Metadata:     latestInfo.Metadata,
+	}, true, reservoir, nil
+}
+
+// getLatestObject returns the most recent backup object for a bucket, via the
+// shared single-pass discovery walk (enumerateCandidates; see that function
+// for the filtering and pagination contract).
+func (v *Verifier) getLatestObject(ctx context.Context, bucket string) (ObjectSample, error) {
+	latest, ok, _, err := v.enumerateCandidates(ctx, bucket, 0)
+	if err != nil {
+		return ObjectSample{}, err
+	}
+	if !ok {
+		return ObjectSample{}, errors.New("no non-internal objects found")
+	}
+	return latest, nil
+}
+
+// getHistoricalSample returns the uniform random historical sample for a
+// bucket, via the shared single-pass discovery walk (enumerateCandidates; see
+// that function for the filtering, sampling and pagination contract).
+func (v *Verifier) getHistoricalSample(ctx context.Context, bucket string, sampleSize int) ([]ObjectSample, error) {
+	if sampleSize <= 0 {
+		return nil, nil
+	}
+	_, _, sample, err := v.enumerateCandidates(ctx, bucket, sampleSize)
+	if err != nil {
+		return nil, err
+	}
+	return sample, nil
 }
 
 // cryptoRandInt returns a uniform random int in the half-open interval [0, n)
