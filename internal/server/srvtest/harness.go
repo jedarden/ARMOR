@@ -55,6 +55,11 @@ type Harness struct {
 	Queue        *replication.ReplicationQueue
 	QueueMetrics *replication.Metrics
 
+	// MEK is the master encryption key the harness generated for the primary
+	// deployment — the one piece of escrowed material a provider-outage
+	// restore is entitled to (docs/disaster-recovery.md, Route A step 3).
+	MEK []byte
+
 	Bucket string
 	Prefix string
 
@@ -65,6 +70,11 @@ type Harness struct {
 type HarnessConfig struct {
 	Bucket string
 	Prefix string
+
+	// FormatWriteVersion wires config.FormatWriteVersion: 0 (unset) keeps the
+	// harness's historical v2 envelopes, 3 selects v3 (the production
+	// config.Load default). Restore drills matrix over both.
+	FormatWriteVersion int
 }
 
 // New builds a Harness with defaults. Cleanup (queue stop) is registered on t.
@@ -100,10 +110,11 @@ func NewWithConfig(t *testing.T, hc HarnessConfig) *Harness {
 		t.Fatalf("srvtest: generate MEK: %v", err)
 	}
 	cfg := &config.Config{
-		BlockSize: 64 * 1024,
-		MEK:       mek,
-		B2Region:  TestRegion,
-		Prefix:    prefix,
+		BlockSize:          64 * 1024,
+		MEK:                mek,
+		B2Region:           TestRegion,
+		Prefix:             prefix,
+		FormatWriteVersion: hc.FormatWriteVersion,
 		Credentials: map[string]*config.Credential{
 			TestAccessKey: {AccessKey: TestAccessKey, SecretKey: TestSecretKey},
 		},
@@ -146,6 +157,7 @@ func NewWithConfig(t *testing.T, hc HarnessConfig) *Harness {
 		Secondary:    secondary,
 		Queue:        queue,
 		QueueMetrics: queueMetrics,
+		MEK:          mek,
 		Bucket:       bucket,
 		Prefix:       prefix,
 		cancel:       cancel,
