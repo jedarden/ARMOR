@@ -252,8 +252,22 @@ func TestVerifyCorruptedHMAC(t *testing.T) {
 	// Corrupt the data after the header (corrupts HMAC)
 	corruptedData := make([]byte, len(validData.data))
 	copy(corruptedData, validData.data)
-	// Flip a bit in the encrypted data section (after header)
-	corruptedData[crypto.HeaderSize+100] ^= 0xFF
+	// Flip a bit in the encrypted data section (after header). The v2
+	// layout is [header][ciphertext][HMAC table]; slice the ciphertext the
+	// same way fullVerifyObject does so the flipped index is derived from
+	// the object's own layout and always lands inside the ciphertext, no
+	// matter what plaintext size the fixture produces.
+	envelope, err := crypto.DecodeHeader(corruptedData)
+	if err != nil {
+		t.Fatalf("Failed to decode envelope header: %v", err)
+	}
+	blockCount := int(crypto.ComputeBlockCount(int64(envelope.PlaintextSize), envelope.BlockSize()))
+	hmacTableSize := blockCount * crypto.HMACSize
+	ciphertext := corruptedData[crypto.HeaderSize : len(corruptedData)-hmacTableSize]
+	if len(ciphertext) == 0 {
+		t.Fatalf("Fixture has no ciphertext bytes to corrupt")
+	}
+	ciphertext[len(ciphertext)/2] ^= 0xFF
 
 	mock.PutTestObject(ctx, "test-bucket", "corrupted-object", corruptedData, validData.metadata, true, time.Now())
 
@@ -574,8 +588,20 @@ func TestVerifyV3CorruptedBlock(t *testing.T) {
 	// Corrupt a block in the encrypted data
 	corruptedData := make([]byte, len(validData.data))
 	copy(corruptedData, validData.data)
-	// Find the start of encrypted blocks (after header) and corrupt a block
-	corruptedData[crypto.HeaderSize+64] ^= 0xFF
+	// Find the encrypted blocks (after header, before the trailer block
+	// table) and corrupt a byte there, deriving the bounds from the object's
+	// own layout so the flip always lands inside the encrypted data.
+	envelope, err := crypto.DecodeHeader(corruptedData)
+	if err != nil {
+		t.Fatalf("Failed to decode envelope header: %v", err)
+	}
+	blockCount := int(crypto.ComputeBlockCount(int64(envelope.PlaintextSize), envelope.BlockSize()))
+	blockTableSize := blockCount * crypto.BlockTableEntrySize
+	ciphertext := corruptedData[crypto.HeaderSize : len(corruptedData)-blockTableSize]
+	if len(ciphertext) == 0 {
+		t.Fatalf("Fixture has no ciphertext bytes to corrupt")
+	}
+	ciphertext[len(ciphertext)/2] ^= 0xFF
 
 	mock.PutTestObject(ctx, "test-bucket", "v3-corrupted-block", corruptedData, validData.metadata, true, time.Now())
 
