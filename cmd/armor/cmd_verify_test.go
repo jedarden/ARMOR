@@ -616,33 +616,54 @@ func TestVerifyV3CorruptedBlock(t *testing.T) {
 	}
 }
 
-// TestVerifyV3CorruptedSidecar tests detection of corrupted sidecar in v3 multipart
+// TestVerifyV3CorruptedSidecar pins what armor verify actually guarantees for
+// a v3 object whose metadata carries a dangling HMAC-sidecar reference. The
+// v3 verify path (fullVerifyObject) authenticates the object from its own
+// bytes — envelope header, trailer block table, and the inline per-block
+// HMACs checked inside DecryptV3 — and never resolves the
+// x-amz-meta-armor-hmac-sidecar metadata key, which no production writer
+// emits either (sidecars are located by the composed
+// .armor/hmac/<sha256(key)> path in backend.MultipartStateManager, not by
+// object metadata). A fixture that relabels an inline-verifiable single-PUT
+// v3 object as multipart and corrupts that metadata key therefore verifies
+// OK, and this test asserts that boundary instead of a detection no code
+// path performs (armor-99447be8).
+//
+// Real sidecar-corruption detection is covered where the sidecar is actually
+// consumed, in internal/restoreverifier:
+// TestRestorePaths_V3Multipart_CorruptSidecarEntryIsAnError walks a real
+// multi-part v3 fixture with a corrupted sidecar entry through both restore
+// paths and requires an error, and TestVerifyObject_DRDrill_MultipartDigestEnforced
+// enforces the combined digest of a real multipart sidecar object. Making
+// `armor verify` itself sidecar-aware for true v3 multipart objects is
+// tracked by armor-da67956d.
 func TestVerifyV3CorruptedSidecar(t *testing.T) {
 	ctx := context.Background()
 	mek := generateTestMEK(t)
 	mock := NewMockB2Backend()
 
-	// Create a valid v3 multipart object with sidecar
+	// Fixture: an inline-verifiable single-PUT v3 object relabelled as
+	// multipart (what createValidV3MultipartObject produces).
 	validData := createValidV3MultipartObject(t, mek, "v3-multipart", []byte("multipart data"))
 
-	// Corrupt the sidecar metadata key
+	// Dangling sidecar reference: the metadata names an HMAC sidecar key
+	// that does not exist in the backend.
 	corruptedMetadata := make(map[string]string)
 	for k, v := range validData.metadata {
 		corruptedMetadata[k] = v
 	}
-	// Corrupt the HMAC sidecar reference
 	sidecarKey := ".armor/hmac/" + hex.EncodeToString(SHA256Hash([]byte("v3-multipart"))) + ".json"
 	corruptedMetadata["x-amz-meta-armor-hmac-sidecar"] = sidecarKey + "-corrupted"
 
 	mock.PutTestObject(ctx, "test-bucket", "v3-corrupted-sidecar", validData.data, corruptedMetadata, true, time.Now())
 
-	// Note: This test would require sidecar mock implementation
-	// For now, we test that the verification attempts to load the sidecar
 	result := verifyObject(ctx, mock, mek, "test-bucket", "v3-corrupted-sidecar", time.Time{})
 
-	// Should fail because sidecar won't be found (we're using a mock without sidecar support)
-	if result.Status != "ERROR" && result.Status != "CORRUPTED" {
-		t.Errorf("Expected ERROR or CORRUPTED status for v3 corrupted sidecar, got %s", result.Status)
+	// The object's own bytes are intact and inline-verifiable, so verify
+	// reports OK: the v3 path does not consult the sidecar reference (see
+	// the comment above for where sidecar corruption IS detected).
+	if result.Status != "OK" {
+		t.Errorf("Expected OK for an inline-verifiable v3 object with a dangling sidecar reference, got %s: %s", result.Status, result.Error)
 	}
 }
 
