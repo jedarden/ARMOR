@@ -270,30 +270,6 @@ func goldenWrapFingerprintNote(f goldenFixture) string {
 	return ""
 }
 
-// goldenStalePlaintextDoc reports the committed-fixture staleness defect: the
-// fixture decrypts cleanly under production crypto (ciphertext HMAC verifies)
-// but yields plaintext whose SHA-256 differs from the SHA the fixture itself
-// records -- envelope header, object_metadata.json and metadata.json all
-// agree with each other, so the encrypted CONTENT is the stale side. Owned by
-// the fixture-construction lineage; pinned by
-// TestGoldenFixtureV2StandardStaleDoc. Returns "" when the fixture does not
-// exhibit the defect, including when decryption fails outright (the caller
-// surfaces that error instead).
-func goldenStalePlaintextDoc(t *testing.T, f goldenFixture) string {
-	t.Helper()
-	plaintext, err := decryptGoldenFixture(t, f, "golden/defect-probe/"+f.Name)
-	if err != nil {
-		return ""
-	}
-	sum := sha256.Sum256(plaintext)
-	got := hex.EncodeToString(sum[:])
-	if got == f.Meta.PlaintextSHA256 && len(plaintext) == f.Meta.PlaintextLength {
-		return ""
-	}
-	return fmt.Sprintf("committed bytes decrypt (HMAC valid) to %d bytes sha256=%s, but the fixture records %d bytes sha256=%s",
-		len(plaintext), got, f.Meta.PlaintextLength, f.Meta.PlaintextSHA256)
-}
-
 // goldenMultipartBackend extends MockBackend with real multipart-upload
 // semantics: parts are assembled in upload order and the assembled bytes
 // become the object body at CompleteMultipartUpload, mirroring what B2 does
@@ -429,9 +405,6 @@ func TestGoldenFixturesDecrypt(t *testing.T) {
 				if reason := goldenWrapDefect(f); reason != "" {
 					t.Skipf("known committed-fixture wrap defect: %s", reason)
 				}
-				if reason := goldenStalePlaintextDoc(t, f); reason != "" {
-					t.Skipf("known stale committed-fixture content: %s", reason)
-				}
 				plaintext, err := decryptGoldenFixture(t, f, "golden/"+f.Name)
 				if err != nil {
 					t.Fatalf("decrypt failed: %v", err)
@@ -553,9 +526,6 @@ func TestGoldenFixturesMigrate(t *testing.T) {
 			case "success":
 				if reason := goldenWrapDefect(f); reason != "" {
 					t.Skipf("known committed-fixture wrap defect: %s", reason)
-				}
-				if reason := goldenStalePlaintextDoc(t, f); reason != "" {
-					t.Skipf("known stale committed-fixture content: %s", reason)
 				}
 				// While the migrator multipart defect is present (see
 				// TestGoldenMultipartMigratorDefect) any success-outcome object
@@ -815,71 +785,6 @@ func TestGoldenFixtureWrapDefect(t *testing.T) {
 	}
 }
 
-// TestGoldenFixtureV2StandardStaleDoc pins the committed-fixture staleness
-// defect: v2_single_put/standard's ciphertext decrypts cleanly (HMAC valid)
-// but to content whose SHA-256 differs from the SHA its own envelope header,
-// object_metadata.json and metadata.json all record. When the
-// fixture-construction lineage regenerates the fixture, this test FAILS --
-// delete it together with the goldenStalePlaintextDoc skips.
-func TestGoldenFixtureV2StandardStaleDoc(t *testing.T) {
-	fixtures := loadGoldenFixtures(t)
-	var f *goldenFixture
-	for i := range fixtures {
-		if fixtures[i].Name == "v2_single_put/standard" {
-			f = &fixtures[i]
-		}
-	}
-	if f == nil {
-		t.Fatal("v2_single_put/standard no longer present in tests/fixtures/migration; update this pin")
-	}
-	plaintext, err := decryptGoldenFixture(t, *f, "golden/defect-probe/"+f.Name)
-	if err != nil {
-		t.Fatalf("committed fixture no longer decrypts: %v -- the staleness symptom changed; revisit this pin", err)
-	}
-	sum := sha256.Sum256(plaintext)
-	got := hex.EncodeToString(sum[:])
-	if got == f.Meta.PlaintextSHA256 {
-		t.Fatal("committed fixture now decrypts to its documented plaintext -- the staleness defect is fixed; remove this pin and the goldenStalePlaintextDoc skips")
-	}
-	t.Logf("defect reproduced: decrypts to sha256=%s, fixture records %s", got, f.Meta.PlaintextSHA256)
-}
-
-// TestGoldenMigrationIVIntegrityGap pins a production-side defect: the
-// migration path never verifies the envelope header's recorded plaintext
-// SHA (EnvelopeHeader.VerifyPlaintextSHA is enforced by cmd_decrypt, the
-// canary and the restore verifier, but not by the migrator's decrypt or
-// read-back verify), so corrupting the header IV -- which scrambles the CTR
-// keystream without touching any HMAC'd ciphertext byte -- migrates
-// silently to a V3 object whose plaintext is garbage, with FailedObjects=0.
-// When the migrator enforces header plaintext integrity this test FAILS --
-// delete it and restore the case in TestGoldenFixtureCorruptions as a
-// fail-closed assertion.
-func TestGoldenMigrationIVIntegrityGap(t *testing.T) {
-	fixtures := loadGoldenFixtures(t)
-	var single *goldenFixture
-	for i := range fixtures {
-		if fixtures[i].Name == "v1_single_put/explicit_version" {
-			single = &fixtures[i]
-		}
-	}
-	if single == nil {
-		t.Fatal("v1_single_put/explicit_version not present; pin needs a production-valid base fixture")
-	}
-	corrupted := append([]byte(nil), single.Data...)
-	corrupted[10] ^= 0x01 // the IV lives at envelope-header bytes [6,22)
-	g := newGoldenMultipartBackend()
-	key := "golden/defect-probe/iv-integrity-gap"
-	seedGoldenObject(t, g, key, corrupted, single.Sidecar, single.ObjectMeta)
-	result, err := newGoldenMigrator(g).Migrate(context.Background(), false, 1)
-	if err != nil {
-		t.Fatalf("Migrate returned error: %v -- the integrity gap is fixed; delete this pin and restore the single/corrupted_envelope_iv fail-closed case in TestGoldenFixtureCorruptions", err)
-	}
-	if result.FailedObjects != 0 {
-		t.Fatal("migration now fails closed on envelope-IV corruption -- the integrity gap is fixed; delete this pin and restore the single/corrupted_envelope_iv fail-closed case in TestGoldenFixtureCorruptions")
-	}
-	t.Logf("defect reproduced: IV-corrupted object migrated with FailedObjects=0 (migration path does not enforce header plaintext SHA)")
-}
-
 // TestGoldenMultipartMigratorDefect pins the migrator-side defect: migrating a
 // VALID multipart object above the multipart threshold replaces the object
 // with an unreadable body (uploadAsMultipart discards the per-part HMAC
@@ -963,6 +868,16 @@ func TestGoldenFixtureCorruptions(t *testing.T) {
 		{
 			name:    "single/truncated_envelope_header",
 			data:    single.Data[:crypto.HeaderSize-1],
+			sidecar: single.Sidecar,
+			meta:    single.ObjectMeta,
+		},
+		{
+			// Restored from the deleted TestGoldenMigrationIVIntegrityGap
+			// pin: flipping an IV byte scrambles the CTR keystream without
+			// touching any HMAC'd ciphertext byte, so only the header
+			// plaintext-SHA check catches it.
+			name:    "single/corrupted_envelope_iv",
+			data:    flipByte(single.Data, 10), // the IV lives at envelope-header bytes [6,22)
 			sidecar: single.Sidecar,
 			meta:    single.ObjectMeta,
 		},

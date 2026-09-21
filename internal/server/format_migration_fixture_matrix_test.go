@@ -25,8 +25,9 @@
 //     process nothing.
 //
 // Two committed-fixture defects are known at HEAD and handled with the same
-// data-driven re-arming skips the golden test uses (goldenWrapDefect /
-// goldenStalePlaintextDoc): while the corrupt multipart-generation wrap is
+// data-driven re-arming skips the golden test uses (goldenWrapDefect; the
+// stale-plaintext skip was deleted together with its pin when the fixture
+// was regenerated): while the corrupt multipart-generation wrap is
 // AES-GCM instead of AES-KWP, every decrypt-stage fixture fails at unwrap
 // before reaching its intended defect, so the unwrap error itself is what is
 // asserted (and the masking is logged). The moment regenerated fixtures
@@ -259,9 +260,6 @@ func TestGoldenFixtureMatrixValidDecrypt(t *testing.T) {
 			}
 			if reason := goldenWrapDefect(f); reason != "" {
 				t.Skipf("known committed-fixture wrap defect: %s", reason)
-			}
-			if reason := goldenStalePlaintextDoc(t, f); reason != "" {
-				t.Skipf("known stale committed-fixture content: %s", reason)
 			}
 			plaintext, err := decryptGoldenFixture(t, f, "matrix/"+name)
 			if err != nil {

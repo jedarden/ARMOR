@@ -812,6 +812,15 @@ func (fm *FormatMigrator) decryptSingleObject(armorMeta *backend.ARMORMetadata, 
 		return nil, fmt.Errorf("%w: %w", ErrIntegrityVerification, err)
 	}
 
+	// Plaintext integrity: the per-block HMACs cover ciphertext bytes only and
+	// are blind to counter-derivation errors, so a wrong-version decrypt can
+	// verify every HMAC yet yield garbage plaintext. Enforce the header's
+	// recorded plaintext SHA-256 before the plaintext is trusted. Dry-run,
+	// migrate and the post-migration read-back verify all pass through here.
+	if err := header.VerifyPlaintextSHA(plaintext); err != nil {
+		return nil, fmt.Errorf("plaintext integrity check failed: %w", err)
+	}
+
 	return plaintext, nil
 }
 

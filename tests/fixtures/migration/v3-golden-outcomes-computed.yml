@@ -113,7 +113,7 @@ fixtures:
       version: "v2"
       layout: "single"
       metadata_variant: "full"
-      plaintext_size: 94
+      plaintext_size: 119
     v3_expected:
       is_multipart: false
       part_count: 1
@@ -124,11 +124,11 @@ fixtures:
       metadata_fields:
         x-amz-meta-armor-version: "3"
         x-amz-meta-armor-wrapped-dek: "v2:<fingerprint>:<wrapped_dek>"
-        x-amz-meta-armor-iv: "AAQCAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4f"
+        x-amz-meta-armor-iv: "AwQFBgcICQoLDA0ODxAREg=="
         x-amz-meta-armor-block-size: "65536"
-        x-amz-meta-armor-plaintext-size: "94"
-        x-amz-meta-armor-sha256: "a7f6f6d8cfd8a8f487d72bd31703a575f93885fe6cfea9843f8a4752eb69f12c"
-        x-amz-meta-armor-etag: "a7f6f6d8cfd8a8f487d72bd31703a575f93885fe6cfea9843f8a4752eb69f12c"
+        x-amz-meta-armor-plaintext-size: "119"
+        x-amz-meta-armor-sha256: "151b2cfb881664601f2ba7013089c2afabf95ae94659b491f95220783dde377c"
+        x-amz-meta-armor-etag: "151b2cfb881664601f2ba7013089c2afabf95ae94659b491f95220783dde377c"
       transformation_notes:
         - "Version upgraded from 2 to 3"
         - "No security fix needed (V2 already fixed counter derivation)"
