@@ -32,9 +32,15 @@ FORGEJO_TOKEN=... GITHUB_TOKEN=... python3 scripts/publish_release.py --version 
 
 Automated version drift monitoring across ARMOR deployments.
 
-**Full documentation:** [docs/drift-check.md](../docs/drift-check.md)
+**Full documentation:** [docs/drift-check.md](../docs/drift-check.md) and
+[the continuously running Deployment runbook](../docs/armor-drift-checker.md)
 
 ### drift_check.py
+
+The GitOps-managed armor-drift-checker Deployment passes the cluster API
+configuration and fails closed when a Deployment or its live pods cannot be
+verified. It writes both the JSON report and a Prometheus text snapshot; use
+the cluster-api and require-live options when reproducing that mode manually.
 
 Fleet drift check with live verification and deduplicated alerting.
 

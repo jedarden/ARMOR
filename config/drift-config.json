@@ -5,6 +5,17 @@
   "github_repo": "jedarden/ARMOR",
   "sort_by": "correctness",
   "output_file": "/tmp/armor-drift-report.json",
+  "require_live_pods": true,
+  "cluster_api_token_file": "/var/run/secrets/kubernetes.io/serviceaccount/token",
+  "cluster_api_ca_file": "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt",
+  "cluster_api_urls": {
+    "iad-ci": "https://kubernetes.default.svc",
+    "iad-kalshi": "http://kubectl-proxy-iad-kalshi:8001",
+    "rs-manager": "http://traefik-rs-manager:8001",
+    "ord-devimprint": "http://traefik-ord-devimprint:8001",
+    "apexalgo-iad": "http://traefik-apexalgo-iad:8001",
+    "ardenone-cluster": "http://traefik-ardenone-cluster:8001"
+  },
   "clusters": [
     "iad-ci",
     "iad-kalshi",

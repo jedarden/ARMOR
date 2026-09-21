@@ -40,6 +40,33 @@ def extract_cluster_from_path(filepath: str) -> str:
     return "unknown"
 
 
+def extract_workload_info(yaml_content: str) -> tuple[str | None, str | None, str | None]:
+    """Extract the Kubernetes workload kind, name, and namespace.
+
+    ARMOR manifests are intentionally kept simple and this scanner is also
+    used in the small runtime image, so pulling in a YAML dependency just to
+    read three metadata fields would make the checker harder to operate. The
+    regular expressions are limited to the Kubernetes metadata block and the
+    fallback values are explicit: a live check must report unavailable when it
+    cannot identify the workload to query.
+    """
+    kind_match = re.search(r"(?m)^kind:\s*(Deployment|StatefulSet|DaemonSet)\s*$", yaml_content)
+    metadata_match = re.search(
+        r"(?ms)^metadata:\s*\n(?P<body>.*?)(?=^spec:|^---\s*$|\Z)",
+        yaml_content,
+    )
+    if not metadata_match:
+        return (kind_match.group(1) if kind_match else None, None, None)
+    metadata = metadata_match.group("body")
+    name_match = re.search(r"(?m)^\s+name:\s*([^\s#]+)", metadata)
+    namespace_match = re.search(r"(?m)^\s+namespace:\s*([^\s#]+)", metadata)
+    return (
+        kind_match.group(1) if kind_match else None,
+        name_match.group(1) if name_match else None,
+        namespace_match.group(1) if namespace_match else None,
+    )
+
+
 def find_armor_deployments(declarative_config_path: str) -> list[dict]:
     """
     Scan declarative-config for all ARMOR deployments and extract
@@ -80,10 +107,14 @@ def find_armor_deployments(declarative_config_path: str) -> list[dict]:
                     continue
                 if image_type and image_tag:
                     cluster = extract_cluster_from_path(filepath)
+                    kind, workload_name, namespace = extract_workload_info(content)
                     deployments.append({
                         'cluster': cluster,
                         'image_type': image_type,
                         'image_tag': image_tag,
+                        'kind': kind,
+                        'workload_name': workload_name,
+                        'namespace': namespace,
                         'filepath': filepath
                     })
                 else:

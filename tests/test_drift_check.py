@@ -188,6 +188,25 @@ def test_classify_probe_different_version_vs_digest_pinned_is_mismatched():
     assert report["state"] == drift_check.STATE_MISMATCHED
 
 
+def test_classify_live_pods_catches_old_rollout():
+    digest = "a" * 64
+    report = drift_check.classify(
+        deployment(tag=f"0.1.100@sha256:{digest}"), RELEASES, 50, 30,
+        running_tags=["0.1.100", "0.1.99"],
+        running_image_ids=[f"docker-pullable://ronaldraygun/armor@sha256:{digest}"],
+        pod_count=2, ready_pod_count=2, live_checked=True)
+    assert report["state"] == drift_check.STATE_MISMATCHED
+    assert "0.1.99" in report["error"]
+
+
+def test_classify_live_pods_requires_a_pod():
+    report = drift_check.classify(
+        deployment(tag="0.1.100"), RELEASES, 50, 30,
+        pod_count=0, ready_pod_count=0, live_checked=True)
+    assert report["state"] == drift_check.STATE_UNAVAILABLE
+    assert "no running pods" in report["error"]
+
+
 # ---------------------------------------------------------------------------
 # state: unavailable
 # ---------------------------------------------------------------------------
@@ -405,6 +424,71 @@ def test_probe_version_connection_refused_is_probe_error():
     sock.close()  # nothing listens here now
     with pytest.raises(drift_check.ProbeError):
         drift_check.probe_version(f"http://127.0.0.1:{dead_port}/version", timeout=2)
+
+
+class _KubeHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        if "/apis/apps/v1/" in self.path:
+            body = {
+                "spec": {"selector": {"matchLabels": {"app": "armor"}}},
+                "status": {"readyReplicas": 1},
+            }
+        elif self.path.startswith("/api/v1/"):
+            body = {
+                "items": [{
+                    "metadata": {"name": "armor-abc"},
+                    "status": {
+                        "phase": "Running",
+                        "containerStatuses": [{
+                            "name": "armor",
+                            "image": "ronaldraygun/armor:0.1.100",
+                            "imageID": "docker-pullable://ronaldraygun/armor@sha256:" + "a" * 64,
+                            "ready": True,
+                        }],
+                    },
+                }],
+            }
+        else:
+            self.send_response(404)
+            self.end_headers()
+            return
+        payload = json.dumps(body).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(payload)))
+        self.end_headers()
+        self.wfile.write(payload)
+
+    def log_message(self, *args):
+        pass
+
+
+@pytest.fixture
+def kube_server():
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _KubeHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    yield f"http://127.0.0.1:{server.server_address[1]}"
+    server.shutdown()
+
+
+def test_probe_live_deployment_reads_deployment_and_pod_images(kube_server):
+    d = deployment(tag="0.1.100", filepath="/dc/k8s/iad-ci/armor/armor.yml")
+    d.update({"kind": "Deployment", "workload_name": "armor", "namespace": "armor"})
+    live = drift_check.probe_live_deployment(d, kube_server)
+    assert live["running_tags"] == ["0.1.100"]
+    assert live["pod_count"] == 1
+    assert live["ready_pod_count"] == 1
+
+
+def test_render_metrics_contains_state_and_escalation():
+    reports = drift_check.classify_fleet(
+        [deployment(cluster="iad-kalshi", tag="v0.1.10")], RELEASES, 50, 30)
+    result = {"deployments": reports, "fingerprint": "fp01"}
+    metrics = drift_check.render_metrics(result)
+    assert 'armor_version_drift_state{cluster="iad-kalshi"' in metrics
+    assert 'state="stale"} 1' in metrics
+    assert "armor_version_drift_alert 1" in metrics
 
 
 # ---------------------------------------------------------------------------

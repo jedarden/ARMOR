@@ -63,9 +63,12 @@ import json
 import os
 import re
 import shutil
+import ssl
 import subprocess
 import sys
+import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
@@ -88,6 +91,7 @@ ALERT_PRIORITY = "2"
 # become `mismatched`, not `stale`).
 VERSION_RE = re.compile(r"^v?0\.1\.(\d+)(?:@sha256:[0-9a-fA-F]{64})?$")
 SERVER_HEADER_RE = re.compile(r"ARMOR/(v?0\.1\.\d+\S*)")
+IMAGE_DIGEST_RE = re.compile(r"@sha256:([0-9a-fA-F]{64})")
 
 
 class ProbeError(RuntimeError):
@@ -102,6 +106,27 @@ def parse_version(tag: str) -> Optional[int]:
     if match:
         return int(match.group(1))
     return None
+
+
+def image_ref_parts(image: str) -> Tuple[Optional[str], Optional[str]]:
+    """Return (version/tag, digest) from a Kubernetes image reference.
+
+    ``imageID`` values returned by Kubernetes commonly have a
+    ``docker-pullable://`` prefix and only contain a digest.  The declared
+    image and the status image use slightly different spellings, so normalize
+    both here before comparing them.
+    """
+    image = (image or "").strip()
+    if not image:
+        return None, None
+    image = re.sub(r"^[a-z]+-pullable://", "", image)
+    digest_match = IMAGE_DIGEST_RE.search(image)
+    digest = digest_match.group(1).lower() if digest_match else None
+    without_digest = image.split("@", 1)[0]
+    last = without_digest.rsplit("/", 1)[-1]
+    if ":" not in last:
+        return None, digest
+    return last.rsplit(":", 1)[1], digest
 
 
 def parse_ts(value: str) -> Optional[datetime]:
@@ -253,21 +278,165 @@ def missed_correctness(deployed_version: Optional[int],
     )
 
 
+def _http_json(url: str, timeout: float, token_file: Optional[str] = None,
+               ca_file: Optional[str] = None,
+               urlopen=None) -> Dict[str, Any]:
+    """GET a Kubernetes API JSON document through a read-only proxy."""
+    if urlopen is None:
+        urlopen = urllib.request.urlopen
+    request = urllib.request.Request(url, headers={"Accept": "application/json"})
+    if token_file:
+        try:
+            token = Path(token_file).read_text(encoding="utf-8").strip()
+        except (OSError, UnicodeDecodeError) as exc:
+            raise ProbeError(f"cannot read Kubernetes token file: {exc}") from exc
+        if token:
+            request.add_header("Authorization", f"Bearer {token}")
+    context = None
+    if url.startswith("https://") and ca_file:
+        context = ssl.create_default_context(cafile=ca_file)
+    try:
+        with urlopen(request, timeout=timeout, context=context) as response:
+            status = getattr(response, "status", None) or response.getcode()
+            body = response.read(2 * 1024 * 1024).decode("utf-8", "replace")
+    except TypeError:
+        # Small test doubles often do not accept urllib's optional context.
+        try:
+            with urlopen(request, timeout=timeout) as response:
+                status = getattr(response, "status", None) or response.getcode()
+                body = response.read(2 * 1024 * 1024).decode("utf-8", "replace")
+        except (urllib.error.URLError, urllib.error.HTTPError, OSError, ValueError) as exc:
+            raise ProbeError(f"Kubernetes API request failed: {exc}") from exc
+    except (urllib.error.URLError, urllib.error.HTTPError, OSError, ValueError) as exc:
+        raise ProbeError(f"Kubernetes API request failed: {exc}") from exc
+    if status != 200:
+        raise ProbeError(f"Kubernetes API returned HTTP {status} for {url}")
+    try:
+        value = json.loads(body)
+    except json.JSONDecodeError as exc:
+        raise ProbeError(f"Kubernetes API returned invalid JSON: {exc}") from exc
+    if not isinstance(value, dict):
+        raise ProbeError("Kubernetes API returned a non-object JSON document")
+    return value
+
+
+def probe_live_deployment(deployment: Dict[str, Any], api_url: str,
+                          timeout: float = 10.0,
+                          token_file: Optional[str] = None,
+                          ca_file: Optional[str] = None,
+                          urlopen=None) -> Dict[str, Any]:
+    """Read one Deployment and its selected pods from a Kubernetes API.
+
+    The API URL may be a local in-cluster API server or one of the fleet's
+    read-only kubectl proxies. No mutation endpoint is used. Returning the
+    pod image IDs as well as version tags catches a rollout where the desired
+    manifest was updated but one old pod remained running.
+    """
+    namespace = deployment.get("namespace")
+    name = deployment.get("workload_name")
+    kind = deployment.get("kind")
+    if kind != "Deployment" or not namespace or not name:
+        raise ProbeError("manifest does not identify a namespaced Deployment")
+
+    base = api_url.rstrip("/")
+    quoted_namespace = urllib.parse.quote(str(namespace), safe="")
+    quoted_name = urllib.parse.quote(str(name), safe="")
+    deployment_url = (
+        f"{base}/apis/apps/v1/namespaces/{quoted_namespace}/deployments/{quoted_name}"
+    )
+    workload = _http_json(deployment_url, timeout, token_file, ca_file, urlopen)
+    selector = ((workload.get("spec") or {}).get("selector") or {}).get("matchLabels") or {}
+    if not selector:
+        raise ProbeError("Deployment has no selector.matchLabels")
+    label_selector = ",".join(
+        f"{key}={value}" for key, value in sorted(selector.items())
+    )
+    pods_url = (
+        f"{base}/api/v1/namespaces/{quoted_namespace}/pods?"
+        f"{urllib.parse.urlencode({'labelSelector': label_selector})}"
+    )
+    pods = _http_json(pods_url, timeout, token_file, ca_file, urlopen)
+
+    running_tags: List[str] = []
+    running_image_ids: List[str] = []
+    pod_details: List[Dict[str, Any]] = []
+    ready_pods = 0
+    for pod in pods.get("items", []) or []:
+        metadata = pod.get("metadata") or {}
+        status = pod.get("status") or {}
+        containers = list(status.get("containerStatuses") or [])
+        image_type = str(deployment.get("image_type", ""))
+
+        def is_target_container(container: Dict[str, Any]) -> bool:
+            image = str(container.get("image") or "").split("@", 1)[0]
+            image_name = image.rsplit("/", 1)[-1].rsplit(":", 1)[0]
+            return image_name == image_type
+
+        matched = [
+            c for c in containers if is_target_container(c)
+        ]
+        pod_name = metadata.get("name", "")
+        pod_ready = any(bool(c.get("ready")) for c in matched)
+        if pod_ready:
+            ready_pods += 1
+        detail = {"name": pod_name, "phase": status.get("phase"), "ready": pod_ready}
+        for container in matched:
+            image = str(container.get("image") or "")
+            image_id = str(container.get("imageID") or "")
+            tag, _ = image_ref_parts(image)
+            if tag:
+                running_tags.append(tag)
+            if image_id:
+                running_image_ids.append(image_id)
+            detail.setdefault("images", []).append(image)
+            if image_id:
+                detail.setdefault("image_ids", []).append(image_id)
+        pod_details.append(detail)
+
+    if not pod_details:
+        raise ProbeError("Deployment selected no pods")
+    if not running_tags and not running_image_ids:
+        raise ProbeError("Deployment pods have no ARMOR container status")
+    return {
+        "running_tags": sorted(set(running_tags)),
+        "running_image_ids": sorted(set(running_image_ids)),
+        "pod_count": len(pod_details),
+        "ready_pod_count": ready_pods,
+        "pods": pod_details,
+    }
+
+
 def classify(deployment: Dict[str, Any],
              releases: List[Dict[str, Any]],
              releases_threshold: int,
              days_threshold: int,
              running_tag: Optional[str] = None,
-             probe_error: Optional[str] = None) -> Dict[str, Any]:
+             probe_error: Optional[str] = None,
+             running_tags: Optional[List[str]] = None,
+             running_image_ids: Optional[List[str]] = None,
+             pod_count: Optional[int] = None,
+             ready_pod_count: Optional[int] = None,
+             live_checked: bool = False) -> Dict[str, Any]:
     """Classify one deployment into current / stale / mismatched / unavailable."""
     cluster = deployment.get("cluster", "unknown")
     image_type = deployment.get("image_type", "armor")
     deployed_tag = deployment.get("image_tag") or ""
+    normalized_running_tags = sorted(set(
+        running_tags or ([running_tag] if running_tag else [])
+    ))
+    running_tag = running_tag or (
+        normalized_running_tags[0] if normalized_running_tags else None
+    )
     report = {
         "cluster": cluster,
         "image_type": image_type,
         "deployed_tag": deployed_tag,
         "running_tag": running_tag,
+        "running_tags": normalized_running_tags,
+        "running_image_ids": sorted(set(running_image_ids or [])),
+        "pod_count": pod_count,
+        "ready_pod_count": ready_pod_count,
+        "live_checked": live_checked,
         "state": STATE_UNAVAILABLE,
         "releases_behind": None,
         "days_behind": None,
@@ -286,18 +455,47 @@ def classify(deployment: Dict[str, Any],
         report["error"] = probe_error
         return report
 
+    # A configured live Kubernetes check must observe at least one pod. A
+    # Deployment can exist while its pods are pending, terminating, or absent;
+    # treating that as current would recreate the silent rollout gap this
+    # checker is meant to catch.
+    if live_checked and (pod_count or 0) < 1:
+        report["state"] = STATE_UNAVAILABLE
+        report["error"] = "live Deployment check found no running pods"
+        return report
+
     # 2. Live running tag disagrees with the declared manifest tag.
     # Compared by parsed version so a probe reporting `0.1.1957` against a
     # `0.1.1957@sha256:…` manifest is not a false mismatch; textual
     # inequality of two non-versions (e.g. a SHA vs the manifest) is.
-    if running_tag is not None and running_tag != deployed_tag:
-        running_version = parse_version(running_tag)
-        declared_version = parse_version(deployed_tag)
-        if (running_version is None or declared_version is None
-                or running_version != declared_version):
+    declared_version = parse_version(deployed_tag)
+    live_versions = [parse_version(tag) for tag in report["running_tags"]]
+    if report["running_tags"] and (
+            any(version is None for version in live_versions)
+            or any(version != declared_version for version in live_versions)):
+        report["state"] = STATE_MISMATCHED
+        report["error"] = (
+            f"running image tags {report['running_tags']} != "
+            f"declared manifest tag {deployed_tag}"
+        )
+        report["needs_update"] = True
+        return report
+
+    declared_digest_match = IMAGE_DIGEST_RE.search(deployed_tag)
+    declared_digest = (
+        declared_digest_match.group(1).lower() if declared_digest_match else None
+    )
+    if declared_digest and report["running_image_ids"]:
+        live_digests = {
+            match.group(1).lower()
+            for image_id in report["running_image_ids"]
+            if (match := IMAGE_DIGEST_RE.search(image_id))
+        }
+        if live_digests and live_digests != {declared_digest}:
             report["state"] = STATE_MISMATCHED
             report["error"] = (
-                f"running image tag {running_tag} != declared manifest tag {deployed_tag}"
+                f"running image digests {sorted(live_digests)} != "
+                f"declared digest {declared_digest}"
             )
             report["needs_update"] = True
             return report
@@ -344,14 +542,30 @@ def classify_fleet(deployments: List[Dict[str, Any]],
                    releases_threshold: int,
                    days_threshold: int,
                    probes: Optional[Dict[str, Tuple[Optional[str], Optional[str]]]] = None,
+                   live_checks: Optional[Dict[str, Dict[str, Any]]] = None,
                    expected_clusters: Tuple[str, ...] = ()) -> List[Dict[str, Any]]:
     """Classify every deployment, plus `unavailable` entries for configured
     clusters that have no ARMOR manifest at all."""
     probes = probes or {}
+    live_checks = live_checks or {}
+
+    def live_for(deployment: Dict[str, Any]) -> Dict[str, Any]:
+        return live_checks.get(str(deployment.get("filepath", "")), {})
+
     reports = [
-        classify(d, releases, releases_threshold, days_threshold,
-                 running_tag=probes.get(d.get("cluster", ""), (None, None))[0],
-                 probe_error=probes.get(d.get("cluster", ""), (None, None))[1])
+        classify(
+            d, releases, releases_threshold, days_threshold,
+            running_tag=probes.get(d.get("cluster", ""), (None, None))[0],
+            probe_error=(
+                live_for(d).get("error")
+                or probes.get(d.get("cluster", ""), (None, None))[1]
+            ),
+            running_tags=live_for(d).get("running_tags"),
+            running_image_ids=live_for(d).get("running_image_ids"),
+            pod_count=live_for(d).get("pod_count"),
+            ready_pod_count=live_for(d).get("ready_pod_count"),
+            live_checked=bool(live_for(d)),
+        )
         for d in deployments
     ]
     seen_clusters = {r["cluster"] for r in reports}
@@ -362,6 +576,11 @@ def classify_fleet(deployments: List[Dict[str, Any]],
                 "image_type": None,
                 "deployed_tag": None,
                 "running_tag": None,
+                "running_tags": [],
+                "running_image_ids": [],
+                "pod_count": None,
+                "ready_pod_count": None,
+                "live_checked": False,
                 "state": STATE_UNAVAILABLE,
                 "releases_behind": None,
                 "days_behind": None,
@@ -626,6 +845,67 @@ def format_report(reports: List[Dict[str, Any]], thresholds: Dict[str, int],
     return "\n".join(lines)
 
 
+def _metric_label(value: Any) -> str:
+    """Escape a Prometheus label value without adding dependencies."""
+    return str(value or "").replace("\\", "\\\\").replace("\n", "\\n").replace('"', '\\"')
+
+
+def render_metrics(result: Dict[str, Any]) -> str:
+    """Render the latest report as a Prometheus text exposition snapshot.
+
+    The state is represented as a one-hot gauge so dashboards can show every
+    cluster/image pair while alerts can use the single fleet-wide alert gauge.
+    Version and pod counts remain numeric labels/values rather than parsing
+    human-readable logs.
+    """
+    lines = [
+        "# HELP armor_version_drift_state Current state of each ARMOR workload (one-hot).",
+        "# TYPE armor_version_drift_state gauge",
+        "# HELP armor_version_drift_releases_behind Approved releases newer than the workload.",
+        "# TYPE armor_version_drift_releases_behind gauge",
+        "# HELP armor_version_drift_pods Pods observed by the live Kubernetes check.",
+        "# TYPE armor_version_drift_pods gauge",
+        "# HELP armor_version_drift_ready_pods Ready ARMOR pods observed by the live check.",
+        "# TYPE armor_version_drift_ready_pods gauge",
+        "# HELP armor_version_drift_alert Whether any workload needs escalation.",
+        "# TYPE armor_version_drift_alert gauge",
+        "# HELP armor_version_drift_check_success Whether the most recent check completed without drift.",
+        "# TYPE armor_version_drift_check_success gauge",
+        "# HELP armor_version_drift_last_run_timestamp_seconds Unix time of the most recent check.",
+        "# TYPE armor_version_drift_last_run_timestamp_seconds gauge",
+    ]
+    states = (STATE_CURRENT, STATE_STALE, STATE_MISMATCHED, STATE_UNAVAILABLE)
+    for report in result.get("deployments", []):
+        labels = (
+            f'cluster="{_metric_label(report.get("cluster"))}",'
+            f'image_type="{_metric_label(report.get("image_type"))}",'
+            f'deployment="{_metric_label(Path(report.get("filepath") or "").name)}"'
+        )
+        for state in states:
+            value = 1 if report.get("state") == state else 0
+            lines.append(f'armor_version_drift_state{{{labels},state="{state}"}} {value}')
+        behind = report.get("releases_behind")
+        lines.append(
+            f"armor_version_drift_releases_behind{{{labels}}} "
+            f"{behind if isinstance(behind, int) else 0}"
+        )
+        lines.append(
+            f"armor_version_drift_pods{{{labels}}} "
+            f"{report.get('pod_count') if isinstance(report.get('pod_count'), int) else 0}"
+        )
+        lines.append(
+            f"armor_version_drift_ready_pods{{{labels}}} "
+            f"{report.get('ready_pod_count') if isinstance(report.get('ready_pod_count'), int) else 0}"
+        )
+    alert = 1 if result.get("fingerprint") else 0
+    lines.append(f"armor_version_drift_alert {alert}")
+    lines.append(f"armor_version_drift_check_success {1 if alert == 0 else 0}")
+    lines.append(
+        f"armor_version_drift_last_run_timestamp_seconds {time.time():.3f}"
+    )
+    return "\n".join(lines) + "\n"
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     repo_root = Path(__file__).resolve().parent.parent
     parser = argparse.ArgumentParser(
@@ -651,6 +931,15 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument("--probe-url", action="append", default=[], metavar="CLUSTER=URL",
                         help="live /version endpoint for a cluster; running tag is compared"
                              " against the declared manifest tag (repeatable)")
+    parser.add_argument("--cluster-api", action="append", default=[], metavar="CLUSTER=URL",
+                        help="read-only Kubernetes API/proxy URL for live Deployment and pod"
+                             " inspection (repeatable)")
+    parser.add_argument("--require-live", action="store_true",
+                        help="fail closed when a configured cluster API cannot verify pods")
+    parser.add_argument("--cluster-api-token-file", default=None,
+                        help="bearer token file for an in-cluster Kubernetes API")
+    parser.add_argument("--cluster-api-ca-file", default=None,
+                        help="CA file for an in-cluster Kubernetes API")
     parser.add_argument("--expected-cluster", action="append", default=[],
                         help="cluster that must have an ARMOR manifest (adds to config clusters)")
     parser.add_argument("--releases-threshold", type=int, default=None)
@@ -658,6 +947,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument("--json", action="store_true", help="machine-readable JSON output")
     parser.add_argument("--output", type=Path, default=None,
                         help="also write the report to this file")
+    parser.add_argument("--metrics-output", type=Path, default=None,
+                        help="write the Prometheus text snapshot to this file")
     parser.add_argument("--emit-bead", action="store_true",
                         help="file ONE deduplicated alert bead when anything is non-current")
     parser.add_argument("--dry-run", action="store_true",
@@ -673,6 +964,16 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     releases_threshold = args.releases_threshold or config.get("releases_threshold", 50)
     days_threshold = args.days_threshold or config.get("days_threshold", 30)
+    cluster_api_urls = dict(config.get("cluster_api_urls", {}))
+    for spec in args.cluster_api:
+        cluster, sep, url = spec.partition("=")
+        if not sep or not cluster or not url:
+            print(f"Error: --cluster-api expects CLUSTER=URL, got {spec!r}", file=sys.stderr)
+            return 2
+        cluster_api_urls[cluster] = url
+    require_live = args.require_live or bool(config.get("require_live_pods", False))
+    token_file = args.cluster_api_token_file or config.get("cluster_api_token_file")
+    ca_file = args.cluster_api_ca_file or config.get("cluster_api_ca_file")
 
     manifests_path = args.manifests
     if manifests_path is None:
@@ -736,12 +1037,34 @@ def main(argv: Optional[List[str]] = None) -> int:
         except ProbeError as exc:
             probes[cluster] = (None, str(exc))
 
+    live_checks: Dict[str, Dict[str, Any]] = {}
+    if cluster_api_urls or require_live:
+        for deployment in deployments:
+            cluster = deployment.get("cluster", "")
+            api_url = cluster_api_urls.get(cluster)
+            key = str(deployment.get("filepath", ""))
+            if not api_url:
+                if require_live:
+                    live_checks[key] = {
+                        "error": f"no Kubernetes API configured for cluster {cluster}"
+                    }
+                continue
+            try:
+                live_checks[key] = probe_live_deployment(
+                    deployment, api_url,
+                    token_file=token_file if api_url.startswith("https://kubernetes.") else None,
+                    ca_file=ca_file if api_url.startswith("https://kubernetes.") else None,
+                )
+            except ProbeError as exc:
+                live_checks[key] = {"error": str(exc)}
+
     expected_clusters = tuple(dict.fromkeys(
         list(config.get("clusters", [])) + list(args.expected_cluster)))
 
     reports = classify_fleet(
         deployments, releases, releases_threshold, days_threshold,
         probes=probes, expected_clusters=expected_clusters,
+        live_checks=live_checks,
     )
 
     result = {
@@ -778,6 +1101,10 @@ def main(argv: Optional[List[str]] = None) -> int:
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(output, encoding="utf-8")
         print(f"Report written to {args.output}", file=sys.stderr)
+    if args.metrics_output:
+        args.metrics_output.parent.mkdir(parents=True, exist_ok=True)
+        args.metrics_output.write_text(render_metrics(result), encoding="utf-8")
+        print(f"Metrics written to {args.metrics_output}", file=sys.stderr)
 
     return 1 if result["fingerprint"] is not None else 0
 
