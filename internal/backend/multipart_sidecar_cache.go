@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/binary"
+	"encoding/hex"
 	"fmt"
 	"sync"
 	"time"
@@ -399,8 +400,39 @@ func (e *MultipartSidecarEntry) IsBlockCompressed(partIdx int, blockIdx int) (bo
 	return (clen & 0x80000000) != 0, nil
 }
 
-// GetSidecarKey returns the B2 key for the sidecar object.
-func GetSidecarKey(key string) string {
-	keyHash := sha256.Sum256([]byte(key))
-	return fmt.Sprintf(".armor/hmac/%x", keyHash)
+// GetSidecarKey returns the B2 key for a multipart HMAC sidecar in its
+// ADR-003 addendum location: <keyPrefix>.armor/hmac/<sha256(keyPrefix+key)>.
+// key is the CLIENT key (the name the sidecar is written under at
+// CompleteMultipartUpload), and keyPrefix must be normalized exactly as
+// config.normalizePrefix produces — empty, or ending in exactly one slash.
+// An empty prefix yields the bucket-root .armor/hmac/<sha256(key)> location
+// every ARMOR before 2026-09-20 wrote, so unprefixed deployments are
+// byte-for-byte unchanged.
+//
+// The hash input includes the prefix on purpose. Sidecars are named by the
+// client key, and two tenants sharing one bucket can hold the same client
+// key; hashing the bare key let their sidecars clobber each other (a
+// wrong-tenant read then fails HMAC verification closed, but one tenant's
+// table is still destroyed by the other's write). Hashing keyPrefix+key
+// gives every tenant a distinct sidecar name.
+func GetSidecarKey(keyPrefix, key string) string {
+	keyHash := sha256.Sum256([]byte(keyPrefix + key))
+	return keyPrefix + internalNamespace + "hmac/" + hex.EncodeToString(keyHash[:])
+}
+
+// SidecarLocations returns every B2 key a multipart HMAC sidecar for key may
+// live at, in the order readers must probe them: the composed location first,
+// then the pre-2026-09-20 bucket-root location. The root fallback stays live
+// while a prefix is set because prefixed deployments accumulated root
+// sidecars before the composed location existed, and a bucket that gained its
+// prefix later still holds its pre-prefix sidecars there — the same
+// both-branches rule isInternalKey applies to listings. Without a prefix the
+// two locations coincide and exactly one is returned.
+func SidecarLocations(keyPrefix, key string) []string {
+	composed := GetSidecarKey(keyPrefix, key)
+	root := GetSidecarKey("", key)
+	if composed == root {
+		return []string{composed}
+	}
+	return []string{composed, root}
 }

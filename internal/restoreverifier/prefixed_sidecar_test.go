@@ -25,6 +25,13 @@ import (
 // bucket, for both sidecar formats; the sidecar is deliberately registered ONLY
 // under the client-key name the server writes, so a prefixed-name lookup fails
 // loudly instead of silently passing.
+//
+// Since the ADR-003 sidecar addendum (armor-01f79985) the sidecar also LIVES
+// under the prefix: loads probe <prefix>.armor/hmac/<sha256(prefix+client key)>
+// first and fall back to the bucket-root <sha256(client key)> location
+// pre-fix deployments wrote. The lookups asserted below pin that dual-location
+// order, with the sidecar registered only at the root so the fallback is what
+// actually finds it.
 
 const prefixedSidecarTestPrefix = "commitgraph/"
 
@@ -205,15 +212,20 @@ func TestVerifyObject_PrefixedBucket_MultipartSidecarNamedByClientKey(t *testing
 				Metadata:     meta,
 			}, ModeDual)
 
-			// The sidecar must have been fetched by the client-key name, once
-			// per restore path, and never by the prefixed-key name.
-			wantLookups := []string{sidecarKeyFor(clientKey), sidecarKeyFor(clientKey)}
+			// Each restore path must probe the sidecar locations in ADR-003
+			// addendum order — composed location first, bucket-root fallback
+			// second — with both names derived from the CLIENT key (the
+			// composed name hashes prefix+client key; the prefixed STORED key
+			// must never be hashed into either).
+			composed := backend.GetSidecarKey(prefixedSidecarTestPrefix, clientKey)
+			root := sidecarKeyFor(clientKey)
+			wantLookups := []string{composed, root, composed, root}
 			if len(fb.sidecarLookups) != len(wantLookups) {
 				t.Fatalf("sidecar lookups = %v, want %v", fb.sidecarLookups, wantLookups)
 			}
 			for i, got := range fb.sidecarLookups {
 				if got != wantLookups[i] {
-					t.Fatalf("sidecar lookup %d = %q, want %q (the prefixed key must not be hashed)",
+					t.Fatalf("sidecar lookup %d = %q, want %q (composed-then-root probe order)",
 						i, got, wantLookups[i])
 				}
 			}

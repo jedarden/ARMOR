@@ -139,13 +139,24 @@ type FormatMigrator struct {
 	// idx is the manifest index used to skip HeadObject calls
 	idx *manifest.Index
 
+	// keyPrefix is the ADR-001 shared-bucket prefix (normalized, trailing
+	// slash). The backend does not apply it — callers pass prefixed keys — so
+	// the migrator composes it into its own internal keys: migration state and
+	// sidecar loads resolve beneath <keyPrefix>.armor/ per ADR-001's "Internal
+	// Namespaces" and the ADR-003 sidecar addendum. Empty means the bucket
+	// root, which is byte-for-byte the pre-2026-09-20 behavior.
+	keyPrefix string
+
 	// state tracks migration progress
 	state     *MigrationState
 	stateMu   sync.Mutex
-	statePath string // .armor/migration-state.json
+	statePath string // <keyPrefix>.armor/migration-state.json
 }
 
-// NewFormatMigrator creates a new format migrator.
+// NewFormatMigrator creates a new format migrator. The migrator resolves
+// internal state at the bucket root; prefixed deployments must chain
+// WithKeyPrefix so state lands inside the tenant namespace (a B2 key scoped
+// to namePrefix <tenant>/ is denied bucket-root writes).
 func NewFormatMigrator(b backend.Backend, bucket string, mek []byte, keyID string, currentWriteVersion uint8, includeVersions []string, idx *manifest.Index) *FormatMigrator {
 	return &FormatMigrator{
 		backend:             b,
@@ -157,6 +168,34 @@ func NewFormatMigrator(b backend.Backend, bucket string, mek []byte, keyID strin
 		idx:                 idx,
 		statePath:           ".armor/migration-state.json",
 	}
+}
+
+// WithKeyPrefix sets the ADR-001 shared-bucket prefix the migrator resolves
+// its internal .armor/ namespace beneath. prefix must be normalized exactly
+// as config.normalizePrefix produces — empty, or ending in exactly one slash.
+//
+// Migration state is progress bookkeeping, not read state for live objects,
+// so only the READ side falls back to the bucket root (a migration started
+// before the composition resumes instead of restarting); saves always target
+// the composed location, which moves the state into the tenant namespace
+// from the next save on (ADR-003 addendum).
+func (fm *FormatMigrator) WithKeyPrefix(prefix string) *FormatMigrator {
+	fm.keyPrefix = prefix
+	fm.statePath = prefix + ".armor/migration-state.json"
+	return fm
+}
+
+// isInternalKey reports whether key is an internal ARMOR object key — at the
+// bucket root, or composed beneath the ADR-001 prefix (both branches stay
+// live for buckets that gained their prefix after ARMOR had been writing to
+// the root). Backend List already filters both; the walk keeps its own guard
+// so a backend that leaks internal keys into listings cannot feed
+// bookkeeping objects into the migration pipeline.
+func (fm *FormatMigrator) isInternalKey(key string) bool {
+	if strings.HasPrefix(key, ".armor/") {
+		return true
+	}
+	return fm.keyPrefix != "" && strings.HasPrefix(key, fm.keyPrefix+".armor/")
 }
 
 // Migrate performs the format migration, re-encrypting all objects with the current write format.
@@ -219,7 +258,7 @@ func (fm *FormatMigrator) Migrate(ctx context.Context, dryRun bool, concurrency 
 
 		for _, obj := range listResult.Objects {
 			// Skip internal ARMOR objects (these are also excluded from TotalObjects count)
-			if len(obj.Key) >= 7 && obj.Key[:7] == ".armor/" {
+			if fm.isInternalKey(obj.Key) {
 				// Don't increment SkippedObjects - these were never counted in TotalObjects
 				continue
 			}
@@ -566,7 +605,8 @@ func (fm *FormatMigrator) decryptSingleObject(armorMeta *backend.ARMORMetadata, 
 
 // decryptMultipartObject decrypts a multipart object.
 // Multipart objects have no embedded envelope header; the HMAC table is stored
-// in a sidecar at .armor/hmac/<sha256(key)>.
+// in a sidecar at the location GetSidecarKey computes (ADR-003 sidecar
+// addendum).
 func (fm *FormatMigrator) decryptMultipartObject(armorMeta *backend.ARMORMetadata, key string, reader io.Reader) ([]byte, error) {
 	// Unwrap DEK
 	dek, err := crypto.UnwrapDEK(fm.mek, armorMeta.WrappedDEK)
@@ -602,27 +642,33 @@ func (fm *FormatMigrator) decryptMultipartObject(armorMeta *backend.ARMORMetadat
 	return plaintext, nil
 }
 
-// loadHMCTableFromSidecar loads the HMAC table for a multipart object from its sidecar.
-// The sidecar is stored at .armor/hmac/<sha256(key)>.
+// loadHMCTableFromSidecar loads the HMAC table for a multipart object from its
+// sidecar. key is the STORED object key the walk addressed the ciphertext by;
+// the sidecar is named by the CLIENT key beneath <keyPrefix>.armor/hmac/
+// (ADR-003 sidecar addendum), so the prefix comes off before hashing — with
+// no prefix set the two coincide and this is a no-op. The pre-2026-09-20
+// bucket-root sidecar is probed as a fallback, so sidecars written before the
+// composition keep migrating.
 func (fm *FormatMigrator) loadHMCTableFromSidecar(key string) ([]byte, error) {
-	// Compute SHA-256 of the key to get the sidecar path
-	keySHA := sha256.Sum256([]byte(key))
-	sidecarPath := fmt.Sprintf(".armor/hmac/%x", keySHA)
+	clientKey := strings.TrimPrefix(key, fm.keyPrefix)
 
-	// Read the sidecar
-	reader, _, err := fm.backend.GetDirect(context.Background(), fm.bucket, sidecarPath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read HMAC sidecar: %w", err)
+	var lastErr error
+	for _, sidecarPath := range backend.SidecarLocations(fm.keyPrefix, clientKey) {
+		reader, _, err := fm.backend.GetDirect(context.Background(), fm.bucket, sidecarPath)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+
+		hmacTable, err := io.ReadAll(reader)
+		reader.Close()
+		if err != nil {
+			return nil, fmt.Errorf("failed to read HMAC table: %w", err)
+		}
+
+		return hmacTable, nil
 	}
-	defer reader.Close()
-
-	// Read the entire HMAC table
-	hmacTable, err := io.ReadAll(reader)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read HMAC table: %w", err)
-	}
-
-	return hmacTable, nil
+	return nil, fmt.Errorf("failed to read HMAC sidecar: %w", lastErr)
 }
 
 // encryptAsSingle encrypts plaintext as a single-PUT object with the current write format.
@@ -918,25 +964,45 @@ func (fm *FormatMigrator) initOrLoadState(ctx context.Context, dryRun bool, conc
 	return nil
 }
 
-// loadState loads the migration state from storage.
+// stateLocations returns every B2 key the migration state may live at, in
+// probe order: the composed location first, then the pre-2026-09-20 bucket
+// root for state written before the composition. Without a prefix the two
+// coincide and exactly one is returned.
+func (fm *FormatMigrator) stateLocations() []string {
+	if fm.keyPrefix == "" {
+		return []string{fm.statePath}
+	}
+	return []string{fm.statePath, ".armor/migration-state.json"}
+}
+
+// loadState loads the migration state from storage, probing the composed
+// location first and then the bucket root (see stateLocations). An unreadable
+// location (absent, or denied to a namePrefix-scoped B2 key) falls through to
+// the next; a location that reads but fails to parse is returned as an error,
+// not skipped — resuming past corrupt state would silently re-migrate.
 func (fm *FormatMigrator) loadState(ctx context.Context) (*MigrationState, error) {
-	reader, _, err := fm.backend.GetDirect(ctx, fm.bucket, fm.statePath)
-	if err != nil {
-		return nil, err
-	}
-	defer reader.Close()
+	var lastErr error
+	for _, statePath := range fm.stateLocations() {
+		reader, _, err := fm.backend.GetDirect(ctx, fm.bucket, statePath)
+		if err != nil {
+			lastErr = err
+			continue
+		}
 
-	data, err := io.ReadAll(reader)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read state: %w", err)
-	}
+		data, err := io.ReadAll(reader)
+		reader.Close()
+		if err != nil {
+			return nil, fmt.Errorf("failed to read state: %w", err)
+		}
 
-	var state MigrationState
-	if err := json.Unmarshal(data, &state); err != nil {
-		return nil, fmt.Errorf("failed to parse state: %w", err)
-	}
+		var state MigrationState
+		if err := json.Unmarshal(data, &state); err != nil {
+			return nil, fmt.Errorf("failed to parse state: %w", err)
+		}
 
-	return &state, nil
+		return &state, nil
+	}
+	return nil, lastErr
 }
 
 // saveState saves the migration state to storage.
@@ -984,12 +1050,13 @@ func (fm *FormatMigrator) countObjects(ctx context.Context) error {
 		}
 
 		for _, obj := range listResult.Objects {
-			// Note: .armor/ objects are already filtered by the backend's List method
-			// (for MockBackend in tests, this is done in the List implementation)
+			// Note: .armor/ objects are already filtered by the backend's List
+			// method (for MockBackend in tests, this is done in the List
+			// implementation, root location only — hence the prefix-aware guard)
 
 			// Skip internal ARMOR objects - these are not counted in TotalObjects
 			// and are also not counted as SkippedObjects (they never enter the pipeline)
-			if len(obj.Key) >= 7 && obj.Key[:7] == ".armor/" {
+			if fm.isInternalKey(obj.Key) {
 				continue
 			}
 

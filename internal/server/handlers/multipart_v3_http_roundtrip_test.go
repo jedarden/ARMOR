@@ -2,7 +2,6 @@ package handlers_test
 
 import (
 	"bytes"
-	"crypto/sha256"
 	"fmt"
 	"math/rand"
 	"net/http"
@@ -11,6 +10,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/jedarden/armor/internal/backend"
 	"github.com/jedarden/armor/internal/server/handlers"
 )
 
@@ -233,10 +233,11 @@ func uploadV3PartsConcurrently(t *testing.T, h *handlers.Handlers, bucket, key, 
 }
 
 // v3SidecarKey reproduces the sidecar naming rule shared by the writer and both
-// v3 read paths: .armor/hmac/<sha256(object key)>, relative to the bucket.
-func v3SidecarKey(bucket, key string) string {
-	sum := sha256.Sum256([]byte(key))
-	return bucket + "/.armor/hmac/" + fmt.Sprintf("%x", sum)
+// v3 read paths since the ADR-003 sidecar addendum (armor-01f79985):
+// <prefix>.armor/hmac/<sha256(prefix + object key)>, relative to the bucket.
+// An empty prefix yields the pre-2026-09-20 bucket-root location.
+func v3SidecarKey(bucket, prefix, key string) string {
+	return bucket + "/" + backend.GetSidecarKey(prefix, key)
 }
 
 // TestMultipartV3SidecarUsesClientKeyUnderPrefix is the v3 sibling of
@@ -266,15 +267,15 @@ func TestMultipartV3SidecarUsesClientKeyUnderPrefix(t *testing.T) {
 	etags := uploadV3PartsConcurrently(t, h, bucket, key, uploadID, parts, 4)
 	completeMultipart(t, h, bucket, key, uploadID, etags)
 
-	// The sidecar must exist under sha256 of the CLIENT key — the name the
-	// writer chose — and must NOT exist under sha256 of the prefixed storage
-	// key, which is what the broken readers asked for.
+	// The sidecar must exist under the composed CLIENT-key name — the name
+	// the writer chose — and must NOT exist under the name a reader that
+	// hashed the prefixed storage key would ask for.
 	rb.mu.Lock()
-	_, sidecarAtClientKey := rb.objects[v3SidecarKey(bucket, key)]
-	_, sidecarAtPrefixedKey := rb.objects[v3SidecarKey(bucket, prefix+key)]
+	_, sidecarAtClientKey := rb.objects[v3SidecarKey(bucket, prefix, key)]
+	_, sidecarAtPrefixedKey := rb.objects[v3SidecarKey(bucket, prefix, prefix+key)]
 	rb.mu.Unlock()
 	if !sidecarAtClientKey {
-		t.Fatalf("v3 sidecar missing at .armor/hmac/<sha256(%q)>", key)
+		t.Fatalf("v3 sidecar missing at %s/.armor/hmac/<sha256(prefix+%q)>", prefix, key)
 	}
 	if sidecarAtPrefixedKey {
 		t.Errorf("v3 sidecar was written under the PREFIXED key %q; readers and writers disagree", prefix+key)

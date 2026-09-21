@@ -118,9 +118,12 @@ func (h *Handlers) multipartLock(lockKey string) *sync.Mutex {
 }
 
 // getMultipartManager returns the multipart state manager for a given bucket.
-// The manager is created on first use per bucket.
+// The manager is created on first use per bucket and resolves the internal
+// .armor/ namespace beneath the ADR-001 tenant prefix when one is configured,
+// so multipart state and HMAC sidecars land inside the tenant's namespace —
+// a B2 key scoped to namePrefix <tenant>/ is denied bucket-root writes.
 func (h *Handlers) getMultipartManager(bucket string) *backend.MultipartStateManager {
-	return backend.NewMultipartStateManager(h.backend, bucket)
+	return backend.NewMultipartStateManager(h.backend, bucket).WithKeyPrefix(h.config.Prefix)
 }
 
 // New creates a new Handlers instance.
@@ -1261,7 +1264,7 @@ func (h *Handlers) handleFullObjectStream(w http.ResponseWriter, r *http.Request
 
 	if isMultipart {
 		// Multipart object: HMAC table is in sidecar, no embedded header
-		manager := backend.NewMultipartStateManager(h.backend, bucket)
+		manager := h.getMultipartManager(bucket)
 		sidecar, err := manager.LoadHMACTable(ctx, key)
 		if err != nil {
 			h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to load HMAC table from sidecar: %v", err), 500)
@@ -1884,7 +1887,7 @@ func (h *Handlers) handleRangeRequest(w http.ResponseWriter, r *http.Request, bu
 
 	if isMultipart {
 		// Multipart object: load HMAC table from sidecar, no embedded header
-		manager := backend.NewMultipartStateManager(h.backend, bucket)
+		manager := h.getMultipartManager(bucket)
 		sidecar, err := manager.LoadHMACTable(ctx, key)
 		if err != nil {
 			h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to load HMAC table from sidecar: %v", err), 500)
@@ -3089,7 +3092,7 @@ func (h *Handlers) CreateMultipartUpload(w http.ResponseWriter, r *http.Request,
 	// The format version is fixed at CreateMultipartUpload time based on the server's
 	// ARMOR_FORMAT_VERSION configuration and does not change during the upload's lifetime.
 	formatVersion := h.config.FormatWriteVersion
-	manager := backend.NewMultipartStateManager(h.backend, bucket)
+	manager := h.getMultipartManager(bucket)
 
 	if formatVersion == 3 {
 		// V3 format: save metadata to .armor/multipart/<id>/meta.json
@@ -3203,7 +3206,7 @@ func (h *Handlers) UploadPart(w http.ResponseWriter, r *http.Request, bucket, ke
 
 	// Load multipart state/metadata
 	// Try v3 format first (meta.json), fall back to v2 format (.state file)
-	manager := backend.NewMultipartStateManager(h.backend, bucket)
+	manager := h.getMultipartManager(bucket)
 
 	// Try v3 format
 	metadata, errV3 := manager.LoadMetadataV3(ctx, uploadID)
@@ -3732,7 +3735,7 @@ func (h *Handlers) CompleteMultipartUpload(w http.ResponseWriter, r *http.Reques
 
 	// Load multipart state/metadata
 	// Try v3 format first (meta.json), fall back to v2 format (.state file)
-	manager := backend.NewMultipartStateManager(h.backend, bucket)
+	manager := h.getMultipartManager(bucket)
 
 	// Try v3 format
 	metadata, errV3 := manager.LoadMetadataV3(ctx, uploadID)
@@ -4270,7 +4273,7 @@ func (h *Handlers) AbortMultipartUpload(w http.ResponseWriter, r *http.Request, 
 
 	// Load multipart state/metadata to verify it exists
 	// Try v3 format first (meta.json), fall back to v2 format (.state file)
-	manager := backend.NewMultipartStateManager(h.backend, bucket)
+	manager := h.getMultipartManager(bucket)
 
 	// Try v3 format
 	metadata, errV3 := manager.LoadMetadataV3(ctx, uploadID)
@@ -4314,7 +4317,7 @@ func (h *Handlers) ListParts(w http.ResponseWriter, r *http.Request, bucket, key
 
 	// Load multipart state/metadata to get plaintext sizes
 	// Try v3 format first (meta.json), fall back to v2 format (.state file)
-	manager := backend.NewMultipartStateManager(h.backend, bucket)
+	manager := h.getMultipartManager(bucket)
 
 	// Try v3 format
 	metadata, errV3 := manager.LoadMetadataV3(ctx, uploadID)

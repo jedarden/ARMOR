@@ -34,7 +34,7 @@ func init() {
 	decryptFlags.StringVar(&b2BucketFlag, "b2-bucket", "", "B2 bucket (alternative to B2 URL)")
 	decryptFlags.StringVar(&b2RegionFlag, "b2-region", "", "B2 region (e.g., us-west-004); overrides ARMOR_B2_REGION env var")
 	decryptFlags.StringVar(&b2EndpointFlag, "b2-endpoint", "", "B2 S3 endpoint (e.g., https://s3.us-west-004.backblazeb2.com); overrides ARMOR_B2_ENDPOINT env var")
-	decryptFlags.StringVar(&b2PrefixFlag, "b2-prefix", normalizePrefix(os.Getenv("ARMOR_PREFIX")), "ADR-001 key prefix the bucket stores objects under (default: ARMOR_PREFIX). Only affects multipart HMAC sidecar lookup: the sidecar is named by the UNprefixed client key, while the ciphertext is addressed by the prefixed one")
+	decryptFlags.StringVar(&b2PrefixFlag, "b2-prefix", normalizePrefix(os.Getenv("ARMOR_PREFIX")), "ADR-001 key prefix the bucket stores objects under (default: ARMOR_PREFIX). Only affects multipart HMAC sidecar lookup: the sidecar lives at <prefix>.armor/hmac/ and is named by the UNprefixed client key, while the ciphertext is addressed by the prefixed one")
 	decryptFlags.StringVar(&b2KeyID, "key-id", "", "Key ID for multi-key MEK (from x-amz-meta-armor-key-id)")
 	decryptFlags.StringVar(&wrappedDEKFlag, "wrapped-dek", "", "Wrapped DEK (base64, for local files)")
 	decryptFlags.StringVar(&sidecarFlag, "sidecar", "", "Path to a JSON HMAC sidecar file for a local multipart object (ADR-003 headerless layout)")
@@ -1250,12 +1250,15 @@ func readB2MultipartCiphertext(ctx context.Context, b2Backend backend.Backend, s
 		return nil, nil, nil, nil, errors.New("multipart object missing IV metadata (x-amz-meta-armor-iv)")
 	}
 
-	// The sidecar is named sha256 of the CLIENT key, because the server's
+	// The sidecar is named by the CLIENT key, because the server's
 	// CompleteMultipartUpload saves it with the unprefixed key while the
 	// assembled ciphertext lives under applyPrefix(key). The operator supplies
 	// the stored key — that is the only form that addresses the ciphertext — so
 	// the configured prefix comes back off before hashing. With no prefix set
-	// (or an unprefixed bucket) the two coincide and this is a no-op.
+	// (or an unprefixed bucket) the two coincide and this is a no-op. The
+	// sidecar LOCATION is composed with the prefix (ADR-003 sidecar addendum):
+	// <prefix>.armor/hmac/<sha256(prefix+client key)>, with the pre-2026-09-20
+	// bucket-root location still probed as a fallback.
 	clientKey := strings.TrimPrefix(src.Path, b2PrefixFlag)
 	if decryptVerboseFlag && clientKey != src.Path {
 		fmt.Fprintf(os.Stderr, "Multipart sidecar: stored key %q, client key %q (prefix %q)\n", src.Path, clientKey, b2PrefixFlag)
@@ -1263,9 +1266,9 @@ func readB2MultipartCiphertext(ctx context.Context, b2Backend backend.Backend, s
 
 	// For v3, load the v3 sidecar format
 	if armorMeta.Version == 3 {
-		sidecarV3, err = backend.NewMultipartStateManager(b2Backend, src.Bucket).LoadHMACTableV3(ctx, clientKey)
+		sidecarV3, err = backend.NewMultipartStateManager(b2Backend, src.Bucket).WithKeyPrefix(b2PrefixFlag).LoadHMACTableV3(ctx, clientKey)
 		if err != nil {
-			return nil, nil, nil, nil, fmt.Errorf("fetch v3 HMAC sidecar from .armor/hmac/<sha256(key)>: %w", err)
+			return nil, nil, nil, nil, fmt.Errorf("fetch v3 HMAC sidecar from <prefix>.armor/hmac/<sha256(prefix+key)>: %w", err)
 		}
 
 		// The sidecar also says how many ciphertext bytes to read: per-block
@@ -1303,9 +1306,9 @@ func readB2MultipartCiphertext(ctx context.Context, b2Backend backend.Backend, s
 	}
 
 	// For v1/v2, load the regular sidecar format
-	sidecar, err := backend.NewMultipartStateManager(b2Backend, src.Bucket).LoadHMACTable(ctx, clientKey)
+	sidecar, err := backend.NewMultipartStateManager(b2Backend, src.Bucket).WithKeyPrefix(b2PrefixFlag).LoadHMACTable(ctx, clientKey)
 	if err != nil {
-		return nil, nil, nil, nil, fmt.Errorf("fetch multipart HMAC sidecar from .armor/hmac/<sha256(key)>: %w", err)
+		return nil, nil, nil, nil, fmt.Errorf("fetch multipart HMAC sidecar from <prefix>.armor/hmac/<sha256(prefix+key)>: %w", err)
 	}
 	hmacTable = make([]byte, 0, len(sidecar.BlockHMACs)*crypto.HMACSize)
 	for _, h := range sidecar.BlockHMACs {

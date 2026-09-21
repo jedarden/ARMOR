@@ -119,14 +119,17 @@ func assertManifestResolutionLookups(t *testing.T, fb *fakeBackend, storedKey, c
 
 	wantManifest := manifestObjectKeyFor(storedKey)
 	wantSidecar := sidecarKeyFor(clientKey)
+	// The sidecar load probes the ADR-003 addendum composed location before
+	// the bucket-root fallback, so both names are expected GetDirect keys.
+	wantComposedSidecar := backend.GetSidecarKey(manifestTestPrefix, clientKey)
 	visits := 0
 	for _, got := range fb.sidecarLookups {
 		switch got {
 		case wantManifest:
 			visits++
-		case wantSidecar:
+		case wantSidecar, wantComposedSidecar:
 		default:
-			t.Fatalf("unexpected GetDirect key %q (want only %q and %q)", got, wantManifest, wantSidecar)
+			t.Fatalf("unexpected GetDirect key %q (want only %q, %q and %q)", got, wantManifest, wantSidecar, wantComposedSidecar)
 		}
 	}
 	if visits != wantPathVisits {

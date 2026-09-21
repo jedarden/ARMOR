@@ -110,10 +110,13 @@ func hasArmorMetadataHeader(meta map[string]string) bool {
 
 // verifyClientKey maps a stored key to the client key the multipart HMAC
 // sidecar is named by. It returns the UNprefixed client key itself — the
-// manager's Load hashes it into .armor/hmac/<sha256(key)> — because
-// CompleteMultipartUpload saves the sidecar before applyPrefix while the
-// assembled ciphertext is stored under the prefixed key (armor-1b272971 —
-// the same defect the server read path and the restore-verifier fixed).
+// manager's Load hashes it into <prefix>.armor/hmac/<sha256(prefix+key)> —
+// because CompleteMultipartUpload saves the sidecar before applyPrefix while
+// the assembled ciphertext is stored under the prefixed key (armor-1b272971 —
+// the same defect the server read path and the restore-verifier fixed). The
+// managers here are built WithKeyPrefix(b2PrefixFlag) so the composed
+// location is probed first, with the pre-2026-09-20 bucket-root sidecar as
+// fallback (ADR-003 sidecar addendum).
 func verifyClientKey(storedKey string) string {
 	return strings.TrimPrefix(storedKey, b2PrefixFlag)
 }
@@ -174,7 +177,7 @@ func quickVerifyMultipartObject(ctx context.Context, b2 backend.Backend, ks *ver
 
 	switch armorMeta.Version {
 	case 3:
-		sidecar, err := backend.NewMultipartStateManager(b2, bucket).LoadHMACTableV3(ctx, verifyClientKey(key))
+		sidecar, err := backend.NewMultipartStateManager(b2, bucket).WithKeyPrefix(b2PrefixFlag).LoadHMACTableV3(ctx, verifyClientKey(key))
 		if err != nil {
 			result.Status = "ERROR"
 			result.Error = fmt.Sprintf("Failed to load v3 multipart HMAC sidecar: %v", err)
@@ -203,7 +206,7 @@ func quickVerifyMultipartObject(ctx context.Context, b2 backend.Backend, ks *ver
 		// Loading the flat v1/v2 sidecar doubles as its structural check: a
 		// missing or unparseable sidecar fails here; the payload itself is
 		// only consumed by the full walk.
-		if _, err := backend.NewMultipartStateManager(b2, bucket).LoadHMACTable(ctx, verifyClientKey(key)); err != nil {
+		if _, err := backend.NewMultipartStateManager(b2, bucket).WithKeyPrefix(b2PrefixFlag).LoadHMACTable(ctx, verifyClientKey(key)); err != nil {
 			result.Status = "ERROR"
 			result.Error = fmt.Sprintf("Failed to load multipart HMAC sidecar: %v", err)
 			result.Duration = time.Since(startTime).Seconds()
@@ -282,7 +285,7 @@ func fullVerifyMultipartObject(ctx context.Context, b2 backend.Backend, ks *veri
 	var plaintext []byte
 	switch armorMeta.Version {
 	case 3:
-		sidecar, err := backend.NewMultipartStateManager(b2, bucket).LoadHMACTableV3(ctx, verifyClientKey(key))
+		sidecar, err := backend.NewMultipartStateManager(b2, bucket).WithKeyPrefix(b2PrefixFlag).LoadHMACTableV3(ctx, verifyClientKey(key))
 		if err != nil {
 			result.Status = "ERROR"
 			result.Error = fmt.Sprintf("Failed to load v3 multipart HMAC sidecar: %v", err)
@@ -298,7 +301,7 @@ func fullVerifyMultipartObject(ctx context.Context, b2 backend.Backend, ks *veri
 			return result
 		}
 	default:
-		sidecar, err := backend.NewMultipartStateManager(b2, bucket).LoadHMACTable(ctx, verifyClientKey(key))
+		sidecar, err := backend.NewMultipartStateManager(b2, bucket).WithKeyPrefix(b2PrefixFlag).LoadHMACTable(ctx, verifyClientKey(key))
 		if err != nil {
 			result.Status = "ERROR"
 			result.Error = fmt.Sprintf("Failed to load multipart HMAC sidecar: %v", err)

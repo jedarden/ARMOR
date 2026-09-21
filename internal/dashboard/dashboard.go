@@ -100,6 +100,12 @@ type Dashboard struct {
 	dashboardCred  *DashboardCredential // Named credential for S3 operations
 	serverBaseURL  string               // Base URL for S3 endpoint proxying
 	presignEnabled bool                 // Whether presign feature is enabled
+	// keyPrefix is the ADR-001 shared-bucket prefix (normalized, trailing
+	// slash). The rotation-state read resolves beneath <keyPrefix>.armor/
+	// per ADR-001's "Internal Namespaces" and the ADR-003 sidecar addendum,
+	// falling back to the bucket root for state written before the
+	// composition. Empty means the bucket root.
+	keyPrefix string
 }
 
 // DashboardCredential holds credential info for S3 operations
@@ -129,6 +135,26 @@ func NewWithAuth(b backend.Backend, bucket string, m *metrics.Metrics, user, pas
 	return d
 }
 
+// WithKeyPrefix sets the ADR-001 shared-bucket prefix the dashboard resolves
+// internal .armor/ keys beneath (currently the rotation-status read). prefix
+// must be normalized exactly as config.normalizePrefix produces — empty, or
+// ending in exactly one slash.
+func (d *Dashboard) WithKeyPrefix(prefix string) *Dashboard {
+	d.keyPrefix = prefix
+	return d
+}
+
+// rotationStateLocations returns every B2 key the rotation state may live at,
+// in probe order: the composed location first, then the pre-2026-09-20 bucket
+// root for state written before the composition. Without a prefix the two
+// coincide and exactly one is returned.
+func (d *Dashboard) rotationStateLocations() []string {
+	if d.keyPrefix == "" {
+		return []string{".armor/rotation-state.json"}
+	}
+	return []string{d.keyPrefix + ".armor/rotation-state.json", ".armor/rotation-state.json"}
+}
+
 // KeyRotateStatusHandler returns the current key rotation status.
 // This polls the rotation state file from B2 for progress information.
 func (d *Dashboard) KeyRotateStatusHandler() http.HandlerFunc {
@@ -151,11 +177,20 @@ func (d *Dashboard) keyRotateStatusHandlerImpl() http.HandlerFunc {
 		ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 		defer cancel()
 
-		// Try to read the rotation state file
-		statePath := ".armor/rotation-state.json"
-		reader, _, err := d.backend.GetDirect(ctx, d.bucket, statePath)
-		if err != nil {
-			// No rotation state file means no rotation in progress
+		// Try to read the rotation state file, probing the composed location
+		// first and then the bucket root for state written before the
+		// composition (ADR-003 addendum).
+		var reader io.ReadCloser
+		for _, statePath := range d.rotationStateLocations() {
+			r, _, err := d.backend.GetDirect(ctx, d.bucket, statePath)
+			if err != nil {
+				continue
+			}
+			reader = r
+			break
+		}
+		if reader == nil {
+			// No rotation state file anywhere means no rotation in progress
 			w.Header().Set("Content-Type", "application/json")
 			json.NewEncoder(w).Encode(map[string]interface{}{
 				"status":  "none",

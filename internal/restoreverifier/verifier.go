@@ -691,7 +691,7 @@ func normalizeExcludedPrefix(prefix string) string {
 // clientKey maps a backend-STORED object key to the client key the server's
 // handler layer would have seen for it. Every backend call here takes the
 // stored key — List returns stored keys, and Head/GetRange address the object
-// by them — but the multipart HMAC sidecar is named sha256 of the CLIENT key:
+// by them — but the multipart HMAC sidecar is named by the CLIENT key:
 // CompleteMultipartUpload calls SaveHMACTable(V3) with the unprefixed key while
 // the assembled ciphertext is stored under applyPrefix(key). LoadHMACTable and
 // LoadHMACTableV3 must therefore be handed the stripped key, or on any bucket
@@ -699,6 +699,11 @@ func normalizeExcludedPrefix(prefix string) string {
 // fails with a sidecar 404 — exactly the objects a DR exercise most needs to
 // see pass. Single-PUT objects carry their HMAC table inline and are unaffected.
 // Same defect the v3 server read paths had (armor-1b272971).
+//
+// The sidecar LOCATION is composed with the bucket's prefix (ADR-003 sidecar
+// addendum), which is why the managers here are built WithKeyPrefix: the
+// composed name hashes prefix+client key. Loads still fall back to the
+// bucket-root sidecars pre-fix deployments wrote.
 func (v *Verifier) clientKey(bucket, storedKey string) string {
 	return strings.TrimPrefix(storedKey, v.getBucketPrefix(bucket))
 }
@@ -1523,7 +1528,7 @@ func (v *Verifier) restoreViaARMOR(ctx context.Context, bucket, key string) ([]b
 
 		// For v3 multipart, use the v3 sidecar format
 		if armorMeta.Version == 3 {
-			sidecar, err := backend.NewMultipartStateManager(v.backend, bucket).LoadHMACTableV3(ctx, v.clientKey(bucket, key))
+			sidecar, err := backend.NewMultipartStateManager(v.backend, bucket).WithKeyPrefix(v.getBucketPrefix(bucket)).LoadHMACTableV3(ctx, v.clientKey(bucket, key))
 			if err != nil {
 				return nil, fmt.Errorf("ARMOR path: failed to load v3 sidecar: %w", err)
 			}
@@ -1539,7 +1544,7 @@ func (v *Verifier) restoreViaARMOR(ctx context.Context, bucket, key string) ([]b
 		}
 
 		// v1/v2 multipart
-		sidecar, err := backend.NewMultipartStateManager(v.backend, bucket).LoadHMACTable(ctx, v.clientKey(bucket, key))
+		sidecar, err := backend.NewMultipartStateManager(v.backend, bucket).WithKeyPrefix(v.getBucketPrefix(bucket)).LoadHMACTable(ctx, v.clientKey(bucket, key))
 		if err != nil {
 			return nil, fmt.Errorf("ARMOR path: failed to load HMAC sidecar: %w", err)
 		}
@@ -1760,7 +1765,7 @@ func (v *Verifier) restoreViaDirectDecrypt(ctx context.Context, bucket, key stri
 			// block index) pair, so the flat whole-object table a single
 			// DecryptV3 call consumes silently produced an empty plaintext for
 			// every multi-part sidecar (armor-86a90341).
-			sidecar, err := backend.NewMultipartStateManager(v.backend, bucket).LoadHMACTableV3(ctx, v.clientKey(bucket, key))
+			sidecar, err := backend.NewMultipartStateManager(v.backend, bucket).WithKeyPrefix(v.getBucketPrefix(bucket)).LoadHMACTableV3(ctx, v.clientKey(bucket, key))
 			if err != nil {
 				return nil, fmt.Errorf("direct path: failed to load v3 sidecar: %w", err)
 			}
@@ -1957,7 +1962,7 @@ func (v *Verifier) readMultipartCiphertext(ctx context.Context, bucket, key stri
 	// HMAC table from the JSON sidecar, flattened to one HMACSize entry per block.
 	// Named by the client key, not the stored key this function reads the
 	// ciphertext with — see clientKey.
-	sidecar, err := backend.NewMultipartStateManager(v.backend, bucket).LoadHMACTable(ctx, v.clientKey(bucket, key))
+	sidecar, err := backend.NewMultipartStateManager(v.backend, bucket).WithKeyPrefix(v.getBucketPrefix(bucket)).LoadHMACTable(ctx, v.clientKey(bucket, key))
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("direct path: failed to load multipart HMAC sidecar: %w", err)
 	}

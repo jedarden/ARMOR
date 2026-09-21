@@ -23,6 +23,7 @@ import (
 // NoSuchUpload even though the assembled object is already durable.
 type ambiguousCompleteBackend struct {
 	*recordingBackend
+	prefix               string // ADR-001 prefix the state key composes (may be empty)
 	corruptFinal         bool
 	recoveryLastModified time.Time
 }
@@ -38,8 +39,9 @@ func (b *ambiguousCompleteBackend) CompleteMultipartUpload(
 	// Model B2's whole-second LastModified precision. The upload state is
 	// written before the part is completed, so this is a valid same-second
 	// completion even though it is earlier than state.Created by nanoseconds.
+	// The state key composes the ADR-001 prefix (ADR-003 sidecar addendum).
 	b.mu.Lock()
-	stateData := append([]byte(nil), b.objects[bucket+"/.armor/multipart/"+uploadID+".state"]...)
+	stateData := append([]byte(nil), b.objects[bucket+"/"+b.prefix+".armor/multipart/"+uploadID+".state"]...)
 	b.mu.Unlock()
 	var state backend.MultipartState
 	if err := json.Unmarshal(stateData, &state); err != nil {
@@ -80,6 +82,7 @@ func ambiguousCompletionTestHandler(
 	}
 	rb := &ambiguousCompleteBackend{
 		recordingBackend: newRecordingBackend(),
+		prefix:           cfg.Prefix,
 		corruptFinal:     corruptFinal,
 	}
 	km, err := keymanager.New(mek, nil, nil)

@@ -260,7 +260,7 @@ func New(cfg *config.Config) (*Server, error) {
 	serverBaseURL := "http://" + cfg.Listen
 
 	dash := dashboard.NewWithAuth(primaryBackend, cfg.Bucket, metrics.DefaultMetrics,
-		cfg.DashboardUser, cfg.DashboardPass, cfg.DashboardToken, dashboardCred, serverBaseURL, cfg.PresignEnabled)
+		cfg.DashboardUser, cfg.DashboardPass, cfg.DashboardToken, dashboardCred, serverBaseURL, cfg.PresignEnabled).WithKeyPrefix(cfg.Prefix)
 
 	// Load manifest index from B2 (startup load).
 	// The manifest is a performance optimisation — errors are logged as warnings
@@ -957,7 +957,7 @@ func (s *Server) rotateKey(w http.ResponseWriter, r *http.Request) {
 		// Get old ring keys for this key ID
 		oldRing := s.keyManager.Ring(keyID)
 
-		rotator = NewKeyRotatorForKey(s.backend, s.config.Bucket, keyID, oldMEK, newMEK, oldRing, s.manifest)
+		rotator = NewKeyRotatorForKey(s.backend, s.config.Bucket, keyID, oldMEK, newMEK, oldRing, s.manifest).WithKeyPrefix(s.config.Prefix)
 	} else {
 		// NEW MODE: Fingerprint-based rotation (no request body)
 		// Re-wraps objects whose fingerprint ≠ active key's fingerprint
@@ -971,7 +971,7 @@ func (s *Server) rotateKey(w http.ResponseWriter, r *http.Request) {
 		// Get old ring keys for this key ID (for unwrapping objects encrypted with retired keys)
 		oldRing := s.keyManager.Ring(keyID)
 
-		rotator = NewFingerprintRotator(s.backend, s.config.Bucket, keyID, activeMEK, oldRing, s.manifest)
+		rotator = NewFingerprintRotator(s.backend, s.config.Bucket, keyID, activeMEK, oldRing, s.manifest).WithKeyPrefix(s.config.Prefix)
 	}
 
 	// Record key rotation start in provenance chain
@@ -1303,7 +1303,7 @@ func (s *Server) migrateFormat(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Migrate toward the validated target (always the configured write version).
-	migrator := NewFormatMigrator(s.backend, s.config.Bucket, key.MEK, key.Name, targetVersion, includeVersions, s.manifest)
+	migrator := NewFormatMigrator(s.backend, s.config.Bucket, key.MEK, key.Name, targetVersion, includeVersions, s.manifest).WithKeyPrefix(s.config.Prefix)
 
 	// Perform migration
 	result, err := migrator.Migrate(r.Context(), dryRun, concurrency)
@@ -1336,7 +1336,7 @@ func (s *Server) handleMigrationProgress(w http.ResponseWriter, r *http.Request)
 	// Note: includeVersions passed here are not used for progress endpoint,
 	// which only loads existing state. The actual include versions come from
 	// the loaded migration state.
-	migrator := NewFormatMigrator(s.backend, s.config.Bucket, key.MEK, key.Name, currentWriteVersion, []string{}, s.manifest)
+	migrator := NewFormatMigrator(s.backend, s.config.Bucket, key.MEK, key.Name, currentWriteVersion, []string{}, s.manifest).WithKeyPrefix(s.config.Prefix)
 
 	// Try to load existing state from backend
 	state, err := migrator.loadState(r.Context())

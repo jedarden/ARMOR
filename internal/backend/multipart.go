@@ -39,7 +39,9 @@ func IsPlaceholderPlaintextSHA(s string) bool {
 
 // MultipartState represents the state of an in-progress multipart upload.
 // This is stored in B2 at .armor/multipart/<upload-id>.state for format version 2,
-// or at .armor/multipart/<upload-id>/meta.json for format version 3.
+// or at .armor/multipart/<upload-id>/meta.json for format version 3 — both
+// resolved beneath <ARMOR_PREFIX>.armor/ when a prefix is in force (ADR-001
+// "Internal Namespaces"; ADR-003 sidecar addendum).
 type MultipartState struct {
 	UploadID       string    `json:"upload_id"`
 	Bucket         string    `json:"bucket"`
@@ -156,14 +158,42 @@ type PartDataV3 struct {
 type MultipartStateManager struct {
 	backend Backend
 	bucket  string // The ARMOR bucket (where .armor/ prefix lives)
+	// keyPrefix is the ADR-001 shared-bucket prefix (normalized, trailing
+	// slash). The backend does not apply it — callers pass prefixed keys — so
+	// the manager composes it into its own internal keys, resolving them
+	// beneath <keyPrefix>.armor/ per ADR-001's "Internal Namespaces" and the
+	// ADR-003 sidecar addendum. Empty means the bucket root.
+	keyPrefix string
 }
 
-// NewMultipartStateManager creates a new MultipartStateManager.
+// NewMultipartStateManager creates a new MultipartStateManager. The manager
+// resolves internal state at the bucket root; prefixed deployments must chain
+// WithKeyPrefix so state lands inside the tenant namespace (a B2 key scoped
+// to namePrefix <tenant>/ is denied bucket-root writes).
 func NewMultipartStateManager(backend Backend, bucket string) *MultipartStateManager {
 	return &MultipartStateManager{
 		backend: backend,
 		bucket:  bucket,
 	}
+}
+
+// WithKeyPrefix sets the ADR-001 shared-bucket prefix this manager resolves
+// its internal .armor/ namespace beneath. prefix must be normalized exactly
+// as config.normalizePrefix produces — empty, or ending in exactly one slash.
+//
+// Multipart state is ephemeral (upload lifetime), so reads do NOT fall back
+// to the bucket root: a rolling deploy strands state for in-flight uploads
+// and clients retry the upload (ADR-003 addendum). HMAC sidecars are
+// persistent read state, so their loads DO fall back — see SidecarLocations.
+func (m *MultipartStateManager) WithKeyPrefix(prefix string) *MultipartStateManager {
+	m.keyPrefix = prefix
+	return m
+}
+
+// internalPrefix is the object-key root this manager resolves internal state
+// under: <keyPrefix>.armor/ when a prefix is in force, .armor/ otherwise.
+func (m *MultipartStateManager) internalPrefix() string {
+	return m.keyPrefix + internalNamespace
 }
 
 // SaveState saves the multipart upload state to B2.
@@ -173,7 +203,7 @@ func (m *MultipartStateManager) SaveState(ctx context.Context, state *MultipartS
 		return fmt.Errorf("failed to marshal multipart state: %w", err)
 	}
 
-	key := fmt.Sprintf(".armor/multipart/%s.state", state.UploadID)
+	key := m.internalPrefix() + fmt.Sprintf("multipart/%s.state", state.UploadID)
 	if err := m.backend.Put(ctx, m.bucket, key, bytes.NewReader(data), int64(len(data)), nil); err != nil {
 		return fmt.Errorf("failed to save multipart state: %w", err)
 	}
@@ -183,7 +213,7 @@ func (m *MultipartStateManager) SaveState(ctx context.Context, state *MultipartS
 
 // LoadState loads the multipart upload state from B2.
 func (m *MultipartStateManager) LoadState(ctx context.Context, uploadID string) (*MultipartState, error) {
-	key := fmt.Sprintf(".armor/multipart/%s.state", uploadID)
+	key := m.internalPrefix() + fmt.Sprintf("multipart/%s.state", uploadID)
 
 	body, _, err := m.backend.GetDirect(ctx, m.bucket, key)
 	if err != nil {
@@ -207,9 +237,10 @@ func (m *MultipartStateManager) LoadState(ctx context.Context, uploadID string) 
 // DeleteState deletes the multipart upload state from B2.
 // For v2 uploads, deletes .armor/multipart/<id>.state
 // For v3 uploads, deletes the entire .armor/multipart/<id>/ directory
+// Both resolve beneath <keyPrefix>.armor/ when a prefix is in force.
 func (m *MultipartStateManager) DeleteState(ctx context.Context, uploadID string) error {
 	// Try v3 format first (directory)
-	prefix := fmt.Sprintf(".armor/multipart/%s/", uploadID)
+	prefix := m.internalPrefix() + fmt.Sprintf("multipart/%s/", uploadID)
 	listResult, err := m.backend.ListRaw(ctx, m.bucket, prefix, "", "", 1000)
 	if err == nil && len(listResult.Objects) > 0 {
 		// V3 format: delete all objects in the directory
@@ -236,7 +267,7 @@ func (m *MultipartStateManager) DeleteState(ctx context.Context, uploadID string
 	}
 
 	// Fall back to v2 format (single .state file)
-	key := fmt.Sprintf(".armor/multipart/%s.state", uploadID)
+	key := m.internalPrefix() + fmt.Sprintf("multipart/%s.state", uploadID)
 	if err := m.backend.Delete(ctx, m.bucket, key); err != nil {
 		return fmt.Errorf("failed to delete multipart state: %w", err)
 	}
@@ -251,7 +282,7 @@ func (m *MultipartStateManager) SaveMetadataV3(ctx context.Context, metadata *Mu
 		return fmt.Errorf("failed to marshal multipart metadata: %w", err)
 	}
 
-	key := fmt.Sprintf(".armor/multipart/%s/meta.json", metadata.UploadID)
+	key := m.internalPrefix() + fmt.Sprintf("multipart/%s/meta.json", metadata.UploadID)
 	if err := m.backend.Put(ctx, m.bucket, key, bytes.NewReader(data), int64(len(data)), nil); err != nil {
 		return fmt.Errorf("failed to save multipart metadata: %w", err)
 	}
@@ -262,7 +293,7 @@ func (m *MultipartStateManager) SaveMetadataV3(ctx context.Context, metadata *Mu
 // LoadMetadataV3 loads the multipart upload metadata from .armor/multipart/<id>/meta.json
 // for format version 3.
 func (m *MultipartStateManager) LoadMetadataV3(ctx context.Context, uploadID string) (*MultipartMetadataV3, error) {
-	key := fmt.Sprintf(".armor/multipart/%s/meta.json", uploadID)
+	key := m.internalPrefix() + fmt.Sprintf("multipart/%s/meta.json", uploadID)
 
 	body, _, err := m.backend.GetDirect(ctx, m.bucket, key)
 	if err != nil {
@@ -291,7 +322,7 @@ func (m *MultipartStateManager) SavePartV3(ctx context.Context, uploadID string,
 		return fmt.Errorf("failed to marshal part data: %w", err)
 	}
 
-	key := fmt.Sprintf(".armor/multipart/%s/part-%d.json", uploadID, partData.PartNumber)
+	key := m.internalPrefix() + fmt.Sprintf("multipart/%s/part-%d.json", uploadID, partData.PartNumber)
 	if err := m.backend.Put(ctx, m.bucket, key, bytes.NewReader(data), int64(len(data)), nil); err != nil {
 		return fmt.Errorf("failed to save part data: %w", err)
 	}
@@ -302,7 +333,7 @@ func (m *MultipartStateManager) SavePartV3(ctx context.Context, uploadID string,
 // LoadPartV3 loads a single part's data from .armor/multipart/<id>/part-<n>.json
 // for format version 3.
 func (m *MultipartStateManager) LoadPartV3(ctx context.Context, uploadID string, partNumber int) (*PartDataV3, error) {
-	key := fmt.Sprintf(".armor/multipart/%s/part-%d.json", uploadID, partNumber)
+	key := m.internalPrefix() + fmt.Sprintf("multipart/%s/part-%d.json", uploadID, partNumber)
 
 	body, _, err := m.backend.GetDirect(ctx, m.bucket, key)
 	if err != nil {
@@ -325,7 +356,7 @@ func (m *MultipartStateManager) LoadPartV3(ctx context.Context, uploadID string,
 
 // ListPartsV3 lists all parts for a v3 multipart upload by reading the part-<n>.json files.
 func (m *MultipartStateManager) ListPartsV3(ctx context.Context, uploadID string) (map[int]*PartDataV3, error) {
-	prefix := fmt.Sprintf(".armor/multipart/%s/part-", uploadID)
+	prefix := m.internalPrefix() + fmt.Sprintf("multipart/%s/part-", uploadID)
 
 	listResult, err := m.backend.ListRaw(ctx, m.bucket, prefix, "", "", 1000)
 	if err != nil {
@@ -386,7 +417,9 @@ func (m *MultipartStateManager) ListPartsV3(ctx context.Context, uploadID string
 }
 
 // HMACTableSidecar represents the HMAC table stored as a sidecar object.
-// For multipart uploads, the HMAC table is stored at .armor/hmac/<sha256(key)>
+// For multipart uploads, the HMAC table is stored at the location GetSidecarKey
+// computes: <ARMOR_PREFIX>.armor/hmac/<sha256(prefix+key)> when a prefix is in
+// force, .armor/hmac/<sha256(key)> otherwise (ADR-003 sidecar addendum).
 type HMACTableSidecar struct {
 	Key        string   `json:"key"`         // Object key
 	BlockHMACs [][]byte `json:"block_hmacs"` // HMAC for each block (v1/v2 format)
@@ -396,7 +429,8 @@ type HMACTableSidecar struct {
 
 // HMACTableSidecarV3 represents the v3 HMAC table stored as a gzip-compressed JSON sidecar.
 // For v3 multipart uploads, the sidecar contains per-part block information with HMACs and
-// ciphertext lengths, stored at .armor/hmac/<sha256(key)>.
+// ciphertext lengths, stored at the location GetSidecarKey computes (see
+// HMACTableSidecar).
 type HMACTableSidecarV3 struct {
 	Version   int          `json:"version"`    // Always 3 for v3 format
 	BlockSize int          `json:"block_size"` // Block size in bytes
@@ -411,11 +445,10 @@ type HMACPartV3 struct {
 	Blocks        [][]string `json:"blocks"`         // Array of [hmac_base64, clen] for each block
 }
 
-// SaveHMACTable saves the HMAC table as a sidecar object.
+// SaveHMACTable saves the HMAC table as a sidecar object at the composed
+// location (see GetSidecarKey).
 func (m *MultipartStateManager) SaveHMACTable(ctx context.Context, key string, hmacs [][]byte, blockSize int, version int) error {
-	// Compute SHA-256 of the key for the sidecar name
-	keyHash := sha256.Sum256([]byte(key))
-	sidecarKey := fmt.Sprintf(".armor/hmac/%x", keyHash)
+	sidecarKey := GetSidecarKey(m.keyPrefix, key)
 
 	sidecar := HMACTableSidecar{
 		Key:        key,
@@ -439,9 +472,7 @@ func (m *MultipartStateManager) SaveHMACTable(ctx context.Context, key string, h
 // SaveHMACTableV3 saves the v3 HMAC table as a gzip-compressed JSON sidecar object.
 // The sidecar format is: {"version":3,"block_size":...,"parts":[{"n","plaintext_len","ciphertext_len","blocks":[[hmac_b64, clen],...]}]}
 func (m *MultipartStateManager) SaveHMACTableV3(ctx context.Context, key string, blockSize int, parts []HMACPartV3) error {
-	// Compute SHA-256 of the key for the sidecar name
-	keyHash := sha256.Sum256([]byte(key))
-	sidecarKey := fmt.Sprintf(".armor/hmac/%x", keyHash)
+	sidecarKey := GetSidecarKey(m.keyPrefix, key)
 
 	sidecar := HMACTableSidecarV3{
 		Version:   3,
@@ -473,68 +504,80 @@ func (m *MultipartStateManager) SaveHMACTableV3(ctx context.Context, key string,
 	return nil
 }
 
-// LoadHMACTable loads the HMAC table from a sidecar object.
+// LoadHMACTable loads the HMAC table from a sidecar object, probing the
+// SidecarLocations order: the composed location first, then the bucket root
+// for sidecars written before the composition.
 func (m *MultipartStateManager) LoadHMACTable(ctx context.Context, key string) (*HMACTableSidecar, error) {
-	keyHash := sha256.Sum256([]byte(key))
-	sidecarKey := fmt.Sprintf(".armor/hmac/%x", keyHash)
+	var lastErr error
+	for _, sidecarKey := range SidecarLocations(m.keyPrefix, key) {
+		body, _, err := m.backend.GetDirect(ctx, m.bucket, sidecarKey)
+		if err != nil {
+			lastErr = err
+			continue
+		}
 
-	body, _, err := m.backend.GetDirect(ctx, m.bucket, sidecarKey)
-	if err != nil {
-		return nil, fmt.Errorf("failed to load HMAC table: %w", err)
+		data, err := io.ReadAll(body)
+		body.Close()
+		if err != nil {
+			return nil, fmt.Errorf("failed to read HMAC table: %w", err)
+		}
+
+		var sidecar HMACTableSidecar
+		if err := json.Unmarshal(data, &sidecar); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal HMAC table at %s: %w", sidecarKey, err)
+		}
+
+		return &sidecar, nil
 	}
-	defer body.Close()
 
-	data, err := io.ReadAll(body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read HMAC table: %w", err)
-	}
-
-	var sidecar HMACTableSidecar
-	if err := json.Unmarshal(data, &sidecar); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal HMAC table: %w", err)
-	}
-
-	return &sidecar, nil
+	return nil, fmt.Errorf("failed to load HMAC table: %w", lastErr)
 }
 
-// LoadHMACTableV3 loads the v3 HMAC table from a gzip-compressed JSON sidecar object.
+// LoadHMACTableV3 loads the v3 HMAC table from a gzip-compressed JSON sidecar
+// object, probing the SidecarLocations order: the composed location first,
+// then the bucket root for sidecars written before the composition.
 func (m *MultipartStateManager) LoadHMACTableV3(ctx context.Context, key string) (*HMACTableSidecarV3, error) {
-	keyHash := sha256.Sum256([]byte(key))
-	sidecarKey := fmt.Sprintf(".armor/hmac/%x", keyHash)
+	var lastErr error
+	for _, sidecarKey := range SidecarLocations(m.keyPrefix, key) {
+		body, _, err := m.backend.GetDirect(ctx, m.bucket, sidecarKey)
+		if err != nil {
+			lastErr = err
+			continue
+		}
 
-	body, _, err := m.backend.GetDirect(ctx, m.bucket, sidecarKey)
-	if err != nil {
-		return nil, fmt.Errorf("failed to load v3 HMAC table: %w", err)
+		// Decompress with gzip (v3 format)
+		gz, err := gzip.NewReader(body)
+		if err != nil {
+			body.Close()
+			return nil, fmt.Errorf("failed to open gzip stream at %s: %w", sidecarKey, err)
+		}
+
+		data, err := io.ReadAll(gz)
+		gz.Close()
+		body.Close()
+		if err != nil {
+			return nil, fmt.Errorf("failed to read v3 HMAC table: %w", err)
+		}
+
+		var sidecar HMACTableSidecarV3
+		if err := json.Unmarshal(data, &sidecar); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal v3 HMAC table at %s: %w", sidecarKey, err)
+		}
+
+		return &sidecar, nil
 	}
-	defer body.Close()
 
-	// Try to decompress with gzip (v3 format)
-	gz, err := gzip.NewReader(body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to open gzip stream: %w", err)
-	}
-	defer gz.Close()
-
-	data, err := io.ReadAll(gz)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read v3 HMAC table: %w", err)
-	}
-
-	var sidecar HMACTableSidecarV3
-	if err := json.Unmarshal(data, &sidecar); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal v3 HMAC table: %w", err)
-	}
-
-	return &sidecar, nil
+	return nil, fmt.Errorf("failed to load v3 HMAC table: %w", lastErr)
 }
 
-// DeleteHMACTable deletes the HMAC table sidecar object.
+// DeleteHMACTable deletes the HMAC table sidecar object from every location
+// it may occupy. Backend deletes are idempotent for absent keys, so removing
+// a composed-only sidecar also "deletes" the absent root twin without error.
 func (m *MultipartStateManager) DeleteHMACTable(ctx context.Context, key string) error {
-	keyHash := sha256.Sum256([]byte(key))
-	sidecarKey := fmt.Sprintf(".armor/hmac/%x", keyHash)
-
-	if err := m.backend.Delete(ctx, m.bucket, sidecarKey); err != nil {
-		return fmt.Errorf("failed to delete HMAC table: %w", err)
+	for _, sidecarKey := range SidecarLocations(m.keyPrefix, key) {
+		if err := m.backend.Delete(ctx, m.bucket, sidecarKey); err != nil {
+			return fmt.Errorf("failed to delete HMAC table: %w", err)
+		}
 	}
 	return nil
 }

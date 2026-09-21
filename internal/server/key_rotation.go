@@ -109,10 +109,18 @@ type KeyRotator struct {
 	// May be nil when the manifest is disabled or unavailable.
 	idx *manifest.Index
 
+	// keyPrefix is the ADR-001 shared-bucket prefix (normalized, trailing
+	// slash). The backend does not apply it — callers pass prefixed keys — so
+	// the rotator composes it into its own internal keys: rotation state
+	// resolves beneath <keyPrefix>.armor/ per ADR-001's "Internal Namespaces"
+	// and the ADR-003 sidecar addendum. Empty means the bucket root, which is
+	// byte-for-byte the pre-2026-09-20 behavior.
+	keyPrefix string
+
 	// state tracks rotation progress
 	state     *RotationState
 	stateMu   sync.Mutex
-	statePath string // .armor/rotation-state.json
+	statePath string // <keyPrefix>.armor/rotation-state.json
 }
 
 // NewKeyRotator creates a new key rotator. idx may be nil if the manifest
@@ -164,6 +172,34 @@ func newKeyRotator(b backend.Backend, bucket, targetKeyID string, oldMEK, newMEK
 		idx:         idx,
 		statePath:   ".armor/rotation-state.json",
 	}
+}
+
+// WithKeyPrefix sets the ADR-001 shared-bucket prefix the rotator resolves
+// its internal .armor/ namespace beneath. prefix must be normalized exactly
+// as config.normalizePrefix produces — empty, or ending in exactly one slash.
+//
+// Rotation state is progress bookkeeping, not read state for live objects,
+// so only the READ side falls back to the bucket root (a rotation started
+// before the composition resumes instead of restarting); saves always target
+// the composed location, which moves the state into the tenant namespace
+// from the next save on (ADR-003 addendum).
+func (kr *KeyRotator) WithKeyPrefix(prefix string) *KeyRotator {
+	kr.keyPrefix = prefix
+	kr.statePath = prefix + ".armor/rotation-state.json"
+	return kr
+}
+
+// isInternalKey reports whether key is an internal ARMOR object key — at the
+// bucket root, or composed beneath the ADR-001 prefix (both branches stay
+// live for buckets that gained their prefix after ARMOR had been writing to
+// the root). Backend List already filters both; the walk keeps its own guard
+// so a backend that leaks internal keys into listings cannot feed
+// bookkeeping objects into the rotation pipeline.
+func (kr *KeyRotator) isInternalKey(key string) bool {
+	if strings.HasPrefix(key, ".armor/") {
+		return true
+	}
+	return kr.keyPrefix != "" && strings.HasPrefix(key, kr.keyPrefix+".armor/")
 }
 
 // Rotate performs the key rotation, re-wrapping all DEKs with the new MEK.
@@ -231,7 +267,7 @@ func (kr *KeyRotator) Rotate(ctx context.Context) (*RotationResult, error) {
 
 		for _, obj := range listResult.Objects {
 			// Skip internal ARMOR objects
-			if len(obj.Key) >= 7 && obj.Key[:7] == ".armor/" {
+			if kr.isInternalKey(obj.Key) {
 				result.SkippedObjects++
 				continue
 			}
@@ -622,25 +658,45 @@ func (kr *KeyRotator) initOrLoadState(ctx context.Context) error {
 	return nil
 }
 
-// loadState loads the rotation state from B2.
+// stateLocations returns every B2 key the rotation state may live at, in
+// probe order: the composed location first, then the pre-2026-09-20 bucket
+// root for state written before the composition. Without a prefix the two
+// coincide and exactly one is returned.
+func (kr *KeyRotator) stateLocations() []string {
+	if kr.keyPrefix == "" {
+		return []string{kr.statePath}
+	}
+	return []string{kr.statePath, ".armor/rotation-state.json"}
+}
+
+// loadState loads the rotation state from storage, probing the composed
+// location first and then the bucket root (see stateLocations). An unreadable
+// location (absent, or denied to a namePrefix-scoped B2 key) falls through to
+// the next; a location that reads but fails to parse is returned as an error,
+// not skipped — resuming past corrupt state would silently re-rotate.
 func (kr *KeyRotator) loadState(ctx context.Context) (*RotationState, error) {
-	reader, _, err := kr.backend.GetDirect(ctx, kr.bucket, kr.statePath)
-	if err != nil {
-		return nil, err
-	}
-	defer reader.Close()
+	var lastErr error
+	for _, statePath := range kr.stateLocations() {
+		reader, _, err := kr.backend.GetDirect(ctx, kr.bucket, statePath)
+		if err != nil {
+			lastErr = err
+			continue
+		}
 
-	data, err := io.ReadAll(reader)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read state: %w", err)
-	}
+		data, err := io.ReadAll(reader)
+		reader.Close()
+		if err != nil {
+			return nil, fmt.Errorf("failed to read state: %w", err)
+		}
 
-	var state RotationState
-	if err := json.Unmarshal(data, &state); err != nil {
-		return nil, fmt.Errorf("failed to parse state: %w", err)
-	}
+		var state RotationState
+		if err := json.Unmarshal(data, &state); err != nil {
+			return nil, fmt.Errorf("failed to parse state: %w", err)
+		}
 
-	return &state, nil
+		return &state, nil
+	}
+	return nil, lastErr
 }
 
 // saveState saves the rotation state to B2.
@@ -685,7 +741,7 @@ func (kr *KeyRotator) countObjects(ctx context.Context) error {
 
 		for _, obj := range listResult.Objects {
 			// Skip internal ARMOR objects
-			if len(obj.Key) >= 7 && obj.Key[:7] == ".armor/" {
+			if kr.isInternalKey(obj.Key) {
 				continue
 			}
 			// Only count ARMOR-encrypted objects
