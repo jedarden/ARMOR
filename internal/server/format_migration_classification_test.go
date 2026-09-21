@@ -1,6 +1,8 @@
 // Package server tests for the migration classification counts: the
 // per-dimension inventory report (source/layout, size bucket, key
-// fingerprint, outcome) the migrator accumulates over a walk.
+// fingerprint, outcome). The inventory pass (countObjects) owns and
+// populates the static dimensions; the migration walk owns the outcome
+// counters, and a full Migrate() run reports both combined.
 package server
 
 import (
@@ -135,7 +137,11 @@ func putIntegrityFailureV2(t *testing.T, mb *MockBackend, mek []byte, key string
 // putSidecarlessMultipart stores a multipart-flagged object whose DEK
 // unwraps fine but whose HMAC sidecar does not exist, so the migration
 // attempt fails before any content verification (a plain failure, not an
-// integrity failure). v2Style selects the DEK encoding.
+// integrity failure). v2Style selects the DEK encoding. Both size headers a
+// real multipart writer emits are present, so the object classifies as a
+// genuine multipart layout rather than contradictory metadata (a multipart
+// claim without part/plaintext sizes trips ClassifyMigrationObject's
+// multipart-claims-missing-sizes rule).
 func putSidecarlessMultipart(t *testing.T, mb *MockBackend, mek []byte, key string, version uint8, v2Style bool) {
 	t.Helper()
 
@@ -158,11 +164,13 @@ func putSidecarlessMultipart(t *testing.T, mb *MockBackend, mek []byte, key stri
 	mb.objects[key] = &MockObject{
 		Data: []byte("multipart ciphertext without sidecar"),
 		Metadata: map[string]string{
-			armorMetaVersion:    fmt.Sprintf("%d", version),
-			armorMetaWrappedDEK: dek,
-			armorMetaIV:         base64.StdEncoding.EncodeToString(iv),
-			armorMetaBlockSize:  "4096",
-			armorMetaMultipart:  "true",
+			armorMetaVersion:       fmt.Sprintf("%d", version),
+			armorMetaWrappedDEK:    dek,
+			armorMetaIV:            base64.StdEncoding.EncodeToString(iv),
+			armorMetaBlockSize:     "4096",
+			armorMetaMultipart:     "true",
+			armorMetaPartSize:      "4096",
+			armorMetaPlaintextSize: "37",
 		},
 	}
 }
@@ -540,88 +548,98 @@ func TestMigrationResultClassificationJSON(t *testing.T) {
 	}
 }
 
-// TestClassifyListedObject pins the per-object derivation rules: source
-// bucket from version+layout, fingerprint from the DEK encoding, size from
-// recorded plaintext size with listing-size fallback.
-func TestClassifyListedObject(t *testing.T) {
+// TestInventoryDerivation pins the per-object derivation rules of the
+// inventory pass: the source bucket from ClassifyMigrationObject mapped
+// through sourceKindForCategory, the fingerprint from the parsed metadata's
+// MEKFingerprint (legacy label for v1-style wrapping, empty without key
+// material), and the size from the recorded plaintext size with
+// listing-size fallback.
+func TestInventoryDerivation(t *testing.T) {
 	legacyDEK := base64.StdEncoding.EncodeToString([]byte("raw-wrapped-dek-bytes"))
 	v2DEK := "v2:aaaaaaaaaaaaaaaa:AAAA"
 
-	parsedV1 := &backend.ARMORMetadata{Version: 1, PlaintextSize: 4096}
-	parsedV2 := &backend.ARMORMetadata{Version: 2}
-	parsedV2fp := &backend.ARMORMetadata{Version: 2, MEKFingerprint: "bbbbbbbbbbbbbbbb", PlaintextSize: 1 << 20}
-	parsedV3 := &backend.ARMORMetadata{Version: 3}
-
 	cases := []struct {
-		name      string
-		rawMeta   map[string]string
-		armorMeta *backend.ARMORMetadata
-		ok        bool
-		version   int
-		listSize  int64
-		wantSrc   sourceKind
-		wantSize  int64
-		wantFP    string
+		name     string
+		rawMeta  map[string]string
+		listSize int64
+		wantSrc  sourceKind
+		wantSize int64
+		wantFP   string
 	}{
 		{
-			name:      "v1 single put legacy dek",
-			rawMeta:   map[string]string{armorMetaVersion: "1", armorMetaWrappedDEK: legacyDEK},
-			armorMeta: parsedV1, ok: true, version: 1, listSize: 9999,
-			wantSrc: srcV1SinglePut, wantSize: 4096, wantFP: "legacy",
+			name:     "v1 single put legacy dek",
+			rawMeta:  map[string]string{armorMetaVersion: "1", armorMetaWrappedDEK: legacyDEK, armorMetaBlockSize: "4096", armorMetaPlaintextSize: "4096"},
+			listSize: 9999,
+			wantSrc:  srcV1SinglePut, wantSize: 4096, wantFP: "legacy",
 		},
 		{
-			name:      "v1 multipart",
-			rawMeta:   map[string]string{armorMetaVersion: "1", armorMetaWrappedDEK: legacyDEK, armorMetaMultipart: "true"},
-			armorMeta: parsedV1, ok: true, version: 1, listSize: 100,
-			wantSrc: srcV1Multipart, wantSize: 4096, wantFP: "legacy",
+			name:     "v1 multipart with sizes",
+			rawMeta:  map[string]string{armorMetaVersion: "1", armorMetaWrappedDEK: legacyDEK, armorMetaBlockSize: "4096", armorMetaMultipart: "true", armorMetaPartSize: "4096", armorMetaPlaintextSize: "8192"},
+			listSize: 100,
+			wantSrc:  srcV1Multipart, wantSize: 8192, wantFP: "legacy",
 		},
 		{
-			name:      "v2 single put fingerprinted dek",
-			rawMeta:   map[string]string{armorMetaVersion: "2", armorMetaWrappedDEK: v2DEK},
-			armorMeta: parsedV2, ok: true, version: 2, listSize: 100,
-			wantSrc: srcV2SinglePut, wantSize: 100, wantFP: "aaaaaaaaaaaaaaaa",
+			name:     "v2 single put fingerprinted dek",
+			rawMeta:  map[string]string{armorMetaVersion: "2", armorMetaWrappedDEK: v2DEK, armorMetaBlockSize: "4096"},
+			listSize: 100,
+			wantSrc:  srcV2SinglePut, wantSize: 100, wantFP: "aaaaaaaaaaaaaaaa",
 		},
 		{
-			name:      "v2 multipart fingerprinted dek",
-			rawMeta:   map[string]string{armorMetaVersion: "2", armorMetaWrappedDEK: v2DEK, armorMetaMultipart: "true"},
-			armorMeta: parsedV2, ok: true, version: 2, listSize: 100,
-			wantSrc: srcV2Multipart, wantSize: 100, wantFP: "aaaaaaaaaaaaaaaa",
+			name:     "v2 multipart with sizes",
+			rawMeta:  map[string]string{armorMetaVersion: "2", armorMetaWrappedDEK: v2DEK, armorMetaBlockSize: "4096", armorMetaMultipart: "true", armorMetaPartSize: "4096", armorMetaPlaintextSize: "8192"},
+			listSize: 100,
+			wantSrc:  srcV2Multipart, wantSize: 8192, wantFP: "aaaaaaaaaaaaaaaa",
 		},
 		{
-			name:      "v3 at or beyond target",
-			rawMeta:   map[string]string{armorMetaVersion: "3", armorMetaWrappedDEK: v2DEK},
-			armorMeta: parsedV3, ok: true, version: 3, listSize: 100,
-			wantSrc: srcV3Plus, wantSize: 100, wantFP: "aaaaaaaaaaaaaaaa",
+			name:     "v3 at target collapses layout",
+			rawMeta:  map[string]string{armorMetaVersion: "3", armorMetaWrappedDEK: v2DEK},
+			listSize: 100,
+			wantSrc:  srcV3Plus, wantSize: 100, wantFP: "aaaaaaaaaaaaaaaa",
 		},
 		{
-			name:      "version beyond v3",
-			rawMeta:   map[string]string{armorMetaVersion: "4", armorMetaWrappedDEK: v2DEK},
-			armorMeta: parsedV3, ok: true, version: 4, listSize: 100,
-			wantSrc: srcV3Plus, wantSize: 100, wantFP: "aaaaaaaaaaaaaaaa",
+			name:     "version beyond target",
+			rawMeta:  map[string]string{armorMetaVersion: "4", armorMetaWrappedDEK: v2DEK},
+			listSize: 100,
+			wantSrc:  srcV3Plus, wantSize: 100, wantFP: "aaaaaaaaaaaaaaaa",
 		},
 		{
-			name:      "parsed fingerprint wins over raw dek parse",
-			rawMeta:   map[string]string{armorMetaVersion: "2", armorMetaWrappedDEK: v2DEK},
-			armorMeta: parsedV2fp, ok: true, version: 2, listSize: 100,
-			wantSrc: srcV2SinglePut, wantSize: 1 << 20, wantFP: "bbbbbbbbbbbbbbbb",
+			name:     "non armor object",
+			rawMeta:  map[string]string{"Content-Type": "text/plain"},
+			listSize: 100,
+			wantSrc:  srcNonARMOR, wantSize: 100, wantFP: "",
 		},
 		{
-			name:      "contradictory claims version without dek",
-			rawMeta:   map[string]string{armorMetaVersion: "2"},
-			armorMeta: nil, ok: false, version: 2, listSize: 100,
-			wantSrc: srcContradictory, wantSize: 100, wantFP: "",
+			name:     "unparseable version header",
+			rawMeta:  map[string]string{armorMetaVersion: "not-a-number"},
+			listSize: 100,
+			wantSrc:  srcMalformed, wantSize: 100, wantFP: "",
 		},
 		{
-			name:      "contradictory still extracts fingerprint from raw dek",
-			rawMeta:   map[string]string{armorMetaVersion: "2", armorMetaWrappedDEK: v2DEK},
-			armorMeta: nil, ok: false, version: 2, listSize: 100,
-			wantSrc: srcContradictory, wantSize: 100, wantFP: "aaaaaaaaaaaaaaaa",
+			name:     "contradictory claims version without dek",
+			rawMeta:  map[string]string{armorMetaVersion: "2", armorMetaBlockSize: "4096"},
+			listSize: 100,
+			wantSrc:  srcContradictory, wantSize: 100, wantFP: "",
+		},
+		{
+			name:     "contradictory multipart claim without sizes",
+			rawMeta:  map[string]string{armorMetaVersion: "2", armorMetaWrappedDEK: v2DEK, armorMetaBlockSize: "4096", armorMetaMultipart: "true"},
+			listSize: 100,
+			wantSrc:  srcContradictory, wantSize: 100, wantFP: "aaaaaaaaaaaaaaaa",
+		},
+		{
+			name:     "no plaintext size falls back to listing size",
+			rawMeta:  map[string]string{armorMetaVersion: "1", armorMetaWrappedDEK: legacyDEK, armorMetaBlockSize: "4096"},
+			listSize: 4096,
+			wantSrc:  srcV1SinglePut, wantSize: 4096, wantFP: "legacy",
 		},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			src, size, fp := classifyListedObject(tc.rawMeta, tc.armorMeta, tc.ok, tc.version, tc.listSize)
+			armorMeta, _ := backend.ParseARMORMetadata(tc.rawMeta)
+			src := sourceKindForCategory(mustClassify(t, tc.rawMeta, crypto.Version3))
+			size := inventorySizeBytes(armorMeta, tc.listSize)
+			fp := inventoryFingerprint(armorMeta)
 			if src != tc.wantSrc {
 				t.Errorf("source = %v, want %v", src, tc.wantSrc)
 			}
@@ -632,6 +650,76 @@ func TestClassifyListedObject(t *testing.T) {
 				t.Errorf("fingerprint = %q, want %q", fp, tc.wantFP)
 			}
 		})
+	}
+}
+
+// mustClassify asserts ClassifyMigrationObject returns one of the known
+// categories and returns it.
+func mustClassify(t *testing.T, rawMeta map[string]string, target uint8) MigrationCategory {
+	t.Helper()
+	category, _, _ := ClassifyMigrationObject(rawMeta, target)
+	switch category {
+	case CategoryV1SinglePut, CategoryV1Multipart, CategoryV2SinglePut,
+		CategoryV2Multipart, CategoryAlreadyAtTarget, CategoryNonARMOR,
+		CategoryMalformed, CategoryContradictory:
+		return category
+	default:
+		t.Fatalf("unknown category %q", category)
+		return ""
+	}
+}
+
+// TestCountObjectsClassificationInventory pins the ownership split at the
+// inventory seam: countObjects alone populates the static dimensions
+// (source, size, fingerprint) and TotalObjects, leaves every outcome counter
+// at zero, and re-derives the static dimensions from the listing on each
+// run — replacing whatever static counts the loaded state carried while
+// preserving its outcome counts.
+func TestCountObjectsClassificationInventory(t *testing.T) {
+	ctx := context.Background()
+	mb := NewMockBackend()
+	want, _ := buildClassificationInventory(t, mb)
+
+	static := want
+	static.OutcomeProcessed, static.OutcomeSkipped = 0, 0
+	static.OutcomeFailed, static.OutcomeIntegrityFailed = 0, 0
+
+	migrator := NewFormatMigrator(mb, "test-bucket", clsTestMEK(), "default", crypto.Version3, []string{"1", "2"}, nil)
+	if err := migrator.initOrLoadState(ctx, false, 1); err != nil {
+		t.Fatalf("failed to init state: %v", err)
+	}
+	if err := migrator.countObjects(ctx); err != nil {
+		t.Fatalf("countObjects failed: %v", err)
+	}
+
+	state := migrator.GetState()
+	if !reflect.DeepEqual(state.Classification, static) {
+		t.Errorf("inventory classification wrong (outcomes must stay zero before any walk):\n got %+v\nwant %+v", state.Classification, static)
+	}
+	if state.TotalObjects != 5 {
+		t.Errorf("TotalObjects = %d, want 5 migration candidates", state.TotalObjects)
+	}
+
+	// A second inventory pass replaces stale static counts — the listing is
+	// the single source of truth for those dimensions — while outcome counts
+	// loaded with the state are carried over untouched for the walk to keep
+	// accumulating on.
+	fm := migrator
+	fm.stateMu.Lock()
+	fm.state.Classification.V1SinglePut = 99
+	fm.state.Classification.ByKeyFingerprint = map[string]int{"stale": 1}
+	fm.state.Classification.OutcomeProcessed = 2
+	fm.state.Classification.OutcomeSkipped = 1
+	fm.stateMu.Unlock()
+
+	if err := fm.countObjects(ctx); err != nil {
+		t.Fatalf("second countObjects failed: %v", err)
+	}
+	state = fm.GetState()
+	wantSecond := static
+	wantSecond.OutcomeProcessed, wantSecond.OutcomeSkipped = 2, 1
+	if !reflect.DeepEqual(state.Classification, wantSecond) {
+		t.Errorf("second inventory did not reset static dims / preserve outcomes:\n got %+v\nwant %+v", state.Classification, wantSecond)
 	}
 }
 
@@ -764,9 +852,11 @@ func TestMigrateClassificationDryRunDoesNotLeak(t *testing.T) {
 }
 
 // TestMigrateClassificationResumeAccumulates checks the resume semantics:
-// objects the cursor already passed are not re-classified, so a resumed run
-// accumulates on top of the classification loaded with the state and the
-// final report still covers the whole inventory exactly once.
+// the inventory pass re-derives the static dimensions from the full listing
+// (replacing the partial counts the loaded state carried), while the walk
+// records outcomes only for objects past the cursor, accumulating on top of
+// the outcome counts loaded with the state — so the final report still
+// covers the whole inventory exactly once.
 func TestMigrateClassificationResumeAccumulates(t *testing.T) {
 	ctx := context.Background()
 	mb := NewMockBackend()

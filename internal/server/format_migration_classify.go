@@ -73,8 +73,8 @@ const (
 //   - CategoryAlreadyAtTarget: version at or beyond target. Objects at or
 //     beyond the target are never re-encrypted (the migration only ever
 //     re-encrypts known older majors), so their layout is not separately
-//     reported — the same at-or-beyond rule the walk's classifyListedObject
-//     applies for its V3 bucket.
+//     reported — the same at-or-beyond rule the inventory pass records as
+//     the V3 bucket of ObjectClassification.
 //   - The four layout buckets: known majors strictly below target, split by
 //     the exact x-amz-meta-armor-multipart == "true" comparison the walk
 //     uses.
