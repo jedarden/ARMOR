@@ -1,6 +1,6 @@
 # ARMOR
 
-[![iad-ci](https://img.shields.io/github/checks-status/jedarden/ARMOR/main?label=iad-ci)](docs/release-process.md)
+[![release](https://img.shields.io/github/v/release/jedarden/ARMOR)](https://github.com/jedarden/ARMOR/releases/latest)
 
 **Authenticated Range-readable Managed Object Repository**
 
