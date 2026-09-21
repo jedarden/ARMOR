@@ -171,10 +171,16 @@ func TestCopyObjectSourceKeyAuthorization(t *testing.T) {
 		credentials["BACKUPSONLY"] = backupsOnlyCred
 		auth = NewSigV4AuthWithCredentials(credentials, "us-east-005")
 
-		// Try to copy from logs/ (no Get) to backups/ (has Put)
-		req := createSignedRequestForAuthTest(t, "PUT", "/test-bucket/backups/from-logs.txt", "", "BACKUPSONLY", "BACKUPSONLYSECRET1234567890123456", nil)
+		// Try to copy from logs/ (no Get) to backups/ (has Put). Sign with the
+		// credential's configured secret — signing with any other value makes
+		// VerifyRequest fail and hand back a nil credential, which is the
+		// missing-credential case covered by its own subtest below.
+		req := createSignedRequestForAuthTest(t, "PUT", "/test-bucket/backups/from-logs.txt", "", "BACKUPSONLY", credentials["BACKUPSONLY"].SecretKey, nil)
 		req.Header.Set("x-amz-copy-source", "/test-bucket/logs/source.txt")
-		cred, _ := auth.VerifyRequest(req, nil)
+		cred, err := auth.VerifyRequest(req, nil)
+		if err != nil {
+			t.Fatalf("SigV4 verification failed: %v", err)
+		}
 
 		// Destination Put is allowed
 		dstErr := acl.CheckACL(cred, "test-bucket", "backups/from-logs.txt", ActionPut)
@@ -186,6 +192,67 @@ func TestCopyObjectSourceKeyAuthorization(t *testing.T) {
 		srcErr := acl.CheckACL(cred, "test-bucket", "logs/source.txt", ActionGet)
 		if srcErr != acl.ErrAccessDenied {
 			t.Errorf("Source Get on logs/ should be denied for backups/-only credential, got: %v", srcErr)
+		}
+	})
+
+	t.Run("CopyObject denied when the access key names no configured credential", func(t *testing.T) {
+		// A CopyObject signed by an access key absent from the credential map:
+		// VerifyRequest must deny it (ErrInvalidAccessKey) and hand back a nil
+		// credential. Both halves of the CopyObject authorization decision —
+		// destination Put and source Get — must then deny rather than
+		// dereference that nil credential. Regression test for the panic this
+		// bead fixed: CheckACL used to call GetACLs on the typed nil and crash.
+		req := createSignedRequestForAuthTest(t, "PUT", "/test-bucket/backups/from-logs.txt", "", "NOSUCHCREDENTIAL", "NOSUCHCREDENTIALSECRET1234567890123", nil)
+		req.Header.Set("x-amz-copy-source", "/test-bucket/logs/source.txt")
+
+		cred, err := auth.VerifyRequest(req, nil)
+		if err == nil {
+			t.Fatalf("VerifyRequest must deny an access key absent from the credential map, got credential: %+v", cred)
+		}
+		if err != ErrInvalidAccessKey {
+			t.Errorf("VerifyRequest should fail with ErrInvalidAccessKey, got: %v", err)
+		}
+		if cred != nil {
+			t.Errorf("VerifyRequest should return a nil credential on lookup failure, got: %+v", cred)
+		}
+
+		// The nil credential must deny both the destination Put and the
+		// source Get — this is the call pair that used to panic.
+		if err := acl.CheckACL(cred, "test-bucket", "backups/from-logs.txt", ActionPut); err != acl.ErrAccessDenied {
+			t.Errorf("Destination Put with nil credential should be denied, got: %v", err)
+		}
+		if err := acl.CheckACL(cred, "test-bucket", "logs/source.txt", ActionGet); err != acl.ErrAccessDenied {
+			t.Errorf("Source Get with nil credential should be denied, got: %v", err)
+		}
+	})
+
+	t.Run("CopyObject denied when the secret is wrong for a known access key", func(t *testing.T) {
+		// The other shape VerifyRequest hands back a nil credential in:
+		// the access key IS configured, but the request is signed with a
+		// different secret, so the signature comparison fails. This is the
+		// literal trigger of the original panic — the cross-prefix subtest
+		// above hardcoded a mismatched secret before the fix. A caller
+		// that ignores the VerifyRequest error must still get denials,
+		// not a crash, from both halves of the CopyObject decision.
+		req := createSignedRequestForAuthTest(t, "PUT", "/test-bucket/backups/from-logs.txt", "", "BACKUPSONLY", "NOT-THE-CONFIGURED-SECRET-AT-ALL", nil)
+		req.Header.Set("x-amz-copy-source", "/test-bucket/logs/source.txt")
+
+		cred, err := auth.VerifyRequest(req, nil)
+		if err == nil {
+			t.Fatalf("VerifyRequest must deny a request signed with the wrong secret, got credential: %+v", cred)
+		}
+		if err != ErrSignatureMismatch {
+			t.Errorf("VerifyRequest should fail with ErrSignatureMismatch, got: %v", err)
+		}
+		if cred != nil {
+			t.Errorf("VerifyRequest should return a nil credential on signature failure, got: %+v", cred)
+		}
+
+		if err := acl.CheckACL(cred, "test-bucket", "backups/from-logs.txt", ActionPut); err != acl.ErrAccessDenied {
+			t.Errorf("Destination Put with nil credential should be denied, got: %v", err)
+		}
+		if err := acl.CheckACL(cred, "test-bucket", "logs/source.txt", ActionGet); err != acl.ErrAccessDenied {
+			t.Errorf("Source Get with nil credential should be denied, got: %v", err)
 		}
 	})
 }

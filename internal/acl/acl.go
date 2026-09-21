@@ -4,6 +4,7 @@ package acl
 import (
 	"net/http"
 	"net/url"
+	"reflect"
 	"strings"
 )
 
@@ -286,11 +287,34 @@ var ErrAccessDenied = &AuthError{Code: "AccessDenied", Message: "Access Denied"}
 // became its own verb (ADR-012 amendment, 2026-09-13), so an entry granting
 // delete continues to grant abort. No deployed credential loses a capability;
 // the reverse does not hold — granting abort never grants delete.
+//
+// A nil credential — an untyped nil or a typed nil pointer, such as the nil
+// *config.Credential VerifyRequest returns for an access key absent from the
+// config map — denies every action rather than being dereferenced: a failed
+// credential lookup is an authorization failure, never a crash. Callers that
+// deliberately allow unauthenticated access (public endpoints, auth
+// disabled) branch on nil before calling, as DeleteObjects does. Denying the
+// untyped nil is a deliberate tightening: before the guard it fell through
+// the failed type assertion below and read as full access, and no caller
+// relies on that — VerifyRequest pairs every nil return with a non-nil
+// error, so a nil reaching this function always means a failed lookup.
 func CheckACL(cred interface{}, bucket, key, verb string) error {
 	// cred is expected to be *config.Credential, but we use interface{} to avoid
 	// import cycle. The actual type will have ACLs []ACLEntry field.
 	type credential interface {
 		GetACLs() []ACLEntry
+	}
+
+	// A typed nil pointer still satisfies the interface below, so the
+	// GetACLs call would dereference nil and panic; an untyped nil falls
+	// into the !ok branch and reads as full access. Both mean "no
+	// credential resolved" — deny, mirroring WithCredential's nil handling
+	// in context.go.
+	if cred == nil {
+		return ErrAccessDenied
+	}
+	if v := reflect.ValueOf(cred); v.Kind() == reflect.Pointer && v.IsNil() {
+		return ErrAccessDenied
 	}
 
 	c, ok := cred.(credential)
