@@ -233,7 +233,7 @@ func TestVerifyValidObject(t *testing.T) {
 	mock.PutTestObject(ctx, "test-bucket", "test-object", validData.data, validData.metadata, true, time.Now())
 
 	// Verify the object
-	result := verifyObject(ctx, mock, mek, "test-bucket", "test-object", time.Time{})
+	result := verifyObject(ctx, mock, newVerifyKeySource(mek, nil), "test-bucket", "test-object", time.Time{})
 
 	if result.Status != "OK" {
 		t.Errorf("Expected OK status, got %s: %s", result.Status, result.Error)
@@ -272,7 +272,7 @@ func TestVerifyCorruptedHMAC(t *testing.T) {
 	mock.PutTestObject(ctx, "test-bucket", "corrupted-object", corruptedData, validData.metadata, true, time.Now())
 
 	// Verify the object
-	result := verifyObject(ctx, mock, mek, "test-bucket", "corrupted-object", time.Time{})
+	result := verifyObject(ctx, mock, newVerifyKeySource(mek, nil), "test-bucket", "corrupted-object", time.Time{})
 
 	if result.Status != "CORRUPTED" {
 		t.Errorf("Expected CORRUPTED status, got %s", result.Status)
@@ -300,7 +300,7 @@ func TestVerifyCorruptedEnvelope(t *testing.T) {
 	mock.PutTestObject(ctx, "test-bucket", "corrupted-envelope", corruptedData, validData.metadata, true, time.Now())
 
 	// Verify the object
-	result := verifyObject(ctx, mock, mek, "test-bucket", "corrupted-envelope", time.Time{})
+	result := verifyObject(ctx, mock, newVerifyKeySource(mek, nil), "test-bucket", "corrupted-envelope", time.Time{})
 
 	if result.Status != "CORRUPTED" {
 		t.Errorf("Expected CORRUPTED status, got %s", result.Status)
@@ -330,7 +330,7 @@ func TestVerifyCorruptedDEK(t *testing.T) {
 	mock.PutTestObject(ctx, "test-bucket", "corrupted-dek", validData.data, corruptedMetadata, true, time.Now())
 
 	// Verify the object
-	result := verifyObject(ctx, mock, mek, "test-bucket", "corrupted-dek", time.Time{})
+	result := verifyObject(ctx, mock, newVerifyKeySource(mek, nil), "test-bucket", "corrupted-dek", time.Time{})
 
 	if result.Status != "CORRUPTED" {
 		t.Errorf("Expected CORRUPTED status, got %s", result.Status)
@@ -348,7 +348,7 @@ func TestVerifyNonArmorObject(t *testing.T) {
 	mock.PutTestObject(ctx, "test-bucket", "plain-object", plainData, map[string]string{}, false, time.Now())
 
 	// Verify the object
-	result := verifyObject(ctx, mock, mek, "test-bucket", "plain-object", time.Time{})
+	result := verifyObject(ctx, mock, newVerifyKeySource(mek, nil), "test-bucket", "plain-object", time.Time{})
 
 	if result.Status != "ERROR" {
 		t.Errorf("Expected ERROR status, got %s", result.Status)
@@ -365,7 +365,7 @@ func TestVerifyMissingObject(t *testing.T) {
 	mock := NewMockB2Backend()
 
 	// Verify a non-existent object
-	result := verifyObject(ctx, mock, mek, "test-bucket", "missing-object", time.Time{})
+	result := verifyObject(ctx, mock, newVerifyKeySource(mek, nil), "test-bucket", "missing-object", time.Time{})
 
 	if result.Status != "ERROR" {
 		t.Errorf("Expected ERROR status, got %s", result.Status)
@@ -392,13 +392,13 @@ func TestVerifySinceFilter(t *testing.T) {
 	since := time.Now().Add(-24 * time.Hour)
 
 	// Old object should be skipped
-	oldResult := verifyObject(ctx, mock, mek, "test-bucket", "old-object", since)
+	oldResult := verifyObject(ctx, mock, newVerifyKeySource(mek, nil), "test-bucket", "old-object", since)
 	if oldResult.Status != "OK" || !strings.Contains(oldResult.Details, "Skipped") {
 		t.Errorf("Expected old object to be skipped, got status=%s details=%s", oldResult.Status, oldResult.Details)
 	}
 
 	// Recent object should be verified
-	recentResult := verifyObject(ctx, mock, mek, "test-bucket", "recent-object", since)
+	recentResult := verifyObject(ctx, mock, newVerifyKeySource(mek, nil), "test-bucket", "recent-object", since)
 	if recentResult.Status != "OK" {
 		t.Errorf("Expected recent object to be OK, got %s: %s", recentResult.Status, recentResult.Error)
 	}
@@ -454,6 +454,34 @@ func TestVerifyReportJSON(t *testing.T) {
 
 	if unmarshaled.TotalObjects != report.TotalObjects {
 		t.Errorf("TotalObjects mismatch: got %d, want %d", unmarshaled.TotalObjects, report.TotalObjects)
+	}
+
+	// The report contract (armor-da67956d): one row per result survives the
+	// JSON round-trip, and a failing row's error field is present and
+	// non-empty — the diagnosable reason, not just a status word.
+	if len(unmarshaled.Results) != len(report.Results) {
+		t.Fatalf("Results rows lost in round-trip: got %d, want %d", len(unmarshaled.Results), len(report.Results))
+	}
+	for i, row := range unmarshaled.Results {
+		want := report.Results[i]
+		if row.Key != want.Key {
+			t.Errorf("Row %d key mismatch: got %s, want %s", i, row.Key, want.Key)
+		}
+		if row.Status == "OK" {
+			continue
+		}
+		if row.Error == "" {
+			t.Errorf("Failing row %s round-trips with an empty error field", row.Key)
+		}
+	}
+	// The wire form spells the field "results" — pin the tag itself, since a
+	// renamed tag would silently break every consumer of -output JSON.
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		t.Fatalf("Failed to unmarshal report as a generic object: %v", err)
+	}
+	if _, ok := raw["results"]; !ok {
+		t.Errorf("Marshaled report JSON carries no results key")
 	}
 }
 
@@ -551,7 +579,7 @@ func TestVerifyV3ValidSinglePUT(t *testing.T) {
 	mock.PutTestObject(ctx, "test-bucket", "v3-single-put", validData.data, validData.metadata, true, time.Now())
 
 	// Verify the object
-	result := verifyObject(ctx, mock, mek, "test-bucket", "v3-single-put", time.Time{})
+	result := verifyObject(ctx, mock, newVerifyKeySource(mek, nil), "test-bucket", "v3-single-put", time.Time{})
 
 	if result.Status != "OK" {
 		t.Errorf("Expected OK status for v3 single-PUT, got %s: %s", result.Status, result.Error)
@@ -559,17 +587,19 @@ func TestVerifyV3ValidSinglePUT(t *testing.T) {
 }
 
 // TestVerifyV3ValidMultipart tests verification of a valid v3 multipart object
+// through the real pipeline: headerless concatenated part ciphertext, the
+// gzip JSON v3 HMAC sidecar, and the combined per-part digest. The fixture
+// lives in cmd_verify_multipart_test.go.
 func TestVerifyV3ValidMultipart(t *testing.T) {
 	ctx := context.Background()
 	mek := generateTestMEK(t)
 	mock := NewMockB2Backend()
 
-	// Create a valid v3 multipart ARMOR object
-	validData := createValidV3MultipartObject(t, mek, "v3-multipart-object", []byte("multipart data for v3"))
-	mock.PutTestObject(ctx, "test-bucket", "v3-multipart", validData.data, validData.metadata, true, time.Now())
+	plaintext := []byte("multipart data for v3: split across several parts so the per-part HMAC walk is exercised")
+	fix := createV3MultipartFixture(t, mek, "v3-multipart", plaintext, true)
+	fix.put(ctx, mock, "test-bucket", time.Now())
 
-	// Verify the object
-	result := verifyObject(ctx, mock, mek, "test-bucket", "v3-multipart", time.Time{})
+	result := verifyObject(ctx, mock, newVerifyKeySource(mek, nil), "test-bucket", "v3-multipart", time.Time{})
 
 	if result.Status != "OK" {
 		t.Errorf("Expected OK status for v3 multipart, got %s: %s", result.Status, result.Error)
@@ -606,7 +636,7 @@ func TestVerifyV3CorruptedBlock(t *testing.T) {
 	mock.PutTestObject(ctx, "test-bucket", "v3-corrupted-block", corruptedData, validData.metadata, true, time.Now())
 
 	// Verify the object
-	result := verifyObject(ctx, mock, mek, "test-bucket", "v3-corrupted-block", time.Time{})
+	result := verifyObject(ctx, mock, newVerifyKeySource(mek, nil), "test-bucket", "v3-corrupted-block", time.Time{})
 
 	if result.Status != "CORRUPTED" {
 		t.Errorf("Expected CORRUPTED status for v3 corrupted block, got %s", result.Status)
@@ -616,54 +646,29 @@ func TestVerifyV3CorruptedBlock(t *testing.T) {
 	}
 }
 
-// TestVerifyV3CorruptedSidecar pins what armor verify actually guarantees for
-// a v3 object whose metadata carries a dangling HMAC-sidecar reference. The
-// v3 verify path (fullVerifyObject) authenticates the object from its own
-// bytes — envelope header, trailer block table, and the inline per-block
-// HMACs checked inside DecryptV3 — and never resolves the
-// x-amz-meta-armor-hmac-sidecar metadata key, which no production writer
-// emits either (sidecars are located by the composed
-// .armor/hmac/<sha256(key)> path in backend.MultipartStateManager, not by
-// object metadata). A fixture that relabels an inline-verifiable single-PUT
-// v3 object as multipart and corrupts that metadata key therefore verifies
-// OK, and this test asserts that boundary instead of a detection no code
-// path performs (armor-99447be8).
-//
-// Real sidecar-corruption detection is covered where the sidecar is actually
-// consumed, in internal/restoreverifier:
-// TestRestorePaths_V3Multipart_CorruptSidecarEntryIsAnError walks a real
-// multi-part v3 fixture with a corrupted sidecar entry through both restore
-// paths and requires an error, and TestVerifyObject_DRDrill_MultipartDigestEnforced
-// enforces the combined digest of a real multipart sidecar object. Making
-// `armor verify` itself sidecar-aware for true v3 multipart objects is
-// tracked by armor-da67956d.
+// TestVerifyV3CorruptedSidecar tests detection of a corrupted v3 HMAC sidecar:
+// the sidecar object loads but one of its per-block HMAC values is wrong, so
+// the (part, block)-bound HMAC check inside the per-part decrypt walk must
+// report CORRUPTED. This is the real sidecar-corruption scenario through the
+// real multipart pipeline (the pre-armor-da67956d fixture only relabelled a
+// single-PUT object as multipart and verified inline — see armor-99447be8).
 func TestVerifyV3CorruptedSidecar(t *testing.T) {
 	ctx := context.Background()
 	mek := generateTestMEK(t)
 	mock := NewMockB2Backend()
 
-	// Fixture: an inline-verifiable single-PUT v3 object relabelled as
-	// multipart (what createValidV3MultipartObject produces).
-	validData := createValidV3MultipartObject(t, mek, "v3-multipart", []byte("multipart data"))
+	plaintext := []byte("multipart data whose sidecar HMACs will be corrupted")
+	fix := createV3MultipartFixture(t, mek, "v3-corrupted-sidecar", plaintext, true)
+	fix.corruptSidecarHMAC(t)
+	fix.put(ctx, mock, "test-bucket", time.Now())
 
-	// Dangling sidecar reference: the metadata names an HMAC sidecar key
-	// that does not exist in the backend.
-	corruptedMetadata := make(map[string]string)
-	for k, v := range validData.metadata {
-		corruptedMetadata[k] = v
+	result := verifyObject(ctx, mock, newVerifyKeySource(mek, nil), "test-bucket", "v3-corrupted-sidecar", time.Time{})
+
+	if result.Status != "CORRUPTED" {
+		t.Errorf("Expected CORRUPTED status for v3 corrupted sidecar, got %s: %s (details: %s)", result.Status, result.Error, result.Details)
 	}
-	sidecarKey := ".armor/hmac/" + hex.EncodeToString(SHA256Hash([]byte("v3-multipart"))) + ".json"
-	corruptedMetadata["x-amz-meta-armor-hmac-sidecar"] = sidecarKey + "-corrupted"
-
-	mock.PutTestObject(ctx, "test-bucket", "v3-corrupted-sidecar", validData.data, corruptedMetadata, true, time.Now())
-
-	result := verifyObject(ctx, mock, mek, "test-bucket", "v3-corrupted-sidecar", time.Time{})
-
-	// The object's own bytes are intact and inline-verifiable, so verify
-	// reports OK: the v3 path does not consult the sidecar reference (see
-	// the comment above for where sidecar corruption IS detected).
-	if result.Status != "OK" {
-		t.Errorf("Expected OK for an inline-verifiable v3 object with a dangling sidecar reference, got %s: %s", result.Status, result.Error)
+	if !strings.Contains(result.Error, "HMAC") {
+		t.Errorf("Expected an HMAC-related error for the corrupted sidecar, got: %s", result.Error)
 	}
 }
 
@@ -678,7 +683,7 @@ func TestVerifyV3CompressedBlock(t *testing.T) {
 	mock.PutTestObject(ctx, "test-bucket", "v3-compressed", validData.data, validData.metadata, true, time.Now())
 
 	// Verify the object
-	result := verifyObject(ctx, mock, mek, "test-bucket", "v3-compressed", time.Time{})
+	result := verifyObject(ctx, mock, newVerifyKeySource(mek, nil), "test-bucket", "v3-compressed", time.Time{})
 
 	if result.Status != "OK" {
 		t.Errorf("Expected OK status for v3 compressed object, got %s: %s", result.Status, result.Error)
@@ -704,7 +709,7 @@ func TestVerifyV3CorruptedBlockTable(t *testing.T) {
 	mock.PutTestObject(ctx, "test-bucket", "v3-corrupted-table", corruptedData, validData.metadata, true, time.Now())
 
 	// Verify the object
-	result := verifyObject(ctx, mock, mek, "test-bucket", "v3-corrupted-table", time.Time{})
+	result := verifyObject(ctx, mock, newVerifyKeySource(mek, nil), "test-bucket", "v3-corrupted-table", time.Time{})
 
 	if result.Status != "CORRUPTED" {
 		t.Errorf("Expected CORRUPTED status for v3 corrupted block table, got %s", result.Status)
@@ -792,18 +797,10 @@ func createValidV3SinglePUTObject(t *testing.T, mek []byte, key string, plaintex
 	}
 }
 
-func createValidV3MultipartObject(t *testing.T, mek []byte, key string, plaintext []byte) armoringResult {
-	t.Helper()
-
-	// For simplicity, we'll create a single-PUT v3 object marked as multipart
-	// In a real test, you'd use the full multipart pipeline
-	validData := createValidV3SinglePUTObject(t, mek, key, plaintext)
-
-	// Add multipart marker
-	validData.metadata["x-amz-meta-armor-multipart"] = "true"
-
-	return validData
-}
+// createValidV3MultipartObject used to fake a multipart object by relabelling
+// a single-PUT envelope with the multipart marker; the real fixture through
+// the multipart pipeline (headerless parts + gzip v3 sidecar + manifest) is
+// createV3MultipartFixture in cmd_verify_multipart_test.go.
 
 func createValidV3CompressedObject(t *testing.T, mek []byte, key string, plaintext []byte) armoringResult {
 	t.Helper()

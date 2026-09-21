@@ -303,6 +303,13 @@ and self-verifies every block it decrypts (recovered multipart output carries a
 placeholder plaintext SHA-256, so it will not match `sha256sum`, by design).
 Full runbook: [docs/disaster-recovery.md](docs/disaster-recovery.md).
 
+The `verify` subcommand audits objects offline the same way: it unwraps
+fingerprinted wrapped DEKs with the active MEK or a `-escrow` ring (an object
+naming a fingerprint neither carries is an ERROR, not corruption), verifies
+multipart objects through their manifest and HMAC sidecar, writes one
+`-output` JSON row per object with the failure reason, and exits non-zero
+when any object is CORRUPTED or ends in ERROR — safe to gate scripts on.
+
 ## Releases and versioning
 
 - Versions are `0.1.<counter>`; the counter only increases and carries no
@@ -318,7 +325,7 @@ Full runbook: [docs/disaster-recovery.md](docs/disaster-recovery.md).
 
 | Path | What it is |
 |------|------------|
-| `cmd/` | The four binaries: `armor` (the server and its `serve`, `demo`, `check`, `decrypt`, `verify`, `migrate`, `client-config`, `version`, `help` subcommands), `restore-verifier`, `armor-fleet`, `verify-objects` |
+| `cmd/` | The three binaries: `armor` (the server and its `serve`, `demo`, `check`, `decrypt`, `verify`, `migrate`, `client-config`, `version`, `help` subcommands), `restore-verifier`, `armor-fleet` |
 | `internal/` | All packages: `server` (S3 + admin handlers), `crypto`, `backend`, `config`, `keymanager`, `manifest`, `acl`, `canary`, `dashboard`, `presign`, `provenance`, `replication`, `restoreverifier`, `metrics`, `logging`, `b2keys`, `docsindex`, `version`, `testutil` |
 | `tests/` | Go suites outside the package tree — `integration/` (real B2, build-tagged), `aws-cli-compatibility/`, `docker-demo-smoke/`, `rbac/`, `performance/` — plus the pytest suites (`tests/test_*.py`) and migration `fixtures/` |
 | `scripts/` | Operator tooling: `definition-of-done.sh`, `release-gate.sh`, `cut-release.sh`, drift check, starvation watch ([scripts/README.md](scripts/README.md)) |

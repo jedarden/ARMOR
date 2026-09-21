@@ -18,7 +18,7 @@ client works unmodified. Full product documentation starts at
 | Path | What it is |
 |---|---|
 | `cmd/armor` | The server binary and its subcommands (`serve`, `demo`, `check`, `decrypt`, `verify`, `migrate`, `client-config`, `version`, `help`) |
-| `cmd/restore-verifier`, `cmd/armor-fleet`, `cmd/verify-objects` | Companion binaries (restore verification harness, fleet console, offline verifier) |
+| `cmd/restore-verifier`, `cmd/armor-fleet` | Companion binaries (restore verification harness, fleet console). The old offline verifier `cmd/verify-objects` was deleted 2026-09-20 — stale against fingerprinted DEKs and v3, and fully folded into `armor verify` (armor-da67956d), which now unwraps fingerprinted DEKs with ring fallback, verifies v3 multipart objects via manifest + sidecar, emits one report row per object, and exits non-zero on any failure |
 | `internal/` | All packages: `server` (S3 + admin handlers), `crypto`, `backend`, `config`, `keymanager`, `manifest`, `acl`, `canary`, `dashboard`, `presign`, `provenance`, `replication`, `restoreverifier`, `metrics`, `logging`, `b2keys`, `docsindex`, `version`, `testutil` |
 | `tests/` | Go test suites outside the package tree: `integration/` (real B2, build-tagged), `aws-cli-compatibility/`, `docker-demo-smoke/`, `fixtures/`; plus `test_drift_check.py` for the drift tooling |
 | `scripts/` | Operator tooling: `definition-of-done.sh`, `release-gate.sh`, `cut-release.sh`, drift check, starvation watch. See `scripts/README.md` |
