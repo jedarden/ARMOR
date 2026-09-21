@@ -30,10 +30,17 @@ run() {
   fi
 }
 
+go_build_flags=()
+if [ ! -d .git ]; then
+  # git archive verification has no .git directory. Go VCS stamping otherwise
+  # fails before compiling any package.
+  go_build_flags=(-buildvcs=false)
+fi
+
 echo "== ARMOR definition of done ($([ "$fast" = 1 ] && echo fast || echo full)) =="
 
-run "$GO" build ./...
-run "$GO" vet ./...
+run "$GO" build "${go_build_flags[@]}" ./...
+run "$GO" vet "${go_build_flags[@]}" ./...
 run "$PY" -m pytest tests/test_drift_check.py -q
 
 if [ "$fast" = 0 ]; then
