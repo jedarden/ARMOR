@@ -16,9 +16,17 @@ RBAC verb coverage testing against B2 objects using armor-test credentials confi
 - **ARMOR Version:** `0.1.1911`
 - **Credential Type:** armor-test (named credential with no ACL restrictions = full access)
 
-**Test Credentials (from OpenBao):**
-- Access Key: `hd7jp9oeysgt2x3obewn7k8og1vtup337juf2qchc19eqrchqhgo4feeho9ip2ux`
-- Secret Key: `b5fvnuj3d7f5xxxew9rxmb85pz3iro5zawb1gixupozd9g85ito1aqeji324ye2d`
+**Test Credentials:** redacted 2026-09-20 (armor-ad708bfd). The pair originally
+published here was live armor-test credential material from OpenBao, public on
+the mirror from 2026-08-19 (ARMOR ad0d46b7) until the redaction. Every leaked
+value has been rotated: the AUTH pair at `secret/rs-manager/iad-ci/armor-test`
+(KV v3, 2026-09-18), the MEK at the same path (KV v4 + `MEK_RING`, 2026-09-20 —
+the re-wrap walk moved every bucket object onto the new active key, and the
+retired MEK lives on only as a ring entry pending operator retirement), and the
+B2 backend key at `secret/rs-manager/iad-ci/b2/armor-test-jedarden` (KV v2,
+2026-09-20, old key deleted provider-side — armor-d3d7b9ed). Credentials never
+belong in this repo — the current pair is read at test runtime from environment
+variables populated from OpenBao (see `tests/rbac/armor_test_rbac_test.go`).
 
 ## Test Results
 

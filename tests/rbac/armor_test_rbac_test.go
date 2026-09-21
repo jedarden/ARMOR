@@ -9,31 +9,49 @@ package rbac
 import (
 	"bytes"
 	"context"
-	"encoding/hex"
 	"io"
+	"os"
 	"testing"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
-	"github.com/jedarden/armor/internal/config"
 )
 
+// Non-secret armor-test configuration. The endpoint is the armor-test Service
+// on iad-ci reached via port-forward:
+//
+//	kubectl --kubeconfig ~/.kube/iad-ci.kubeconfig -n armor-test port-forward svc/armor-test 9000:9000
 const (
-	// armor-test credentials from OpenBao
-	armorTestAccessKey = "hd7jp9oeysgt2x3obewn7k8og1vtup337juf2qchc19eqrchqhgo4feeho9ip2ux"
-	armorTestSecretKey = "b5fvnuj3d7f5xxxew9rxmb85pz3iro5zawb1gixupozd9g85ito1aqeji324ye2d"
-
 	// armor-test bucket and region from ConfigMap
 	armorTestBucket = "armor-test-jedarden"
 	armorTestRegion = "us-west-002"
 
-	// armor-test MEK from OpenBao
-	armorTestMEK = "795613c7886f83c4a02b0056dabc76613a5ed998141d983f4e7bb3d69c85e3d6"
-
 	// armor-test service endpoint (localhost via port-forward)
 	armorTestEndpoint = "http://localhost:9000"
 )
+
+// armorTestAuth returns the armor-test credential pair from the environment.
+// The values live at secret/rs-manager/iad-ci/armor-test (AUTH_ACCESS_KEY /
+// AUTH_SECRET_KEY) and must never be committed to this repo (armor-ad708bfd:
+// the literals compiled in from ad0d46b7, public 2026-08-19 to 2026-09-20, and
+// every leaked value — this pair, the MEK, and the B2 backend key — has since
+// been rotated; the MEK and B2 key are server-side concerns the S3 test client
+// never needs). Populate the env from OpenBao and the suite skips itself when
+// they are absent:
+//
+//	export ARMOR_TEST_ACCESS_KEY="$(bao-as rs-manager bao kv get -field=AUTH_ACCESS_KEY secret/rs-manager/iad-ci/armor-test)"
+//	export ARMOR_TEST_SECRET_KEY="$(bao-as rs-manager bao kv get -field=AUTH_SECRET_KEY secret/rs-manager/iad-ci/armor-test)"
+//	go test -tags integration ./tests/rbac/
+func armorTestAuth(t *testing.T) (accessKey, secretKey string) {
+	t.Helper()
+	accessKey = os.Getenv("ARMOR_TEST_ACCESS_KEY")
+	secretKey = os.Getenv("ARMOR_TEST_SECRET_KEY")
+	if accessKey == "" || secretKey == "" {
+		t.Skip("ARMOR_TEST_ACCESS_KEY/ARMOR_TEST_SECRET_KEY not set — populate from OpenBao (secret/rs-manager/iad-ci/armor-test), see armorTestAuth for the bao-as commands")
+	}
+	return accessKey, secretKey
+}
 
 // TestRBAC_GET_Allowed tests that GET operations work with armor-test credentials.
 // This verifies the default credential has full access (no ACL restrictions).
@@ -216,43 +234,15 @@ func TestRBAC_CrossBucket_Denied(t *testing.T) {
 // newSDKClient creates an S3 client configured for the armor-test endpoint.
 func newSDKClient(t *testing.T, endpoint string) *s3.Client {
 	t.Helper()
+	accessKey, secretKey := armorTestAuth(t)
 
 	// Create S3 client configured for the running armor-test service
 	return s3.New(s3.Options{
 		BaseEndpoint: &endpoint,
 		Region:       armorTestRegion,
-		Credentials:  &testCredentials{accessKey: armorTestAccessKey, secretKey: armorTestSecretKey},
+		Credentials:  &testCredentials{accessKey: accessKey, secretKey: secretKey},
 		UsePathStyle: true, // ARMOR expects path-style URLs (http://host/bucket/key)
 	})
-}
-
-// loadTestConfig loads ARMOR configuration for testing.
-func loadTestConfig() *config.Config {
-	mek, err := hex.DecodeString(armorTestMEK)
-	if err != nil {
-		return nil
-	}
-
-	return &config.Config{
-		B2Region:          armorTestRegion,
-		B2Endpoint:        "https://s3." + armorTestRegion + ".backblazeb2.com",
-		B2AccessKeyID:     "00220ad670139170000000062", // From OpenBao
-		B2SecretAccessKey: "K002UzuRrYPstDcEVLNIeJ24bcQ9R/k", // From OpenBao
-		Bucket:            armorTestBucket,
-		MEK:               mek,
-		BlockSize:         65536,
-		CacheMaxEntries:   1000,
-		CacheTTL:          300,
-		AuthAccessKey:     armorTestAccessKey,
-		AuthSecretKey:     armorTestSecretKey,
-		Credentials: map[string]*config.Credential{
-			armorTestAccessKey: {
-				AccessKey: armorTestAccessKey,
-				SecretKey: armorTestSecretKey,
-				ACLs:      nil, // No ACL restrictions = full access
-			},
-		},
-	}
 }
 
 // testCredentials implements aws.CredentialsProvider for the S3 client.
