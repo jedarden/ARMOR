@@ -9,9 +9,11 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -84,16 +86,23 @@ type MigrationFailure struct {
 }
 
 // ObjectClassification provides detailed counts by source format, layout, and outcome.
+//
+// Every walked object lands in exactly one bucket per dimension, so the
+// source, size and outcome buckets each sum to the number of classified
+// objects (see Total and Balanced). The fingerprint dimension only counts
+// objects that carry extractable key material, so it may total less.
 type ObjectClassification struct {
-	// By source version
+	// By source version and layout. Layout collapses for v3: objects at or
+	// beyond the target version are never re-encrypted, so their layout is
+	// not separately reported.
 	V1SinglePut   int `json:"v1_single_put"`
 	V1Multipart   int `json:"v1_multipart"`
 	V2SinglePut   int `json:"v2_single_put"`
 	V2Multipart   int `json:"v2_multipart"`
-	V3            int `json:"v3"` // Objects already at target version
+	V3            int `json:"v3"` // v3-or-newer objects (already at/beyond target)
 	NonARMOR      int `json:"non_armor"`
-	Malformed     int `json:"malformed"`
-	Contradictory int `json:"contradictory"`
+	Malformed     int `json:"malformed"`     // armor-version header present but unparseable, or metadata unreadable
+	Contradictory int `json:"contradictory"` // claims an ARMOR version but carries no wrapped DEK; migration fails
 
 	// By size class (bytes)
 	SizeLessThan1MB int `json:"size_lt_1mb"`
@@ -113,6 +122,181 @@ type ObjectClassification struct {
 	OutcomeIntegrityFailed int `json:"outcome_integrity_failed"`
 }
 
+// sourceKind enumerates the source-format buckets a walked object falls into.
+// The buckets are a property of the object alone, not of the run's include
+// list, so the same inventory is reported whatever subset is migrated.
+type sourceKind int
+
+const (
+	srcV1SinglePut   sourceKind = iota // version 1, single-PUT layout
+	srcV1Multipart                     // version 1, multipart layout
+	srcV2SinglePut                     // version 2, single-PUT layout
+	srcV2Multipart                     // version 2, multipart layout
+	srcV3Plus                          // version 3 or newer (at/beyond target)
+	srcNonARMOR                        // no ARMOR version header
+	srcMalformed                       // version header present but unparseable, or metadata unreadable
+	srcContradictory                   // claims an ARMOR version but carries no wrapped DEK
+)
+
+// outcomeKind enumerates what the migration walk did to one object.
+type outcomeKind int
+
+const (
+	outcomeProcessed       outcomeKind = iota // migration candidate attempted successfully (dry runs included)
+	outcomeSkipped                            // not a candidate: wrong version, at target, non-ARMOR, malformed
+	outcomeFailed                             // candidate whose migration attempt errored
+	outcomeIntegrityFailed                    // candidate that failed HMAC or SHA-256 verification
+)
+
+// ErrIntegrityVerification marks migration failures caused by content
+// verification (HMAC or plaintext SHA-256 mismatch) rather than transport,
+// key or metadata errors. Objects failing with this error are counted under
+// OutcomeIntegrityFailed instead of OutcomeFailed; both still count as
+// FailedObjects.
+var ErrIntegrityVerification = errors.New("integrity verification failed")
+
+// sizeBucket constants for the classification size dimension (bytes).
+const (
+	size1MB   = 1 << 20
+	size10MB  = 10 << 20
+	size100MB = 100 << 20
+	size1GB   = 1 << 30
+	size10GB  = 10 << 30
+)
+
+// legacyFingerprintLabel is the by_key_fingerprint bucket for objects whose
+// wrapped DEK predates the fingerprinted v2 wrapping, which records no MEK
+// identity at all.
+const legacyFingerprintLabel = "legacy"
+
+// record folds one walked object into the classification counters: exactly
+// one source bucket, one size bucket and one outcome bucket are incremented.
+// fingerprint is a 16-hex MEK fingerprint extracted from a v2-style wrapped
+// DEK, legacyFingerprintLabel for v1-style wrapping, or empty when the object
+// carries no key material.
+func (c *ObjectClassification) record(src sourceKind, sizeBytes int64, fingerprint string, outcome outcomeKind) {
+	switch src {
+	case srcV1SinglePut:
+		c.V1SinglePut++
+	case srcV1Multipart:
+		c.V1Multipart++
+	case srcV2SinglePut:
+		c.V2SinglePut++
+	case srcV2Multipart:
+		c.V2Multipart++
+	case srcV3Plus:
+		c.V3++
+	case srcNonARMOR:
+		c.NonARMOR++
+	case srcMalformed:
+		c.Malformed++
+	case srcContradictory:
+		c.Contradictory++
+	}
+
+	switch {
+	case sizeBytes < size1MB:
+		c.SizeLessThan1MB++
+	case sizeBytes < size10MB:
+		c.Size1MBTo10MB++
+	case sizeBytes < size100MB:
+		c.Size10MBTo100MB++
+	case sizeBytes < size1GB:
+		c.Size100MBTo1GB++
+	case sizeBytes < size10GB:
+		c.Size1GBTo10GB++
+	default:
+		c.SizeGreater10GB++
+	}
+
+	if fingerprint != "" {
+		if c.ByKeyFingerprint == nil {
+			c.ByKeyFingerprint = make(map[string]int)
+		}
+		c.ByKeyFingerprint[fingerprint]++
+	}
+
+	switch outcome {
+	case outcomeProcessed:
+		c.OutcomeProcessed++
+	case outcomeSkipped:
+		c.OutcomeSkipped++
+	case outcomeFailed:
+		c.OutcomeFailed++
+	case outcomeIntegrityFailed:
+		c.OutcomeIntegrityFailed++
+	}
+}
+
+// Total returns the number of classified objects: the sum of the source
+// buckets, the dimension every walked object lands in exactly once.
+func (c *ObjectClassification) Total() int {
+	return c.V1SinglePut + c.V1Multipart + c.V2SinglePut + c.V2Multipart +
+		c.V3 + c.NonARMOR + c.Malformed + c.Contradictory
+}
+
+// Balanced reports whether the per-object dimensions agree: the source, size
+// and outcome buckets must each sum to the same count. The fingerprint
+// dimension is excluded because it only covers objects carrying key
+// material. A classification is balanced exactly when every recorded object
+// incremented every dimension once (see record).
+func (c *ObjectClassification) Balanced() bool {
+	sizeTotal := c.SizeLessThan1MB + c.Size1MBTo10MB + c.Size10MBTo100MB +
+		c.Size100MBTo1GB + c.Size1GBTo10GB + c.SizeGreater10GB
+	outcomeTotal := c.OutcomeProcessed + c.OutcomeSkipped + c.OutcomeFailed + c.OutcomeIntegrityFailed
+	return sizeTotal == c.Total() && outcomeTotal == c.Total()
+}
+
+// Summary renders the classification as a human-readable multi-line report,
+// one line per dimension with a trailing per-dimension total. Fingerprint
+// keys are sorted so repeated runs of the same inventory render identically.
+func (c *ObjectClassification) Summary() string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "source:    v1-single=%d v1-multipart=%d v2-single=%d v2-multipart=%d v3=%d non-armor=%d malformed=%d contradictory=%d (total %d)\n",
+		c.V1SinglePut, c.V1Multipart, c.V2SinglePut, c.V2Multipart, c.V3, c.NonARMOR, c.Malformed, c.Contradictory, c.Total())
+	fmt.Fprintf(&b, "size:      <1MB=%d 1MB-10MB=%d 10MB-100MB=%d 100MB-1GB=%d 1GB-10GB=%d >10GB=%d (total %d)\n",
+		c.SizeLessThan1MB, c.Size1MBTo10MB, c.Size10MBTo100MB, c.Size100MBTo1GB, c.Size1GBTo10GB, c.SizeGreater10GB,
+		c.SizeLessThan1MB+c.Size1MBTo10MB+c.Size10MBTo100MB+c.Size100MBTo1GB+c.Size1GBTo10GB+c.SizeGreater10GB)
+
+	fpTotal := 0
+	fingerprints := make([]string, 0, len(c.ByKeyFingerprint))
+	for fp := range c.ByKeyFingerprint {
+		fingerprints = append(fingerprints, fp)
+	}
+	sort.Strings(fingerprints)
+	b.WriteString("keys:      ")
+	if len(fingerprints) == 0 {
+		b.WriteString("(none)\n")
+	} else {
+		for i, fp := range fingerprints {
+			if i > 0 {
+				b.WriteByte(' ')
+			}
+			fmt.Fprintf(&b, "%s=%d", fp, c.ByKeyFingerprint[fp])
+			fpTotal += c.ByKeyFingerprint[fp]
+		}
+		fmt.Fprintf(&b, " (total %d)\n", fpTotal)
+	}
+
+	fmt.Fprintf(&b, "outcome:   processed=%d skipped=%d failed=%d integrity-failed=%d (total %d)\n",
+		c.OutcomeProcessed, c.OutcomeSkipped, c.OutcomeFailed, c.OutcomeIntegrityFailed,
+		c.OutcomeProcessed+c.OutcomeSkipped+c.OutcomeFailed+c.OutcomeIntegrityFailed)
+	return b.String()
+}
+
+// copy returns a deep copy so a snapshot handed out (e.g. on MigrationResult)
+// never shares the fingerprint map with the live state.
+func (c *ObjectClassification) copy() ObjectClassification {
+	dup := *c
+	if c.ByKeyFingerprint != nil {
+		dup.ByKeyFingerprint = make(map[string]int, len(c.ByKeyFingerprint))
+		for fp, n := range c.ByKeyFingerprint {
+			dup.ByKeyFingerprint[fp] = n
+		}
+	}
+	return dup
+}
+
 // MigrationResult contains the result of a format migration operation.
 type MigrationResult struct {
 	TotalObjects     int                `json:"total_objects"`
@@ -124,6 +308,10 @@ type MigrationResult struct {
 	Status           string             `json:"status"`
 	ErrorMessage     string             `json:"error_message,omitempty"`
 	DryRun           bool               `json:"dry_run"`
+	// Classification is the cumulative per-dimension object count report
+	// (source/layout, size bucket, key fingerprint, outcome). Machine-
+	// readable via this JSON encoding; Summary renders it for humans.
+	Classification ObjectClassification `json:"classification"`
 }
 
 // FormatMigrator handles format migration operations.
@@ -285,6 +473,9 @@ func (fm *FormatMigrator) Migrate(ctx context.Context, dryRun bool, concurrency 
 				fm.state.FailedObjects++
 				fm.state.Failures = append(fm.state.Failures, failure)
 				fm.stateMu.Unlock()
+				// ARMOR-ness could not be established: the stored size from
+				// the listing is the only classification input available.
+				fm.classifyObject(srcMalformed, obj.Size, "", outcomeFailed)
 				fm.advanceCursor(obj.Key)
 				continue
 			}
@@ -302,16 +493,23 @@ func (fm *FormatMigrator) Migrate(ctx context.Context, dryRun bool, concurrency 
 				if armorVersion == "" {
 					// Not an ARMOR-encrypted object
 					result.SkippedObjects++
+					fm.classifyObject(srcNonARMOR, obj.Size, "", outcomeSkipped)
 					fm.advanceCursor(obj.Key)
 					continue
 				}
 				if _, err := fmt.Sscanf(armorVersion, "%d", &version); err != nil {
 					log.Printf("Warning: object %s has invalid version '%s', skipping", obj.Key, armorVersion)
 					result.SkippedObjects++
+					fm.classifyObject(srcMalformed, obj.Size, "", outcomeSkipped)
 					fm.advanceCursor(obj.Key)
 					continue
 				}
 			}
+
+			// Derive the per-dimension classification once, from the same
+			// metadata the skip decisions below use, and record it with the
+			// outcome each terminal branch settles on.
+			src, sizeBytes, fingerprint := classifyListedObject(rawMeta, armorMeta, ok, version, obj.Size)
 
 			// Check if this object should be skipped:
 			// First check if version is in the include list (not a source version we want to migrate from)
@@ -320,6 +518,7 @@ func (fm *FormatMigrator) Migrate(ctx context.Context, dryRun bool, concurrency 
 			if !fm.shouldMigrateVersion(uint8(version)) {
 				// Version is not in the include list - skip it
 				result.SkippedObjects++
+				fm.classifyObject(src, sizeBytes, fingerprint, outcomeSkipped)
 				fm.advanceCursor(obj.Key)
 				continue
 			}
@@ -327,6 +526,7 @@ func (fm *FormatMigrator) Migrate(ctx context.Context, dryRun bool, concurrency 
 			if uint8(version) == fm.currentWriteVersion {
 				// Object is already at target version - skip it
 				result.SkippedObjects++
+				fm.classifyObject(src, sizeBytes, fingerprint, outcomeSkipped)
 				fm.advanceCursor(obj.Key)
 				continue
 			}
@@ -351,7 +551,14 @@ func (fm *FormatMigrator) Migrate(ctx context.Context, dryRun bool, concurrency 
 				fm.state.FailedObjects++
 				fm.state.Failures = append(fm.state.Failures, failure)
 				fm.stateMu.Unlock()
+				if errors.Is(err, ErrIntegrityVerification) {
+					fm.classifyObject(src, sizeBytes, fingerprint, outcomeIntegrityFailed)
+				} else {
+					fm.classifyObject(src, sizeBytes, fingerprint, outcomeFailed)
+				}
 				// Continue with other objects - migration is best-effort
+			} else {
+				fm.classifyObject(src, sizeBytes, fingerprint, outcomeProcessed)
 			}
 
 			// Increment processed counter regardless of success/failure
@@ -399,8 +606,13 @@ func (fm *FormatMigrator) Migrate(ctx context.Context, dryRun bool, concurrency 
 	result.SkippedObjects = fm.state.SkippedObjects
 	result.FailedObjects = fm.state.FailedObjects
 	result.Failures = fm.state.Failures
+	result.Classification = fm.state.Classification.copy()
 	result.Duration = time.Since(startTime)
 	result.Status = "completed"
+
+	// Human-readable count report; the same counters travel machine-readable
+	// on the result JSON and the persisted/polled migration state.
+	log.Printf("Migration %s classification:\n%s", result.Status, result.Classification.Summary())
 
 	return result, nil
 }
@@ -528,8 +740,8 @@ func (fm *FormatMigrator) migrateObject(ctx context.Context, obj backend.ObjectI
 	verifyPlaintextSHA := verifyMeta[armorMetaPlaintextSHA]
 	expectedSHA := hex.EncodeToString(plaintextSHA[:])
 	if verifyPlaintextSHA != expectedSHA {
-		return fmt.Errorf("SHA-256 mismatch after migration: expected %s, got %s",
-			expectedSHA, verifyPlaintextSHA)
+		return fmt.Errorf("%w: SHA-256 mismatch after migration: expected %s, got %s",
+			ErrIntegrityVerification, expectedSHA, verifyPlaintextSHA)
 	}
 
 	return nil
@@ -597,7 +809,7 @@ func (fm *FormatMigrator) decryptSingleObject(armorMeta *backend.ARMORMetadata, 
 
 	plaintext, err := decryptor.Decrypt(encryptedData, hmacTable)
 	if err != nil {
-		return nil, fmt.Errorf("failed to decrypt: %w", err)
+		return nil, fmt.Errorf("%w: %w", ErrIntegrityVerification, err)
 	}
 
 	return plaintext, nil
@@ -636,7 +848,7 @@ func (fm *FormatMigrator) decryptMultipartObject(armorMeta *backend.ARMORMetadat
 	// Decrypt with HMAC verification
 	plaintext, err := decryptor.Decrypt(ciphertext, hmacTable)
 	if err != nil {
-		return nil, fmt.Errorf("failed to decrypt with HMAC: %w", err)
+		return nil, fmt.Errorf("%w: %w", ErrIntegrityVerification, err)
 	}
 
 	return plaintext, nil
@@ -906,6 +1118,69 @@ func (fm *FormatMigrator) shouldMigrateVersion(version uint8) bool {
 		}
 	}
 	return false
+}
+
+// classifyObject records one walked object in the cumulative classification
+// counters on the migration state. Like the failure counters, classification
+// is applied to the state immediately, so periodic saves, GetState() and the
+// progress endpoint reflect objects already walked; a resumed run accumulates
+// on top of the counts loaded with the state.
+func (fm *FormatMigrator) classifyObject(src sourceKind, sizeBytes int64, fingerprint string, outcome outcomeKind) {
+	fm.stateMu.Lock()
+	defer fm.stateMu.Unlock()
+	fm.state.Classification.record(src, sizeBytes, fingerprint, outcome)
+}
+
+// classifyListedObject derives the source bucket, classification size and
+// MEK fingerprint for one listed object from the raw and parsed metadata the
+// walk already holds. listSize is the stored size from the listing, used when
+// no plaintext size is recorded. The rules mirror Migrate's own parse order
+// so the classification and the skip decisions can never disagree about what
+// an object is.
+func classifyListedObject(rawMeta map[string]string, armorMeta *backend.ARMORMetadata, ok bool, version int, listSize int64) (sourceKind, int64, string) {
+	fingerprint := ""
+	if dek := rawMeta[armorMetaWrappedDEK]; dek != "" {
+		switch {
+		case armorMeta != nil && armorMeta.MEKFingerprint != "":
+			fingerprint = armorMeta.MEKFingerprint
+		case len(dek) > 4 && dek[:3] == "v2:":
+			if parts := strings.SplitN(dek, ":", 3); len(parts) == 3 && parts[0] == "v2" {
+				fingerprint = parts[1]
+			}
+		default:
+			fingerprint = legacyFingerprintLabel
+		}
+	}
+
+	sizeBytes := listSize
+	if armorMeta != nil && armorMeta.PlaintextSize > 0 {
+		sizeBytes = armorMeta.PlaintextSize
+	}
+
+	if !ok {
+		// ParseARMORMetadata only returns !ok alongside a nil metadata:
+		// the object carries no wrapped DEK. Callers only reach here for
+		// objects that also claim an ARMOR version (Migrate's non-ARMOR
+		// branch handles the no-header case), which makes them
+		// self-contradictory.
+		return srcContradictory, sizeBytes, fingerprint
+	}
+
+	multipart := rawMeta[armorMetaMultipart] == "true"
+	switch version {
+	case 1:
+		if multipart {
+			return srcV1Multipart, sizeBytes, fingerprint
+		}
+		return srcV1SinglePut, sizeBytes, fingerprint
+	case 2:
+		if multipart {
+			return srcV2Multipart, sizeBytes, fingerprint
+		}
+		return srcV2SinglePut, sizeBytes, fingerprint
+	default:
+		return srcV3Plus, sizeBytes, fingerprint
+	}
 }
 
 // advanceCursor advances the migration cursor to the given key.

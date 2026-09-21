@@ -557,6 +557,27 @@ func TestMigrateWatchModeNoFailures(t *testing.T) {
 						"processed_objects": 10,
 						"skipped_objects":   0,
 						"failed_objects":    0,
+						"classification": map[string]interface{}{
+							"v1_single_put":            4,
+							"v1_multipart":             0,
+							"v2_single_put":            0,
+							"v2_multipart":             0,
+							"v3":                       6,
+							"non_armor":                0,
+							"malformed":                0,
+							"contradictory":            0,
+							"size_lt_1mb":              10,
+							"size_1mb_to_10mb":         0,
+							"size_10mb_to_100mb":       0,
+							"size_100mb_to_1gb":        0,
+							"size_1gb_to_10gb":         0,
+							"size_gt_10gb":             0,
+							"by_key_fingerprint":       map[string]interface{}{"0123456789abcdef": 10},
+							"outcome_processed":        10,
+							"outcome_skipped":          0,
+							"outcome_failed":           0,
+							"outcome_integrity_failed": 0,
+						},
 					})
 				default:
 					w.WriteHeader(http.StatusOK)
@@ -634,8 +655,84 @@ func TestMigrateWatchModeNoFailures(t *testing.T) {
 		t.Errorf("output does not contain success message: %s", output)
 	}
 
+	// The completed state's classification must render human-readable, one
+	// line per dimension.
+	for _, want := range []string{
+		"source:", "v1-single=4", "v3=6",
+		"size:", "<1MB=10",
+		"keys:", "0123456789abcdef=10",
+		"outcome:", "processed=10",
+	} {
+		if !strings.Contains(output, want) {
+			t.Errorf("output does not contain classification report line %q:\n%s", want, output)
+		}
+	}
+
 	// Verify exit code is 0 (success)
 	if exitCode != 0 {
 		t.Errorf("expected exit code 0 for successful migration, got %d", exitCode)
+	}
+}
+
+// TestParseMigrationStateClassification checks that the per-dimension count
+// report decodes off the polled state, and that a state without one (older
+// server) leaves Classification nil rather than erroring.
+func TestParseMigrationStateClassification(t *testing.T) {
+	m := map[string]interface{}{
+		"status":            "completed",
+		"total_objects":     3,
+		"processed_objects": 1,
+		"skipped_objects":   1,
+		"failed_objects":    1,
+		"classification": map[string]interface{}{
+			"v1_single_put":      1,
+			"v1_multipart":       1,
+			"v3":                 1,
+			"size_lt_1mb":        2,
+			"size_1gb_to_10gb":   1,
+			"by_key_fingerprint": map[string]interface{}{"legacy": 2},
+			"outcome_processed":  1,
+			"outcome_skipped":    1,
+			"outcome_failed":     1,
+		},
+	}
+	state, err := parseMigrationState(m)
+	if err != nil {
+		t.Fatalf("parseMigrationState failed: %v", err)
+	}
+	if state.Classification == nil {
+		t.Fatal("Classification not decoded from state map")
+	}
+	c := state.Classification
+	if c.V1SinglePut != 1 || c.V1Multipart != 1 || c.V3 != 1 {
+		t.Errorf("source buckets wrong: v1s=%d v1m=%d v3=%d", c.V1SinglePut, c.V1Multipart, c.V3)
+	}
+	if c.SizeLessThan1MB != 2 || c.Size1GBTo10GB != 1 {
+		t.Errorf("size buckets wrong: <1MB=%d 1GB-10GB=%d", c.SizeLessThan1MB, c.Size1GBTo10GB)
+	}
+	if got := c.ByKeyFingerprint["legacy"]; got != 2 {
+		t.Errorf("fingerprint bucket wrong: legacy=%d", got)
+	}
+	if c.OutcomeProcessed != 1 || c.OutcomeSkipped != 1 || c.OutcomeFailed != 1 {
+		t.Errorf("outcome buckets wrong: processed=%d skipped=%d failed=%d",
+			c.OutcomeProcessed, c.OutcomeSkipped, c.OutcomeFailed)
+	}
+
+	// A malformed classification member is an error, not silent data loss.
+	bad := map[string]interface{}{
+		"status":         "completed",
+		"classification": map[string]interface{}{"v1_single_put": "not-a-number"},
+	}
+	if _, err := parseMigrationState(bad); err == nil {
+		t.Error("parseMigrationState accepted a malformed classification member")
+	}
+
+	// Absent classification (older server) stays nil.
+	plain, err := parseMigrationState(map[string]interface{}{"status": "in_progress"})
+	if err != nil {
+		t.Fatalf("parseMigrationState failed without classification: %v", err)
+	}
+	if plain.Classification != nil {
+		t.Errorf("Classification = %+v without a classification member, want nil", plain.Classification)
 	}
 }

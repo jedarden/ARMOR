@@ -10,6 +10,8 @@ import (
 	"net/url"
 	"os"
 	"time"
+
+	"github.com/jedarden/armor/internal/server"
 )
 
 func init() {
@@ -65,6 +67,10 @@ type MigrationState struct {
 		Time   string `json:"time"`
 	} `json:"failures,omitempty"`
 	ErrorMessage string `json:"error_message,omitempty"`
+	// Classification mirrors server.ObjectClassification, the per-dimension
+	// count report (source/layout, size bucket, key fingerprint, outcome)
+	// the server accumulates over the walk.
+	Classification *server.ObjectClassification `json:"classification,omitempty"`
 }
 
 // MigrationResult represents the final result of a migration operation
@@ -164,6 +170,9 @@ func migrate(fs *flag.FlagSet) {
 	if status, ok := initialState["status"].(string); ok {
 		fmt.Fprintf(os.Stderr, "Status: %s\n", status)
 	}
+	// The POST runs the migration synchronously, so the response already
+	// carries the final count report.
+	printClassification(initialState)
 }
 
 // watchMigration polls the migration progress endpoint until completion
@@ -229,6 +238,13 @@ func watchMigration(client *http.Client, migrateURL, adminToken string) error {
 				fmt.Fprintf(os.Stderr, "Total: %d, Processed: %d, Skipped: %d, Failed: %d\n",
 					state.TotalObjects, state.ProcessedObjects, state.SkippedObjects, state.FailedObjects)
 
+				// Per-dimension count report: source/layout, size bucket,
+				// key fingerprint, outcome. The same counts travel
+				// machine-readable on the state JSON's classification field.
+				if state.Classification != nil {
+					fmt.Fprintf(os.Stderr, "\n%s", state.Classification.Summary())
+				}
+
 				// Exit non-zero if there were failures
 				if state.FailedObjects > 0 {
 					fmt.Fprintf(os.Stderr, "Migration had %d failures.\n", state.FailedObjects)
@@ -246,6 +262,38 @@ func watchMigration(client *http.Client, migrateURL, adminToken string) error {
 	// Unreachable: ticker.C is never closed, so the loop above only exits via
 	// an explicit return. Present for the compiler's control-flow analysis.
 	return nil
+}
+
+// classificationFromMap decodes the "classification" member of a decoded
+// JSON response (migration state or result) into the server's
+// ObjectClassification. It returns nil when the member is absent.
+func classificationFromMap(m map[string]interface{}) (*server.ObjectClassification, error) {
+	cls, ok := m["classification"].(map[string]interface{})
+	if !ok {
+		return nil, nil
+	}
+	data, err := json.Marshal(cls)
+	if err != nil {
+		return nil, fmt.Errorf("failed to re-encode classification: %w", err)
+	}
+	var c server.ObjectClassification
+	if err := json.Unmarshal(data, &c); err != nil {
+		return nil, fmt.Errorf("failed to parse classification: %w", err)
+	}
+	return &c, nil
+}
+
+// printClassification renders the human-readable per-dimension count report
+// from a decoded JSON response, when that response carries one.
+func printClassification(m map[string]interface{}) {
+	cls, err := classificationFromMap(m)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: %v\n", err)
+		return
+	}
+	if cls != nil {
+		fmt.Fprintf(os.Stderr, "\n%s", cls.Summary())
+	}
 }
 
 // parseMigrationState parses a map into a MigrationState
@@ -297,6 +345,11 @@ func parseMigrationState(m map[string]interface{}) (*MigrationState, error) {
 	}
 	if errorMsg, ok := m["error_message"].(string); ok {
 		state.ErrorMessage = errorMsg
+	}
+	if cls, err := classificationFromMap(m); err != nil {
+		return nil, err
+	} else if cls != nil {
+		state.Classification = cls
 	}
 
 	// Parse failures if present
