@@ -16,6 +16,13 @@ duplicates:
   creates or refreshes the release. If the tag never shows up, the release is
   still created with ``target_commitish`` so GitHub makes the tag itself.
 
+The release body is the ``CHANGELOG.md`` entry for the version (fetched from
+the released revision through the same Forgejo raw API the armor-build
+publish-release step uses to fetch this script) followed by the image-digest
+table. A missing file or section degrades to the digest table alone; any
+other changelog fetch failure exits 5 so the workflow's public-host retry
+runs.
+
 Credentials come ONLY from the environment and are never printed or passed
 as arguments:
 
@@ -225,15 +232,66 @@ def release_name(version: str) -> str:
     return f"ARMOR v{version}"
 
 
+def extract_changelog_section(markdown: str, version: str) -> str | None:
+    """Body of the ``## <version> (<date>)`` section of CHANGELOG.md, without
+    the heading itself, or None when the file has no entry for ``version``.
+
+    Same section boundaries as the awk recipe in docs/release-process.md:
+    start after the ``## <version> (`` heading, stop at the next ``## ``
+    heading. The prefix match is anchored by the opening parenthesis, so
+    ``0.1.19`` never matches the ``0.1.1971`` entry.
+    """
+    wanted = f"## {version} ("
+    lines = markdown.splitlines()
+    start = next((i for i, line in enumerate(lines) if line.startswith(wanted)), None)
+    if start is None:
+        return None
+    section: list[str] = []
+    for line in lines[start + 1 :]:
+        if line.startswith("## "):
+            break
+        section.append(line)
+    return "\n".join(section).strip() or None
+
+
+def fetch_changelog_entry(
+    api: str, repo: str, version: str, commit: str, token: str, out: Outcome
+) -> str | None:
+    """CHANGELOG.md section for ``version`` as written in the release commit.
+
+    A missing file or a missing section degrades to a digest-table-only body
+    (logged, and recorded in the outcome); any other API failure is fatal
+    (exit 5) so the workflow retries via the public Forgejo host.
+    """
+    url = f"{api}/repos/{repo}/raw/CHANGELOG.md?ref={quote(commit)}"
+    try:
+        resp = http("GET", url, token=token)
+    except ApiError as e:
+        if e.status == 404:
+            _log(f"changelog: no CHANGELOG.md at {commit[:12]}; body carries only the digest table")
+            return None
+        raise SystemExit(_fail(EXIT_FORGEJO, f"CHANGELOG fetch failed: {e}"))
+    markdown = resp.body if isinstance(resp.body, str) else ""
+    entry = extract_changelog_section(markdown, version)
+    if entry is None:
+        _log(f"changelog: no '## {version} (' section at {commit[:12]}; body carries only the digest table")
+    return entry
+
+
 def release_body(
-    version: str, commit: str, workflow: str | None, digests: list[tuple[str, str, str | None]]
+    version: str,
+    commit: str,
+    workflow: str | None,
+    digests: list[tuple[str, str, str | None]],
+    changelog: str | None = None,
 ) -> str:
     origin = (
         f"iad-ci Argo workflow `{workflow}`" if workflow else "a manual `scripts/publish_release.py` run"
     )
-    lines = [
-        f"## ARMOR v{version}",
-        "",
+    lines = [f"## ARMOR v{version}", ""]
+    if changelog:
+        lines += [changelog, ""]
+    lines += [
         f"Built from commit `{commit}` by {origin}.",
         "",
         "### Images",
@@ -267,6 +325,7 @@ class Outcome:
     commit: str
     forgejo_tag: str = "skipped"
     forgejo_release: str = "skipped"
+    changelog: str = "skipped"
     github_tag_visible: bool | None = None
     github_release: str = "skipped"
     urls: dict[str, str] = field(default_factory=dict)
@@ -492,7 +551,11 @@ def main(argv: list[str] | None = None, *, sleep=time.sleep) -> int:
 
     digests = collect_digests(args.version, os.environ.get("DOCKER_CONFIG_JSON"))
     name = release_name(args.version)
-    body = release_body(args.version, args.commit, args.workflow, digests)
+    changelog = fetch_changelog_entry(
+        args.forgejo_api, args.repo, args.version, args.commit, forgejo_token, out
+    )
+    out.changelog = "included" if changelog else "unavailable"
+    body = release_body(args.version, args.commit, args.workflow, digests, changelog)
 
     forgejo_ensure_release(args.forgejo_api, args.repo, tag, args.commit, name, body, forgejo_token, out, args.dry_run)
 

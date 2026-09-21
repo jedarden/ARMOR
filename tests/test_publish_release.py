@@ -30,6 +30,19 @@ GH = pr.DEFAULT_GITHUB_API
 REPO = pr.DEFAULT_REPO
 GHCR_DIGEST = "sha256:" + "ab" * 32
 HUB_DIGEST = "sha256:" + "cd" * 32
+RAW_CHANGELOG_URL = f"{FJ}/repos/{REPO}/raw/CHANGELOG.md"
+
+
+def changelog_markdown(version: str = VERSION) -> str:
+    """A CHANGELOG.md whose ``version`` section is two known bullets."""
+    return (
+        "# Changelog\n\npreamble text\n\n"
+        f"## {version} (2026-09-21)\n\n"
+        "- fix(server): batch range reads (armor-4a20c3b3)\n"
+        "- docs(release): copy notes into release bodies (armor-4a20c3b3)\n\n"
+        "## 0.1.1968 (2026-09-18)\n\n"
+        "- older entry that must not leak into the body\n"
+    )
 
 
 class FakeResponse:
@@ -171,12 +184,96 @@ def test_fresh_publish_creates_tag_and_both_releases(tokens, api, capsys):
     assert all(auth for m, u, _, auth in api.calls if "/repos/" in u)
 
 
+# -------------------------------------------------------------- changelog
+
+
+def test_fresh_publish_prepends_changelog_section(tokens, api, capsys):
+    api.route("POST", f"{FJ}/repos/{REPO}/tags", 201, {})
+    api.route("GET", RAW_CHANGELOG_URL, 200, changelog_markdown())
+    api.route("POST", f"{FJ}/repos/{REPO}/releases", 201, {"id": 1, "html_url": "f"})
+    api.route("GET", f"{GH}/repos/{REPO}/git/ref/tags/{TAG}", 200, {})
+    api.route("POST", f"{GH}/repos/{REPO}/releases", 201, {"id": 2, "html_url": "g"})
+
+    assert run() == pr.EXIT_OK
+    out = outcome(capsys)
+    assert out["changelog"] == "included"
+    bodies = {
+        u: p["body"] for m, u, p, _ in api.calls if m == "POST" and u.endswith("/releases")
+    }
+    for body in bodies.values():
+        assert "- fix(server): batch range reads (armor-4a20c3b3)" in body
+        assert "- docs(release): copy notes into release bodies (armor-4a20c3b3)" in body
+        # Notes precede the digest table, which is still intact.
+        assert body.index("- fix(server)") < body.index("### Images") < body.index("| Image |")
+        assert f"`ghcr.io/jedarden/armor:{VERSION}`" in body
+        # Only this version's section: no heading, date, or older entry leaks.
+        assert f"## {VERSION}" not in body
+        assert "2026-09-21" not in body
+        assert "0.1.1968" not in body and "older entry" not in body
+    # The raw fetch is authenticated like every other /repos/ call.
+    assert all(auth for m, u, _, auth in api.calls if u == RAW_CHANGELOG_URL)
+
+
+def test_missing_changelog_section_degrades_to_digest_table(tokens, api, capsys):
+    api.route("POST", f"{FJ}/repos/{REPO}/tags", 201, {})
+    api.route("GET", RAW_CHANGELOG_URL, 200, changelog_markdown(version="0.1.1968"))
+    api.route("POST", f"{FJ}/repos/{REPO}/releases", 201, {"id": 1, "html_url": "f"})
+    api.route("GET", f"{GH}/repos/{REPO}/git/ref/tags/{TAG}", 200, {})
+    api.route("POST", f"{GH}/repos/{REPO}/releases", 201, {"id": 2, "html_url": "g"})
+
+    assert run() == pr.EXIT_OK
+    captured = capsys.readouterr()
+    out = json.loads(captured.out)
+    assert out["changelog"] == "unavailable"
+    assert "body carries only the digest table" in captured.err
+    posted = [p for m, u, p, _ in api.calls if m == "POST" and u == f"{FJ}/repos/{REPO}/releases"][0]
+    assert "| Image | Visibility | Digest |" in posted["body"]
+    assert "older entry" not in posted["body"]
+    # The unrouted-raw 404 path (every test that routes no changelog) ends
+    # here too: publish proceeds, the table survives.
+
+
+def test_changelog_api_failure_is_fatal_before_any_release_mutation(tokens, api):
+    api.route("GET", f"{FJ}/repos/{REPO}/tags/{TAG}", 200, {"commit": {"sha": COMMIT}})
+    api.route("GET", RAW_CHANGELOG_URL, 500, {"message": "boom"})
+    with pytest.raises(SystemExit) as ex:
+        run()
+    assert ex.value.code == pr.EXIT_FORGEJO
+    assert api.mutations() == []
+
+
+def test_extract_changelog_section_anchors_on_exact_version():
+    md = (
+        "# Changelog\n\npreamble\n\n"
+        "## 0.1.19 (2026-01-01)\n\n- first\n\n"
+        "## 0.1.1971 (2026-09-19)\n\n- second\n- third\n\n"
+        "## 0.1.1968 (2026-09-18)\n\n- fourth\n"
+    )
+    assert pr.extract_changelog_section(md, "0.1.1971") == "- second\n- third"
+    assert pr.extract_changelog_section(md, "0.1.19") == "- first"
+    assert pr.extract_changelog_section(md, "0.1.1969") is None
+    # An empty section (heading with no bullets) counts as absent.
+    assert pr.extract_changelog_section("## 0.1.1 (2026-01-01)\n\n## 0.1.0 (x)\n", "0.1.1") is None
+
+
+def test_release_body_places_notes_before_digest_table():
+    body = pr.release_body(
+        VERSION,
+        COMMIT,
+        None,
+        [(f"ghcr.io/jedarden/armor:{VERSION}", "public", GHCR_DIGEST)],
+        changelog="- note one\n- note two",
+    )
+    assert body.index("- note one") < body.index("### Images") < body.index("| Image |")
+
+
 # ------------------------------------------------------------ idempotent
 
 
 def test_rerun_updates_instead_of_duplicating(tokens, api, capsys):
     api.route("GET", f"{FJ}/repos/{REPO}/tags/{TAG}", 200, {"commit": {"sha": COMMIT}})
     api.route("GET", f"{FJ}/repos/{REPO}/releases/tags/{TAG}", 200, {"id": 7})
+    api.route("GET", RAW_CHANGELOG_URL, 200, changelog_markdown())
     api.route("PATCH", f"{FJ}/repos/{REPO}/releases/7", 200, {"id": 7, "html_url": "https://git/r"})
     api.route("GET", f"{GH}/repos/{REPO}/git/ref/tags/{TAG}", 200, {"ref": "x"})
     api.route("GET", f"{GH}/repos/{REPO}/releases/tags/{TAG}", 200, {"id": 9})
@@ -185,10 +282,16 @@ def test_rerun_updates_instead_of_duplicating(tokens, api, capsys):
     assert run() == pr.EXIT_OK
     out = outcome(capsys)
     assert (out["forgejo_tag"], out["forgejo_release"], out["github_release"]) == ("exists", "updated", "updated")
+    assert out["changelog"] == "included"
     assert api.mutations() == [
         ("PATCH", f"{FJ}/repos/{REPO}/releases/7"),
         ("PATCH", f"{GH}/repos/{REPO}/releases/9"),
     ]
+    # The idempotent PATCH refreshes the body to the same notes+table shape.
+    patched = {u: p for m, u, p, _ in api.calls if m == "PATCH"}
+    for url in (f"{FJ}/repos/{REPO}/releases/7", f"{GH}/repos/{REPO}/releases/9"):
+        assert "- fix(server): batch range reads (armor-4a20c3b3)" in patched[url]["body"]
+        assert "| Image | Visibility | Digest |" in patched[url]["body"]
 
 
 def test_tag_at_other_commit_is_refused_before_any_mutation(tokens, api, capsys):

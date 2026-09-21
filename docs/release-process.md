@@ -91,12 +91,15 @@ status on GitHub at start and at the end, which is what the README badge shows.
 | `docker-build`, `docker-build-restore-verifier`, `docker-build-fleet`, `docker-build-ghcr` | The four images are built with kaniko from the pushed tree. They are siblings: the server image is published even if a companion build fails |
 | `verify-*-image` | Each Docker Hub tag is resolvable through the registry API (the ghost-tag guard) |
 | `compat-suite-test` | The freshly pushed server image serves AWS CLI and rclone end to end |
-| `publish-release` | Runs `scripts/publish_release.py` (fetched from the released revision): creates the annotated tag `v<version>` at the pushed revision through the Forgejo API (an existing tag at another commit is a hard error, never moved), creates or refreshes the Forgejo release whose body carries the image digests observed in the registries, waits up to five minutes for the push mirror to carry the tag to GitHub, then creates or refreshes the GitHub release. Every action is idempotent, so a re-run of a partially published version completes it. Sibling of the step below: a release-API failure shows as a red workflow but never blocks the armor-test bump |
+| `publish-release` | Runs `scripts/publish_release.py` (fetched from the released revision): creates the annotated tag `v<version>` at the pushed revision through the Forgejo API (an existing tag at another commit is a hard error, never moved), creates or refreshes the Forgejo release whose body carries the `CHANGELOG.md` entry for the version — fetched from the released revision through the same Forgejo raw API the step uses to fetch the publisher script — above the image digests observed in the registries, waits up to five minutes for the push mirror to carry the tag to GitHub, then creates or refreshes the GitHub release. Every action is idempotent, so a re-run of a partially published version completes it. Sibling of the step below: a release-API failure shows as a red workflow but never blocks the armor-test bump |
 | `update-declarative-config` | Bumps the **armor-test** deployment (`k8s/iad-ci/armor-test/`) to the new version. Production deployments are never touched by CI |
 
-The release body written by CI is the digest table; `CHANGELOG.md` is the
-human-readable record and is linked from the README. Including the CHANGELOG
-entry in the release body is tracked as a follow-up on the release bead.
+The release body written by CI is the CHANGELOG entry for the version
+followed by the digest table. A missing `CHANGELOG.md` or a missing section
+for the version degrades to the digest table alone — logged by the publisher
+and recorded as `"changelog": "unavailable"` in its JSON summary; any other
+changelog fetch failure exits 5, so the workflow's public-Forgejo retry
+covers it.
 
 Watching a run (read-only):
 
