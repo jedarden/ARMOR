@@ -113,6 +113,7 @@ Contextual notes and temporary documentation:
 - **[Litestream Verified Generation ID](notes/litestream-verified-generation-id.md)** — Litestream restore verification notes
 - **[Manifest Repair Quarantine](notes/manifest-repair-quarantine.md)** — Operator guide to manifest repair and quarantine
 - **[MEK Rotation 2026](notes/mek-rotation-2026.md)** — MEK rotation walkthrough and rotation state
+- **[Migration Inventory Classification](notes/migration-classification.md)** — Migration per-dimension count report: eight source categories, size classes, key fingerprints, outcomes, deterministic reason strings, and where each surface exposes them
 - **[Migration Error Handling Flow](notes/migration-error-handling-flow.md)** — Migration error handling and failure-recording flow analysis
 - **[Starvation Resolution 2026-08-28](notes/starvation-2026-08-28-resolution.md)** — Ready-frontier starvation alert resolution, verified 2026-09-08
 - **[Starvation Watch](notes/starvation-watch.md)** — Workspace-local starvation watcher for bead frontiers

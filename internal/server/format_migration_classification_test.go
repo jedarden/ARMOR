@@ -851,6 +851,76 @@ func TestMigrateClassificationDryRunDoesNotLeak(t *testing.T) {
 	}
 }
 
+// TestMigrateClassificationDryRunPersistsStateJSON is the dry-run acceptance
+// for the persisted report: a dry run over the mixed eight-category fixture
+// writes a migration state whose classification member carries every source
+// category under its JSON tag — the state file an operator or the CLI reads
+// back shows the whole inventory, not just the walk's outcome counts.
+func TestMigrateClassificationDryRunPersistsStateJSON(t *testing.T) {
+	ctx := context.Background()
+	mb := NewMockBackend()
+	want, _ := buildClassificationInventory(t, mb)
+
+	migrator := NewFormatMigrator(mb, "test-bucket", clsTestMEK(), "default", crypto.Version3, []string{"1", "2"}, nil)
+	dry, err := migrator.Migrate(ctx, true, 1)
+	if err != nil {
+		t.Fatalf("dry run failed: %v", err)
+	}
+
+	stateObj, ok := mb.objects[".armor/migration-state.json"]
+	if !ok {
+		t.Fatal("dry run did not persist migration state")
+	}
+	var raw struct {
+		DryRun         bool                   `json:"dry_run"`
+		Classification map[string]interface{} `json:"classification"`
+	}
+	if err := json.Unmarshal(stateObj.Data, &raw); err != nil {
+		t.Fatalf("persisted state does not parse: %v", err)
+	}
+	if !raw.DryRun {
+		t.Error("persisted state does not record dry_run=true")
+	}
+
+	// Every one of the eight source categories, by its persisted JSON tag.
+	for key, wantCount := range map[string]float64{
+		"v1_single_put": float64(want.V1SinglePut),
+		"v1_multipart":  float64(want.V1Multipart),
+		"v2_single_put": float64(want.V2SinglePut),
+		"v2_multipart":  float64(want.V2Multipart),
+		"v3":            float64(want.V3),
+		"non_armor":     float64(want.NonARMOR),
+		"malformed":     float64(want.Malformed),
+		"contradictory": float64(want.Contradictory),
+	} {
+		got, ok := raw.Classification[key]
+		if !ok {
+			t.Errorf("persisted classification missing category key %q:\n%s", key, stateObj.Data)
+			continue
+		}
+		if got != wantCount {
+			t.Errorf("persisted classification %s = %v, want %v", key, got, wantCount)
+		}
+	}
+
+	// The same document decodes back into the state struct unchanged: the
+	// state file, GetState() and the returned result all carry the same
+	// report the run produced.
+	var persisted MigrationState
+	if err := json.Unmarshal(stateObj.Data, &persisted); err != nil {
+		t.Fatalf("persisted state does not parse into MigrationState: %v", err)
+	}
+	if !reflect.DeepEqual(persisted.Classification, want) {
+		t.Errorf("persisted dry-run classification does not match inventory:\n got %+v\nwant %+v", persisted.Classification, want)
+	}
+	if state := migrator.GetState(); !reflect.DeepEqual(state.Classification, want) {
+		t.Errorf("GetState() dry-run classification does not match inventory:\n got %+v\nwant %+v", state.Classification, want)
+	}
+	if !reflect.DeepEqual(dry.Classification, want) {
+		t.Errorf("dry-run result classification does not match inventory:\n got %+v\nwant %+v", dry.Classification, want)
+	}
+}
+
 // TestMigrateClassificationResumeAccumulates checks the resume semantics:
 // the inventory pass re-derives the static dimensions from the full listing
 // (replacing the partial counts the loaded state carried), while the walk

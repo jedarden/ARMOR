@@ -736,3 +736,244 @@ func TestParseMigrationStateClassification(t *testing.T) {
 		t.Errorf("Classification = %+v without a classification member, want nil", plain.Classification)
 	}
 }
+
+// mixedClassificationCompletedState is the canned completion document both
+// JSON-report tests serve: a dry run whose classification covers all eight
+// source categories, the same shape the server's mixed dry-run inventory
+// produces (one object per rare category, three already-at-target v3s).
+func mixedClassificationCompletedState() map[string]interface{} {
+	return map[string]interface{}{
+		"status":            "completed",
+		"total_objects":     10,
+		"processed_objects": 5,
+		"skipped_objects":   5,
+		"failed_objects":    4,
+		"dry_run":           true,
+		"classification": map[string]interface{}{
+			"v1_single_put":            1,
+			"v1_multipart":             1,
+			"v2_single_put":            1,
+			"v2_multipart":             1,
+			"v3":                       3,
+			"non_armor":                1,
+			"malformed":                1,
+			"contradictory":            1,
+			"size_lt_1mb":              6,
+			"size_1mb_to_10mb":         1,
+			"size_100mb_to_1gb":        1,
+			"size_1gb_to_10gb":         1,
+			"size_gt_10gb":             1,
+			"by_key_fingerprint":       map[string]interface{}{"1111111111111111": 3, "legacy": 2},
+			"outcome_processed":        1,
+			"outcome_skipped":          5,
+			"outcome_failed":           3,
+			"outcome_integrity_failed": 1,
+		},
+	}
+}
+
+// assertJSONReportAllCategories checks that a -json stdout is one JSON
+// document whose classification carries every source category.
+func assertJSONReportAllCategories(t *testing.T, stdout string) {
+	t.Helper()
+	var report map[string]interface{}
+	if err := json.Unmarshal([]byte(stdout), &report); err != nil {
+		t.Fatalf("-json stdout does not parse as JSON: %v\n%s", err, stdout)
+	}
+	if got, ok := report["status"].(string); !ok || got != "completed" {
+		t.Errorf("JSON report status = %v, want completed", report["status"])
+	}
+	cls, ok := report["classification"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("JSON report carries no classification object: %s", stdout)
+	}
+	for key, want := range map[string]float64{
+		"v1_single_put": 1, "v1_multipart": 1, "v2_single_put": 1, "v2_multipart": 1,
+		"v3": 3, "non_armor": 1, "malformed": 1, "contradictory": 1,
+	} {
+		got, ok := cls[key]
+		if !ok {
+			t.Errorf("JSON report classification missing category %q:\n%s", key, stdout)
+			continue
+		}
+		if got != want {
+			t.Errorf("JSON report classification %s = %v, want %v", key, got, want)
+		}
+	}
+}
+
+// assertHumanSummaryAllCategories checks that the stderr human-readable
+// summary names every source category.
+func assertHumanSummaryAllCategories(t *testing.T, stderr string) {
+	t.Helper()
+	for _, want := range []string{
+		"source:",
+		"v1-single=1", "v1-multipart=1", "v2-single=1", "v2-multipart=1",
+		"v3=3", "non-armor=1", "malformed=1", "contradictory=1", "(total 10)",
+	} {
+		if !strings.Contains(stderr, want) {
+			t.Errorf("stderr summary missing %q:\n%s", want, stderr)
+		}
+	}
+}
+
+// TestMigrateJSONReportAllCategories runs the migrate CLI against a server
+// whose synchronous completion report carries a mixed eight-category
+// classification (the same shape the server's dry-run inventory produces)
+// and checks both report surfaces: -json prints the machine-readable report
+// with every source category on a pure-JSON stdout, and the human-readable
+// summary still renders on stderr.
+func TestMigrateJSONReportAllCategories(t *testing.T) {
+	os.Setenv("ARMOR_ADMIN_TOKEN", "test-admin-token")
+
+	completed := mixedClassificationCompletedState()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Errorf("expected POST request, got %s", r.Method)
+		}
+		if r.URL.Query().Get("dry_run") != "true" {
+			t.Errorf("expected dry_run=true, got %s", r.URL.Query().Get("dry_run"))
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(completed)
+	}))
+	defer server.Close()
+
+	// Capture stdout and stderr separately: -json must keep stdout pure so
+	// the report parses as one JSON document.
+	oldStderr := os.Stderr
+	oldStdout := os.Stdout
+	rout, wout, _ := os.Pipe()
+	rerr, werr, _ := os.Pipe()
+	os.Stdout = wout
+	os.Stderr = werr
+
+	cmd := commands["migrate"]
+	// -watch=false explicitly: the flag variables are package globals and an
+	// earlier watch-mode test leaves watchFlag set.
+	_ = cmd.Flags.Parse([]string{"-admin-url", server.URL, "-dry-run", "-watch=false", "-json"})
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		cmd.Func(cmd.Flags)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("migration did not complete within timeout")
+	}
+
+	wout.Close()
+	werr.Close()
+	os.Stdout = oldStdout
+	os.Stderr = oldStderr
+
+	var outBuf, errBuf strings.Builder
+	io.Copy(&outBuf, rout)
+	io.Copy(&errBuf, rerr)
+	stdout := outBuf.String()
+	stderr := errBuf.String()
+
+	assertJSONReportAllCategories(t, stdout)
+	assertHumanSummaryAllCategories(t, stderr)
+}
+
+// TestMigrateWatchModeJSONReport is the watch-mode face of the JSON
+// completion report: the POST starts the run asynchronously, the first poll
+// returns the completed state, and -json must still put one pure-JSON
+// document on stdout — progress lines and the human summary move to stderr.
+func TestMigrateWatchModeJSONReport(t *testing.T) {
+	os.Setenv("ARMOR_ADMIN_TOKEN", "test-admin-token")
+
+	completed := mixedClassificationCompletedState()
+	getCount := 0
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		switch r.Method {
+		case http.MethodPost:
+			// Async start: the completion document arrives via polling.
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"status":            "in_progress",
+				"total_objects":     10,
+				"processed_objects": 0,
+				"failed_objects":    0,
+				"dry_run":           true,
+			})
+		case http.MethodGet:
+			getCount++
+			json.NewEncoder(w).Encode(completed)
+		default:
+			t.Errorf("unexpected method %s", r.Method)
+		}
+	}))
+	defer server.Close()
+
+	oldStderr := os.Stderr
+	oldStdout := os.Stdout
+	rout, wout, _ := os.Pipe()
+	rerr, werr, _ := os.Pipe()
+	os.Stdout = wout
+	os.Stderr = werr
+
+	// The completed document reports failures, and watch mode exits
+	// non-zero when the run had any — swap exit so it panics instead of
+	// killing the test binary, as the other watch tests do.
+	var exitCode int
+	oldExit := exit
+	exit = func(code int) {
+		exitCode = code
+		panic("exit")
+	}
+
+	cmd := commands["migrate"]
+	_ = cmd.Flags.Parse([]string{"-admin-url", server.URL, "-dry-run", "-watch", "-json"})
+
+	done := make(chan struct{})
+	go func() {
+		defer func() {
+			recover() // expected exit via panic
+			close(done)
+		}()
+		cmd.Func(cmd.Flags)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("migration did not complete within timeout")
+	}
+
+	wout.Close()
+	werr.Close()
+	os.Stdout = oldStdout
+	os.Stderr = oldStderr
+	exit = oldExit
+
+	var outBuf, errBuf strings.Builder
+	io.Copy(&outBuf, rout)
+	io.Copy(&errBuf, rerr)
+	stdout := outBuf.String()
+	stderr := errBuf.String()
+
+	if getCount < 1 {
+		t.Errorf("expected at least one progress poll, got %d", getCount)
+	}
+
+	assertJSONReportAllCategories(t, stdout)
+
+	// The progress lines and the human-readable summary share stderr;
+	// neither may leak onto the JSON-only stdout.
+	assertHumanSummaryAllCategories(t, stderr)
+	if !strings.Contains(stderr, "Progress:") {
+		t.Errorf("stderr does not contain the progress line:\n%s", stderr)
+	}
+	if exitCode != 1 {
+		t.Errorf("expected exit code 1 for a run with failures, got %d", exitCode)
+	}
+}

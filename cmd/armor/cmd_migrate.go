@@ -23,6 +23,7 @@ func init() {
 	migrateFlags.StringVar(&includeFlag, "include", "", "Comma-separated source versions to migrate (e.g., v1,v2; defaults to v2 for V3 target, v1 for V2 target)")
 	migrateFlags.IntVar(&concurrencyFlag, "concurrency", 0, "Number of concurrent workers (default: server-side default)")
 	migrateFlags.BoolVar(&watchFlag, "watch", false, "Watch mode: poll progress until completion")
+	migrateFlags.BoolVar(&jsonOutputFlag, "json", false, "Print the completion report as machine-readable JSON on stdout (the human-readable summary still goes to stderr)")
 
 	registerCommand(Command{
 		Name:        "migrate",
@@ -40,6 +41,7 @@ var (
 	includeFlag     string
 	concurrencyFlag int
 	watchFlag       bool
+	jsonOutputFlag  bool
 )
 
 // exit is declared once, in cmd_client_config.go (same package); reused
@@ -172,7 +174,22 @@ func migrate(fs *flag.FlagSet) {
 	}
 	// The POST runs the migration synchronously, so the response already
 	// carries the final count report.
+	if jsonOutputFlag {
+		if err := writeJSON(os.Stdout, initialState); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: failed to encode completion report: %v\n", err)
+			exit(1)
+		}
+	}
 	printClassification(initialState)
+}
+
+// writeJSON renders one machine-readable report to w, indented so two runs
+// remain diffable by eye. This is the JSON output mode of the completion
+// report: the full response document, classification member included.
+func writeJSON(w io.Writer, v interface{}) error {
+	enc := json.NewEncoder(w)
+	enc.SetIndent("", "  ")
+	return enc.Encode(v)
 }
 
 // watchMigration polls the migration progress endpoint until completion
@@ -218,16 +235,22 @@ func watchMigration(client *http.Client, migrateURL, adminToken string) error {
 				return fmt.Errorf("failed to parse migration state: %w", err)
 			}
 
-			// Print progress line only if something changed
+			// Print progress line only if something changed. Under -json the
+			// progress line moves to stderr so stdout carries nothing but
+			// the final JSON report.
 			if state.ProcessedObjects != lastProcessed || state.FailedObjects != lastFailed {
-				fmt.Printf("Progress: %d/%d processed", state.ProcessedObjects, state.TotalObjects)
+				progress := io.Writer(os.Stdout)
+				if jsonOutputFlag {
+					progress = os.Stderr
+				}
+				fmt.Fprintf(progress, "Progress: %d/%d processed", state.ProcessedObjects, state.TotalObjects)
 				if state.SkippedObjects > 0 {
-					fmt.Printf(", %d skipped", state.SkippedObjects)
+					fmt.Fprintf(progress, ", %d skipped", state.SkippedObjects)
 				}
 				if state.FailedObjects > 0 {
-					fmt.Printf(", %d failed", state.FailedObjects)
+					fmt.Fprintf(progress, ", %d failed", state.FailedObjects)
 				}
-				fmt.Printf(" (%s)\n", state.Status)
+				fmt.Fprintf(progress, " (%s)\n", state.Status)
 				lastProcessed = state.ProcessedObjects
 				lastFailed = state.FailedObjects
 			}
@@ -243,6 +266,16 @@ func watchMigration(client *http.Client, migrateURL, adminToken string) error {
 				// machine-readable on the state JSON's classification field.
 				if state.Classification != nil {
 					fmt.Fprintf(os.Stderr, "\n%s", state.Classification.Summary())
+				}
+
+				// JSON output mode: the server's final state document,
+				// classification member included, verbatim — the same
+				// document the synchronous (non-watch) mode reports, not a
+				// re-serialization through the CLI's MigrationState subset.
+				if jsonOutputFlag {
+					if err := writeJSON(os.Stdout, m); err != nil {
+						return fmt.Errorf("failed to encode completion report: %w", err)
+					}
 				}
 
 				// Exit non-zero if there were failures
