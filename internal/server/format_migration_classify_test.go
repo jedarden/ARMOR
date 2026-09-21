@@ -14,7 +14,11 @@ import (
 // unknown major), the four version x layout candidate buckets, and
 // already-at-target against both a v2 and a v3 target. Reasons cite only the
 // deciding metadata keys, rendered in sorted key order, so unrelated keys
-// neither change the category nor leak into the reason.
+// neither change the category nor leak into the reason. Candidate rows carry
+// self-consistent metadata (valid wrapped DEK, positive sizes) so they
+// characterize the layout decision; the metadata that trips the
+// contradiction rules is characterized in
+// format_migration_classify_contradictory_test.go.
 func TestClassifyMigrationObjectCategories(t *testing.T) {
 	cases := []struct {
 		name         string
@@ -85,32 +89,57 @@ func TestClassifyMigrationObjectCategories(t *testing.T) {
 			wantMigrate:  false,
 		},
 		{
-			name:         "v1 without multipart flag is a single-put candidate",
-			rawMeta:      map[string]string{armorMetaVersion: "1", armorMetaWrappedDEK: "AAAA"},
+			name: "v1 without multipart flag is a single-put candidate",
+			rawMeta: map[string]string{
+				armorMetaVersion:       "1",
+				armorMetaWrappedDEK:    "AAAA",
+				armorMetaBlockSize:     "4096",
+				armorMetaPlaintextSize: "2048",
+			},
 			target:       3,
 			wantCategory: CategoryV1SinglePut,
 			wantReason:   `armor v1 single-PUT: x-amz-meta-armor-multipart=<unset> x-amz-meta-armor-version="1"`,
 			wantMigrate:  true,
 		},
 		{
-			name:         "v1 with multipart true is a multipart candidate",
-			rawMeta:      map[string]string{armorMetaVersion: "1", armorMetaMultipart: "true"},
+			name: "v1 with multipart true is a multipart candidate",
+			rawMeta: map[string]string{
+				armorMetaVersion:       "1",
+				armorMetaMultipart:     "true",
+				armorMetaWrappedDEK:    "AAAA",
+				armorMetaBlockSize:     "65536",
+				armorMetaPartSize:      "8388608",
+				armorMetaPlaintextSize: "16777216",
+			},
 			target:       3,
 			wantCategory: CategoryV1Multipart,
 			wantReason:   `armor v1 multipart: x-amz-meta-armor-multipart="true" x-amz-meta-armor-version="1"`,
 			wantMigrate:  true,
 		},
 		{
-			name:         "v2 with multipart false is a single-put candidate",
-			rawMeta:      map[string]string{armorMetaVersion: "2", armorMetaMultipart: "false"},
+			name: "v2 with multipart false is a single-put candidate",
+			rawMeta: map[string]string{
+				armorMetaVersion:       "2",
+				armorMetaMultipart:     "false",
+				armorMetaWrappedDEK:    "v2:1111111111111111:AAAA",
+				armorMetaBlockSize:     "4096",
+				armorMetaPlaintextSize: "2048",
+			},
 			target:       3,
 			wantCategory: CategoryV2SinglePut,
 			wantReason:   `armor v2 single-PUT: x-amz-meta-armor-multipart="false" x-amz-meta-armor-version="2"`,
 			wantMigrate:  true,
 		},
 		{
-			name:         "v2 with multipart true is a multipart candidate",
-			rawMeta:      map[string]string{armorMetaVersion: "2", armorMetaMultipart: "true"},
+			name: "v2 with multipart true is a multipart candidate",
+			rawMeta: map[string]string{
+				armorMetaVersion:       "2",
+				armorMetaMultipart:     "true",
+				armorMetaWrappedDEK:    "v2:1111111111111111:AAAA",
+				armorMetaBlockSize:     "65536",
+				armorMetaPartSize:      "8388608",
+				armorMetaPlaintextSize: "16777216",
+			},
 			target:       3,
 			wantCategory: CategoryV2Multipart,
 			wantReason:   `armor v2 multipart: x-amz-meta-armor-multipart="true" x-amz-meta-armor-version="2"`,
@@ -119,8 +148,14 @@ func TestClassifyMigrationObjectCategories(t *testing.T) {
 		{
 			// The layout flag is compared exactly, like the walk's
 			// isMultipart; any other value means single-PUT.
-			name:         "multipart flag comparison is exact",
-			rawMeta:      map[string]string{armorMetaVersion: "1", armorMetaMultipart: "TRUE"},
+			name: "multipart flag comparison is exact",
+			rawMeta: map[string]string{
+				armorMetaVersion:       "1",
+				armorMetaMultipart:     "TRUE",
+				armorMetaWrappedDEK:    "AAAA",
+				armorMetaBlockSize:     "4096",
+				armorMetaPlaintextSize: "2048",
+			},
 			target:       3,
 			wantCategory: CategoryV1SinglePut,
 			wantReason:   `armor v1 single-PUT: x-amz-meta-armor-multipart="TRUE" x-amz-meta-armor-version="1"`,
@@ -162,8 +197,15 @@ func TestClassifyMigrationObjectCategories(t *testing.T) {
 			wantMigrate:  false,
 		},
 		{
-			name:         "v1 against v2 target stays a candidate",
-			rawMeta:      map[string]string{armorMetaVersion: "1", armorMetaMultipart: "true"},
+			name: "v1 against v2 target stays a candidate",
+			rawMeta: map[string]string{
+				armorMetaVersion:       "1",
+				armorMetaMultipart:     "true",
+				armorMetaWrappedDEK:    "AAAA",
+				armorMetaBlockSize:     "65536",
+				armorMetaPartSize:      "8388608",
+				armorMetaPlaintextSize: "16777216",
+			},
 			target:       2,
 			wantCategory: CategoryV1Multipart,
 			wantReason:   `armor v1 multipart: x-amz-meta-armor-multipart="true" x-amz-meta-armor-version="1"`,
@@ -173,6 +215,8 @@ func TestClassifyMigrationObjectCategories(t *testing.T) {
 			name: "unrelated metadata keys do not change the category or leak into the reason",
 			rawMeta: map[string]string{
 				armorMetaVersion:        "2",
+				armorMetaWrappedDEK:     "v2:1111111111111111:AAAA",
+				armorMetaBlockSize:      "4096",
 				"Content-Type":          "application/octet-stream",
 				"x-amz-meta-armor-etag": "deadbeef",
 				armorMetaPlaintextSize:  "4096",
@@ -212,8 +256,20 @@ func TestClassifyMigrationObjectDeterministic(t *testing.T) {
 		{"Content-Type": "text/plain"},
 		{armorMetaVersion: "not-a-number", "Content-Type": "text/plain"},
 		{armorMetaVersion: "0"},
-		{armorMetaVersion: "1", armorMetaMultipart: "true", armorMetaWrappedDEK: "AAAA"},
-		{armorMetaVersion: "2", "Content-Type": "text/plain", armorMetaBlockSize: "4096"},
+		{
+			armorMetaVersion:       "1",
+			armorMetaMultipart:     "true",
+			armorMetaWrappedDEK:    "AAAA",
+			armorMetaBlockSize:     "65536",
+			armorMetaPartSize:      "8388608",
+			armorMetaPlaintextSize: "16777216",
+		},
+		{
+			armorMetaVersion:    "2",
+			armorMetaWrappedDEK: "v2:1111111111111111:AAAA",
+			armorMetaBlockSize:  "4096",
+			"Content-Type":      "text/plain",
+		},
 		{armorMetaVersion: "3", armorMetaMultipart: "true"},
 		{armorMetaVersion: "4"},
 	}
