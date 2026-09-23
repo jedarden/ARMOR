@@ -50,8 +50,9 @@ go run standalone_generator.go /tmp/fixture-out
 ```
 
 Regenerate into a scratch directory and copy only the fixture sets you intend
-to replace - a full run rewrites the legacy tree with current (deterministic,
-KWP-wrapped) bytes, which the committed legacy dirs do not carry.
+to replace - a full run also emits the `malformed/` and `edge_cases/`
+categories, which are not part of the committed tree. The committed legacy
+dirs are byte-identical to generator output (KWP-wrapped DEKs).
 
 ### Generated fixtures:
 

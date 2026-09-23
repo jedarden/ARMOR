@@ -20,22 +20,9 @@
 //   - TestGoldenFixtureCorruptions corrupted derivatives of valid fixture
 //     material must fail closed: one recorded failure, object untouched
 //
-// Two defects are known at HEAD and pinned by dedicated tests:
+// One defect is known at HEAD and pinned by a dedicated test:
 //
-//  1. Fixture wrap format (fixture-side, owned by the fixture-construction
-//     lineage): the committed multipart fixtures wrap their DEK with AES-GCM
-//     (nonce||ciphertext, 60 bytes for a 32-byte DEK, per the standalone
-//     generator's wrapDEK), while production unwrap (crypto.UnwrapDEK)
-//     implements AES-KWP / RFC 5649 and requires exactly 40 bytes. The
-//     committed single-PUT fixtures carry 40-byte wraps and are unaffected.
-//     Rather than a hardcoded skip list, the wrap format is checked per
-//     fixture at load time (goldenWrapDefect, mirroring
-//     backend.ParseARMORMetadata + crypto.UnwrapDEK), so subtests skip only
-//     while the committed bytes are actually incompatible and re-arm
-//     automatically the moment regenerated fixtures land. The skip state is
-//     pinned by TestGoldenFixtureWrapDefect.
-//
-//  2. Migrator multipart output (production-code side, owned by the multipart
+//  1. Migrator multipart output (production-code side, owned by the multipart
 //     migration-path lineage): FormatMigrator.uploadAsMultipart discards the
 //     per-part HMAC tables and never persists an HMAC sidecar, and the
 //     post-migration verify calls decryptSingleObject unconditionally, so
@@ -44,6 +31,15 @@
 //     a data-loss shape. Pinned by TestGoldenMultipartMigratorDefect; while
 //     the pin reproduces, committed multipart success-migrations skip with a
 //     pointer to it instead of failing at the migrator.
+//
+// A fixture-side wrap-format defect (committed multipart fixtures wrapping
+// their DEK with 60-byte AES-GCM output where production unwrap requires the
+// 40-byte AES-KWP form) previously lived here as a second pinned defect; the
+// fixtures were regenerated with production-compatible KWP wraps and the pin
+// (TestGoldenFixtureWrapDefect) was removed. goldenWrapDefect remains as the
+// data-driven discriminator: if incompatible wraps ever return to the
+// committed tree, the affected subtests skip again instead of failing on
+// bytes known to be unopenable.
 //
 // These tests read only tests/fixtures/migration and the in-memory mock
 // backend; they never talk to a real bucket.
@@ -220,8 +216,8 @@ func loadGoldenFixtureBytes(t *testing.T, dir string) (data []byte, sidecar []by
 //
 // This is deliberately data-driven rather than a hardcoded skip list: when the
 // fixtures are regenerated with production-compatible wraps the defect
-// disappears from every subtest at once, with no map to maintain. The defect's
-// presence at HEAD is held in place by TestGoldenFixtureWrapDefect.
+// disappears from every subtest at once, with no map to maintain. The
+// committed fixtures now unwrap cleanly, so this returns "" for all of them.
 func goldenWrapDefect(f goldenFixture) string {
 	wrapped := f.ObjectMeta["x-amz-meta-armor-wrapped-dek"]
 	if wrapped == "" {
@@ -652,8 +648,7 @@ func verifyGoldenMigration(t *testing.T, g *goldenMultipartBackend, f goldenFixt
 // production crypto -- the same shape the real PUT path stores (headerless
 // assembled ciphertext plus a flat HMAC sidecar) -- so the migrator's
 // multipart paths can be exercised independently of the committed multipart
-// fixture bytes (whose wrap format production rejects while the fixture-side
-// defect stands; see goldenWrapDefect). Sizes at or below the multipart
+// fixture bytes. Sizes at or below the multipart
 // threshold migrate to single-PUTs; sizes above it exercise uploadAsMultipart.
 func synthesizeGoldenMultipartObject(t *testing.T, plaintextLength int) (data, sidecar, plaintext []byte, meta map[string]string) {
 	t.Helper()
@@ -747,44 +742,6 @@ func probeGoldenMigratorMultipartDefect(t *testing.T) (defect bool, detail strin
 	return true, reason
 }
 
-// TestGoldenFixtureWrapDefect pins the fixture-side wrap-format defect: the
-// committed multipart fixtures fail production decryption at the very first
-// step because their wrapped DEK bytes are 60-byte AES-GCM output, not the
-// 40-byte AES-KWP format crypto.UnwrapDEK implements. Both wrap layouts are
-// probed: the legacy base64 form (v1_multipart) and the v2:<fp>:<base64> form
-// (v2_multipart) -- ParseARMORMetadata strips the v2 wrapper, so both reach
-// the same 40-byte length check. When the fixtures are regenerated with
-// production-compatible wraps this test FAILS -- that is the signal to remove
-// it; the data-driven skips in the TestGoldenFixtures* suites lift
-// automatically at the same moment.
-func TestGoldenFixtureWrapDefect(t *testing.T) {
-	fixtures := loadGoldenFixtures(t)
-	byName := make(map[string]goldenFixture, len(fixtures))
-	for _, f := range fixtures {
-		byName[f.Name] = f
-	}
-
-	for _, name := range []string{"v1_multipart/uniform_parts", "v2_multipart/uniform_parts"} {
-		t.Run(name, func(t *testing.T) {
-			f, ok := byName[name]
-			if !ok {
-				t.Fatal("probe fixture no longer present in tests/fixtures/migration; update this pin")
-			}
-			if reason := goldenWrapDefect(f); reason == "" {
-				t.Fatal("committed multipart fixture now unwraps with production crypto -- the fixture defect is fixed; remove this pin")
-			}
-			_, err := decryptGoldenFixture(t, f, "golden/defect-probe/"+f.Name)
-			if err == nil {
-				t.Fatal("committed multipart fixture now decrypts -- the fixture defect is fixed; remove this pin")
-			}
-			if !strings.Contains(err.Error(), "wrapped DEK must be 40 bytes") {
-				t.Fatalf("defect symptom changed: %v -- revisit this pin", err)
-			}
-			t.Logf("defect reproduced: %s fails at unwrap: %v", f.Name, err)
-		})
-	}
-}
-
 // TestGoldenMultipartMigratorDefect pins the migrator-side defect: migrating a
 // VALID multipart object above the multipart threshold replaces the object
 // with an unreadable body (uploadAsMultipart discards the per-part HMAC
@@ -804,10 +761,9 @@ func TestGoldenMultipartMigratorDefect(t *testing.T) {
 // TestGoldenFixtureCorruptions derives corrupted variants from valid fixture
 // material and asserts every one fails closed: exactly one recorded failure
 // with a reason, and the stored object left untouched. Single-PUT corruption
-// cases mutate a committed fixture (whose wrap format is production-valid);
-// multipart corruption cases mutate a synthesized valid multipart object,
-// since the committed multipart bytes are unusable while the fixture-side
-// wrap defect stands (see goldenWrapDefect).
+// cases mutate a committed fixture; multipart corruption cases mutate a
+// synthesized valid multipart object, keeping them independent of the
+// committed multipart fixture bytes.
 func TestGoldenFixtureCorruptions(t *testing.T) {
 	fixtures := loadGoldenFixtures(t)
 	byName := make(map[string]goldenFixture, len(fixtures))

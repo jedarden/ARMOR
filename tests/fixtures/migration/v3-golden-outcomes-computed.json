@@ -3,9 +3,9 @@
   "generated": "2026-09-01T19:30:00Z",
   "description": "Expected V3 layout outcomes for all V1/V2 migration test fixtures (computed values)",
   "test_constants": {
-    "plaintext": "ARMOR migration test data - V1/V2 to V3 fixture with sufficient length to test multiple blocks",
-    "plaintext_length": 94,
-    "plaintext_sha256": "a7f6f6d8cfd8a8f487d72bd31703a575f93885fe6cfea9843f8a4752eb69f12c",
+    "plaintext": "ARMOR migration test data - V1/V2 to V3 fixture with sufficient length to test multiple blocks and encryption scenarios",
+    "plaintext_length": 119,
+    "plaintext_sha256": "151b2cfb881664601f2ba7013089c2afabf95ae94659b491f95220783dde377c",
     "mek_hex": "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
     "dek_hex": "02030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f2021",
     "iv_hex": "030405060708090a0b0c0d0e0f101112",
@@ -18,7 +18,7 @@
         "version": "v1",
         "layout": "single",
         "metadata_variant": "explicit",
-        "plaintext_size": 94
+        "plaintext_size": 119
       },
       "v3_expected": {
         "is_multipart": false,
@@ -34,8 +34,8 @@
           "x-amz-meta-armor-wrapped-dek": "v2:<fingerprint>:<wrapped_dek>",
           "x-amz-meta-armor-iv": "AAQCAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4f",
           "x-amz-meta-armor-block-size": "65536",
-          "x-amz-meta-armor-plaintext-size": "94",
-          "x-amz-meta-armor-sha256": "a7f6f6d8cfd8a8f487d72bd31703a575f93885fe6cfea9843f8a4752eb69f12c"
+          "x-amz-meta-armor-plaintext-size": "119",
+          "x-amz-meta-armor-sha256": "151b2cfb881664601f2ba7013089c2afabf95ae94659b491f95220783dde377c"
         },
         "transformation_notes": [
           "Version upgraded from 1 to 3",
@@ -54,7 +54,7 @@
         "version": "v1",
         "layout": "single",
         "metadata_variant": "implicit",
-        "plaintext_size": 94
+        "plaintext_size": 119
       },
       "v3_expected": {
         "is_multipart": false,
@@ -70,8 +70,8 @@
           "x-amz-meta-armor-wrapped-dek": "v2:<fingerprint>:<wrapped_dek>",
           "x-amz-meta-armor-iv": "AAQCAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4f",
           "x-amz-meta-armor-block-size": "65536",
-          "x-amz-meta-armor-plaintext-size": "94",
-          "x-amz-meta-armor-sha256": "a7f6f6d8cfd8a8f487d72bd31703a575f93885fe6cfea9843f8a4752eb69f12c"
+          "x-amz-meta-armor-plaintext-size": "119",
+          "x-amz-meta-armor-sha256": "151b2cfb881664601f2ba7013089c2afabf95ae94659b491f95220783dde377c"
         },
         "transformation_notes": [
           "Version detection from envelope header (magic + version byte)",
@@ -88,7 +88,7 @@
         "version": "v1",
         "layout": "single",
         "metadata_variant": "minimal",
-        "plaintext_size": 94
+        "plaintext_size": 119
       },
       "v3_expected": {
         "is_multipart": false,
@@ -104,8 +104,8 @@
           "x-amz-meta-armor-wrapped-dek": "v2:<fingerprint>:<wrapped_dek>",
           "x-amz-meta-armor-iv": "AAQCAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4f",
           "x-amz-meta-armor-block-size": "65536",
-          "x-amz-meta-armor-plaintext-size": "94",
-          "x-amz-meta-armor-sha256": "a7f6f6d8cfd8a8f487d72bd31703a575f93885fe6cfea9843f8a4752eb69f12c"
+          "x-amz-meta-armor-plaintext-size": "119",
+          "x-amz-meta-armor-sha256": "151b2cfb881664601f2ba7013089c2afabf95ae94659b491f95220783dde377c"
         },
         "transformation_notes": [
           "Missing optional metadata fields reconstructed from envelope header",
@@ -593,7 +593,7 @@
       "contradictory": 1
     },
     "coverage_notes": [
-      "Test plaintext is only 94 bytes, limiting multipart fixture coverage",
+      "Test plaintext is only 119 bytes, limiting multipart fixture coverage",
       "Most multipart fixtures result in single-part outcomes due to small data size",
       "Edge cases properly exercise block boundary conditions",
       "Malformed fixtures test error detection and handling",

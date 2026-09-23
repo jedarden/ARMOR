@@ -270,6 +270,15 @@ func (fg *FixtureGenerator) computeBlockHMAC(hmacKey []byte, encryptedBlock []by
 // encryptV1 encrypts using V1 counter derivation (vulnerable - keystream reuse).
 // V1 bug: counter = blockIndex (not blockIndex * aesBlocksPerArmorBlock)
 func (fg *FixtureGenerator) encryptV1(plaintext []byte, blockSize int) ([]byte, []byte, error) {
+	return fg.encryptV1WithStartBlock(plaintext, blockSize, 0)
+}
+
+// encryptV1WithStartBlock encrypts with the V1 derivation, treating the
+// plaintext as continuing the object's block stream at startBlockIndex
+// (counter = startBlockIndex + localIndex). Multipart parts are encrypted
+// this way: part N starts at the block where part N-1 ended, exactly as the
+// production multipart write path derives a part's starting counter.
+func (fg *FixtureGenerator) encryptV1WithStartBlock(plaintext []byte, blockSize int, startBlockIndex int) ([]byte, []byte, error) {
 	block, err := aes.NewCipher(fg.dek)
 	if err != nil {
 		return nil, nil, err
@@ -284,8 +293,9 @@ func (fg *FixtureGenerator) encryptV1(plaintext []byte, blockSize int) ([]byte, 
 		return nil, nil, fmt.Errorf("failed to derive HMAC key: %w", err)
 	}
 
-	for blockIndex := 0; blockIndex < blockCount; blockIndex++ {
-		start := blockIndex * blockSize
+	for localIndex := 0; localIndex < blockCount; localIndex++ {
+		blockIndex := startBlockIndex + localIndex
+		start := localIndex * blockSize
 		end := start + blockSize
 		if end > len(plaintext) {
 			end = len(plaintext)
@@ -321,6 +331,14 @@ func (fg *FixtureGenerator) encryptV1(plaintext []byte, blockSize int) ([]byte, 
 // encryptV2 encrypts using V2 counter derivation (fixed - no keystream reuse).
 // V2 fix: counter = blockIndex * (blockSize / 16)
 func (fg *FixtureGenerator) encryptV2(plaintext []byte, blockSize int) ([]byte, []byte, error) {
+	return fg.encryptV2WithStartBlock(plaintext, blockSize, 0)
+}
+
+// encryptV2WithStartBlock encrypts with the V2 derivation, treating the
+// plaintext as continuing the object's block stream at startBlockIndex
+// (counter = (startBlockIndex + localIndex) * aesBlocksPerArmorBlock), the
+// same continuation rule encryptV1WithStartBlock applies for multipart parts.
+func (fg *FixtureGenerator) encryptV2WithStartBlock(plaintext []byte, blockSize int, startBlockIndex int) ([]byte, []byte, error) {
 	block, err := aes.NewCipher(fg.dek)
 	if err != nil {
 		return nil, nil, err
@@ -337,8 +355,9 @@ func (fg *FixtureGenerator) encryptV2(plaintext []byte, blockSize int) ([]byte, 
 
 	aesBlocksPerArmorBlock := blockSize / 16
 
-	for blockIndex := 0; blockIndex < blockCount; blockIndex++ {
-		start := blockIndex * blockSize
+	for localIndex := 0; localIndex < blockCount; localIndex++ {
+		blockIndex := startBlockIndex + localIndex
+		start := localIndex * blockSize
 		end := start + blockSize
 		if end > len(plaintext) {
 			end = len(plaintext)
@@ -778,23 +797,31 @@ func (fg *FixtureGenerator) computeBlocksPerPart(parts [][]byte, blockSize int) 
 }
 
 // encryptMultipart encrypts plaintext parts using the specified version derivation.
+// Parts are encrypted independently but with CONTINUOUS block counters: part N
+// starts at the block where part N-1 ended, exactly as the production
+// multipart write path derives a part's starting counter (cumulative byte
+// offset / EncryptWithStartingCounter). The reader decrypts the assembled
+// body as one continuous stream, so restarting counters per part would emit
+// bytes no reader can ever open.
 func (fg *FixtureGenerator) encryptMultipart(parts [][]byte, blockSize int, version byte) ([]byte, []byte, error) {
 	var encryptedParts [][]byte
 
+	startBlock := 0
 	for _, part := range parts {
 		var ciphertext []byte
 		var err error
 
 		if version == version1 {
-			ciphertext, _, err = fg.encryptV1(part, blockSize)
+			ciphertext, _, err = fg.encryptV1WithStartBlock(part, blockSize, startBlock)
 		} else {
-			ciphertext, _, err = fg.encryptV2(part, blockSize)
+			ciphertext, _, err = fg.encryptV2WithStartBlock(part, blockSize, startBlock)
 		}
 
 		if err != nil {
 			return nil, nil, fmt.Errorf("failed to encrypt part: %w", err)
 		}
 		encryptedParts = append(encryptedParts, ciphertext)
+		startBlock += (len(part) + blockSize - 1) / blockSize
 	}
 
 	// Assemble multipart ciphertext
