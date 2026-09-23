@@ -14,6 +14,34 @@ Entries before 0.1.1958 were written by hand on the Forgejo releases and are
 reproduced here; entries from 0.1.1958 on were reconstructed from git history
 on 2026-09-18 (bead armor-43ec803f).
 
+## 0.1.1972 (2026-09-23)
+
+- feat(migration): expose classification in migrate CLI JSON report and docs (armor-f94e726d)
+- feat(migration): classification wired into the countObjects inventory pass (armor-7f1aac2b)
+- feat(migration): contradictory metadata category in ClassifyMigrationObject (armor-a20d398c)
+- feat(migration): pure deterministic ClassifyMigrationObject classifier (armor-fd3069cf)
+- fix(migration): enforce header plaintext SHA in decryptSingleObject (armor-7b39fc12)
+- feat(migration): count reporting by source/layout/size/fingerprint/outcome (armor-796944b7)
+- docs(readme): swap branch checks badge for a release badge (armor-46181ec8)
+- feat(release): prepend the CHANGELOG entry to the release body (armor-4a20c3b3)
+- fix(prefix): compose ARMOR_PREFIX into internal state and HMAC-sidecar writers (armor-01f79985)
+- fix(verify): current formats, report rows, non-zero exit; delete verify-objects (armor-da67956d)
+- fix(gate): verify git archives without VCS metadata (armor-c5d08177)
+- feat(drift): deploy continuous fleet checker (armor-c5d08177)
+- fix(acl): deny nil credential in CheckACL instead of panicking (armor-b7ace452)
+- test(rbac): load armor-test credentials from env, not source (armor-ad708bfd)
+- test(restoreverifier): tenant-prefix exclusion coverage for shared-bucket discovery (armor-bf592560)
+- test(cmd/verify): re-scope TestVerifyV3CorruptedSidecar to the inline-verify boundary (armor-99447be8)
+- fix(cmd/verify): derive test corruption offsets from object layout (armor-83760c9e)
+- fix(restoreverifier): single shared discovery walk, bounded runs, drill sample reuse (armor-851dca86)
+- test(srvtest): provider-outage restore drill from the secondary alone (armor-307cab32)
+- fix(compose): bump ARMOR_VERSION default to 0.1.1971 to match VERSION (armor-0142d10a)
+- test(crypto): durable v3 block benchmark harness (armor-aabc02b7)
+- perf(crypto): one CTR stream per ARMOR block in EncryptBlockV3 (armor-2164a738)
+- perf(crypto): one CTR stream per ARMOR block in both v3 decrypt paths (armor-7b40cb59)
+- fix(restoreverifier): verify v3 multipart objects via manifest metadata and per-part decrypt (armor-86a90341)
+- test(crypto): pin v3 CTR counter semantics with reference-keystream oracle (armor-eb539cde)
+
 ## 0.1.1971 (2026-09-19)
 
 - fix(multipart): batch v3 range block fetches per part; int64 part offsets (armor-817d9d92)
