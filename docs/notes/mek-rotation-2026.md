@@ -19,7 +19,7 @@ rotation — retiring it is an operator step, never an agent step.
   Manifest wiring (armor-a1718cfc) and the walk (armor-1996e666) are both
   still open; the verification child (armor-44e2ad86) was closed without
   performing verification.
-- [rs-manager ARMOR Instance](#rs-manager-armor-instance) — procedure
+- [rs-manager ARMOR Instance](#rs-manager-armor-instance) — rotated 2026-09-23, old key still in the ring
   documented, awaiting operator execution.
 
 ## iad-ci ARMOR Instance
@@ -688,190 +688,107 @@ Correction, with evidence:
 
 ## rs-manager ARMOR Instance
 
-## Status
-**Procedure finalized and documented. Awaiting operator execution.**
+### Status
 
-## Context
-This document describes the rotation of the Master Encryption Key (MEK) for the rs-manager ARMOR instance using the key ring mechanism (Plan §8.13). The old key remains in the ring for backward compatibility.
+**ROTATED 2026-09-23 (bead armor-0f01e341). The old key is still in the ring and is
+NOT yet retired** (bead armor-dced248c, human-gated). The earlier bead
+armor-21c28fa7 was closed without this rotation ever being executed: OpenBao held a
+single version (2026-07-20), the ExternalSecret had no ring or admin mappings, and
+this section still read "awaiting operator execution". This section replaces that
+unexecuted procedure with the record of what was done.
 
-## Pre-Rotation State
+### Identifiers
 
-### rs-manager ARMOR Deployment
-- **Instance:** rs-manager (cluster: `rs-manager`)
-- **Namespace:** `armor`
-- **OpenBao Path:** `secret/rs-manager/backblaze/armor`
-- **Admin Token Path:** `secret/rs-manager/rs-manager/armor/admin`
+| | |
+|---|---|
+| Cluster / namespace / ArgoCD app | rs-manager / `armor` / `armor-ns-rs-manager` |
+| Old key (now the ring) | `secret/rs-manager/backblaze/armor`, property `master-encryption-key`, v1 (2026-07-20), never overwritten |
+| New active key | `secret/rs-manager/backblaze/armor-mek-v2`, property `master-encryption-key` (v2) |
+| Admin token | `secret/rs-manager/backblaze/armor/admin`, property `admin_token` |
+| declarative-config commits | `0d62a15c` (admin API), `f5b5d32c` (key switch, ring, verifier ring), `c7fc728d` (ESO refresh) |
 
-### Current MEK Configuration
-- **Active MEK:** Retrieved from OpenBao (operator access required)
-- **MEK Ring:** Not yet configured (this rotation establishes the ring)
-- **Escrow Path:** `secret/rs-manager/escrow/armor`
+### Fingerprints (never keys)
 
-## Rotation Procedure
+| | fingerprint |
+|---|---|
+| Old active key, now in the ring | `fd2c740880025fc6` |
+| New active key | `36e2665b377ea4c5` |
 
-### Phase 1: Prepare the Key Ring (Operator Action)
+### Why a new path instead of the runbook's `kv patch`
 
-1. **Retrieve the current MEK from OpenBao:**
-   ```bash
-   # As operator with OpenBao write access:
-   bao-as rs-manager -- bao kv get -field=master-encryption-key secret/rs-manager/backblaze/armor > /tmp/current_mek.tmp
-   chmod 600 /tmp/current_mek.tmp
-   ```
+The agent provisioning identity can only create/update (no `patch`, no `read`). The
+path holds eight properties (B2 credentials, auth keys, the MEK), so a plain `kv put`
+of the new key would have replaced all eight and taken the proxy down, and an agent
+cannot copy the old value into a `mek_ring` property. So the new key is written to a
+new path and the ExternalSecret maps the untouched old path in as `MEK_RING`. No key
+value was read or printed at any step.
 
-2. **Generate a new MEK:**
-   ```bash
-   openssl rand -hex 32 > /tmp/new_mek.tmp
-   chmod 600 /tmp/new_mek.tmp
-   ```
+### Timeline (UTC, 2026-09-23)
 
-3. **Update OpenBao with the new ring structure:**
-   ```bash
-   # Build the MEK_RING value (current MEK becomes first ring member)
-   CURRENT_MEK=$(cat /tmp/current_mek.tmp)
-   NEW_MEK=$(cat /tmp/new_mek.tmp)
+| Time | Event |
+|---|---|
+| 16:38 | New key and admin token generated into OpenBao by pipe (v1 of each) |
+| 16:47 | Admin API enabled (`0d62a15c`); baseline census taken |
+| 17:03 | ExternalSecret switched to the new key + ring (`f5b5d32c`); the new pods crash-looped, the old pods kept serving (see the newline incident) |
+| 17:10 | `armor-mek-v2` rewritten as v2 without the trailing newline |
+| 17:13 | ESO refresh forced (`c7fc728d`); ARMOR rolled and became Ready on the new key |
 
-   # Update OpenBao: new MEK as active, current MEK in ring
-   bao-as rs-manager -- bao kv patch secret/rs-manager/backblaze/armor \
-     master-encryption-key=- <<< "$NEW_MEK" \
-     MEK_RING=@/tmp/current_mek.tmp
+### What was verified (live, by property)
 
-   # Update escrow with both keys
-   bao-as rs-manager -- bao kv patch secret/rs-manager/escrow/armor \
-     mek=@/tmp/new_mek.tmp \
-     mek_ring=@/tmp/current_mek.tmp
+| Check | Result |
+|---|---|
+| `GET /admin/key/ring` before | `active_fp` `fd2c740880025fc6`, `ring_fps` null |
+| `GET /admin/key/ring` after | `active_fp` `36e2665b377ea4c5`, `ring_fps` [`fd2c740880025fc6`] |
+| `/readyz` (decrypts the canary) | 200; `armor_canary_check_failures_total` 0, multipart canary 0 |
+| restore-verifier | restarted, `Loaded ring key 0: fingerprint fd2c740880025fc6`; failure categories identical to the baseline |
+| ExternalSecret / ArgoCD | `SecretSynced`; app `Synced` / `Healthy` |
 
-   # Secure cleanup
-   shred /tmp/current_mek.tmp /tmp/new_mek.tmp
-   rm -f /tmp/current_mek.tmp /tmp/new_mek.tmp
-   ```
+### What this rotation could and could not lose
 
-4. **Verify the update:**
-   ```bash
-   # Check metadata version increased
-   bao-as rs-manager -- bao kv metadata get secret/rs-manager/backblaze/armor | jq .data.current_version
+- The bucket (`nap-dashboard`) has two top-level prefixes, `.armor/` and
+  `tradegraph-platform/`. The objects examined are wrapped under a different key
+  (fingerprint `2a1e203d494185ba`), are legacy-format DEKs no key on this instance can
+  unwrap, or are not ARMOR-encrypted. The rs-manager key protected no bucket data that
+  could be found, and the pod served 0 bytes up and down in the 15 minutes before the
+  switch. Because the old key stays in the ring, a stray object under it would still
+  read.
+- The restore-verifier on this instance reports 0% verified before AND after (never a
+  successful drill; 242 failures at baseline, same categories after). That predates
+  this work and is tracked in armor-0f9efb09.
 
-   # Verify escrow was updated
-   bao-as rs-manager -- bao kv metadata get secret/rs-manager/escrow/armor | jq .data.current_version
-   ```
+### Traps hit (read before the next rotation)
 
-### Phase 2: Update Kubernetes Deployment
+1. **The default census is blind here.** `GET /admin/key/ring` reported 13 objects, all
+   `legacy`; `?census=head` reported 13 `head_failures` and zero objects. The manifest
+   held 13 dead entries while the bucket held real objects under `tradegraph-platform/`.
+   Use the backend, not the manifest.
+2. **A trailing newline in the key crash-loops the new pod.** `openssl rand -hex 32`
+   prints a newline and `key=-` keeps it; ARMOR's `ARMOR_MEK` parser is strict
+   (`ARMOR_MEK must be hex-encoded: invalid byte U+000A`), while the ring parser trims.
+   Generate with `openssl rand -hex 32 | tr -d '\n'`. The old pods kept running on the
+   env they started with, so nothing went down.
+3. **An ordinary Argo apply does not change that ExternalSecret's `spec.data`.** After
+   each change ArgoCD reported the app OutOfSync; the fix is the one-off
+   `argocd app sync armor-ns-rs-manager --core --replace --resource
+   external-secrets.io:ExternalSecret:armor/armor-secrets` (see the manifest header).
+4. **The restore-verifier had no Reloader annotation**, so it would have kept the old
+   key after a Secret change. It now has `reloader.stakater.com/auto` and
+   `VERIFIER_MEK_RING`.
+5. **The ARMOR image has no shell or curl**, so the runbook's `kubectl exec ... curl`
+   cannot work. Use `kubectl port-forward` on 127.0.0.1 with the token in a mode-600
+   header file, as in the iad-ci section.
+6. **`/admin/key/export` does not match the DR doc** (no ring; it returns the B2 secret
+   key). It was not used; beads armor-bf3887f6 and armor-0be2b871.
 
-1. **Add ARMOR_MEK_RING environment variable to deployment:**
-   ```yaml
-   # In declarative-config/k8s/rs-manager/armor/armor-deployment.yml
-   env:
-   # ... existing env vars ...
-   - name: ARMOR_MEK_RING
-     valueFrom:
-       secretKeyRef:
-         name: armor-secrets
-         key: MEK_RING
-         optional: true  # Ring may not exist for first rotation
-   ```
+### Not done
 
-2. **Update ExternalSecret to include MEK_RING:**
-   ```yaml
-   # In declarative-config/k8s/rs-manager/armor/armor-externalsecret.yml
-   data:
-     # ... existing data mappings ...
-     - secretKey: MEK_RING
-       remoteRef:
-         key: rs-manager/backblaze/armor
-         property: MEK_RING
-   ```
-
-3. **Commit and push changes:**
-   ```bash
-   git add declarative-config/k8s/rs-manager/armor/
-   git commit -m "feat(armor): add MEK_RING support for key rotation"
-   git push
-   ```
-
-4. **Wait for ArgoCD sync** (automatic within 5 minutes)
-
-### Phase 3: Trigger Key Rotation via Admin API
-
-1. **Start kubectl proxy:**
-   ```bash
-   kubectl proxy --port=8001 &
-   PROXY_PID=$!
-   ```
-
-2. **Get admin token:**
-   ```bash
-   # Retrieve admin token from environment (never printed)
-   ADMIN_TOKEN=$(bao-as rs-manager -- bao kv get -field=admin_token secret/rs-manager/rs-manager/armor/admin)
-   ```
-
-3. **Trigger rotation:**
-   ```bash
-   curl -X POST \
-     -H "Authorization: Bearer REMOVED-NOT-A-SECRET-VALUE \
-     -H "Content-Type: application/json" \
-     http://127.0.0.1:8001/api/v1/namespaces/armor/services/armor:9001/proxy/admin/key/rotate
-   ```
-
-4. **Monitor rotation progress:**
-   ```bash
-   # Poll the key ring endpoint to track progress
-   watch -n 5 'curl -s -H "Authorization: Bearer REMOVED-NOT-A-SECRET-VALUE \
-     http://127.0.0.1:8001/api/v1/namespaces/armor/services/armor:9001/proxy/admin/key/ring | jq .'
-   ```
-
-5. **Wait for completion criteria:**
-   - `active_fp` shows the new MEK fingerprint
-   - `objects_by_fp` histogram shows 0 objects under old fingerprint
-   - All objects now encrypted with new MEK
-
-6. **Cleanup:**
-   ```bash
-   kill $PROXY_PID
-   unset ADMIN_TOKEN
-   ```
-
-### Phase 4: Verification
-
-1. **Check canary health:**
-   ```bash
-   curl -s http://armor.armor.svc.cluster.local:9000/armor/canary | jq .
-   ```
-
-2. **Verify an object written before rotation:**
-   ```bash
-   # Write a test object before rotation (if not already exists)
-   # Then verify it still decrypts correctly after rotation
-   ```
-
-3. **Check pod logs for rotation completion:**
-   ```bash
-   kubectl -n armor logs deploy/armor --tail=100 | grep -i rotation
-   ```
-
-## Post-Rotation State
-
-### Fingerprints (to be filled in by operator)
-- **Old MEK Fingerprint:** TBD (first 8 bytes of SHA-256)
-- **New MEK Fingerprint:** TBD (first 8 bytes of SHA-256)
-- **Rotation Timestamp:** TBD
-- **Objects Rotated:** TBD count
-- **Rotation Duration:** TBD
-
-### Retiring Old Keys (Operator Action)
-
-Once verification confirms all objects are on the new key, the old MEK can be removed from the ring:
-
-```bash
-# Remove old MEK from ARMOR_MEK_RING in OpenBao
-bao-as rs-manager -- bao kv patch secret/rs-manager/backblaze/armor \
-  MEK_RING=<new_ring_without_old_key>
-
-# Update escrow
-bao-as rs-manager -- bao kv patch secret/rs-manager/escrow/armor \
-  mek_ring=<new_ring_without_old_key>
-
-# Trigger deployment restart to pick up new ring
-kubectl -n armor rollout restart deployment/armor
-```
+- The old key is not retired. Removing the `MEK_RING` entry is armor-dced248c and must
+  wait for backend proof that no object is wrapped under `fd2c740880025fc6`.
+- No re-wrap walk (`POST /admin/key/rotate`) was run: the bucket is shared with another
+  instance's data and nothing was found to re-wrap.
+- No escrow unit at `secret/rs-manager/escrow/armor`. Both keys are in OpenBao at the
+  paths above (the old path was never overwritten); the export endpoint could not
+  produce a ring escrow.
 
 ## References
 
