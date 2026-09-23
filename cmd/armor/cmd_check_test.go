@@ -300,11 +300,30 @@ func TestRunConfigProbe(t *testing.T) {
 		{
 			name: "valid config",
 			cfg: &config.Config{
-				Bucket:      "test-bucket",
-				MEK:         []byte{1, 2, 3, 4, 1, 2, 3, 4, 1, 2, 3, 4, 1, 2, 3, 4, 1, 2, 3, 4, 1, 2, 3, 4, 1, 2, 3, 4, 1, 2, 3, 4},
-				Backend:     "filesystem",
-				FSPath:      "/tmp/test",
-				Credentials: make(map[string]*config.Credential),
+				Bucket:  "test-bucket",
+				MEK:     []byte{1, 2, 3, 4, 1, 2, 3, 4, 1, 2, 3, 4, 1, 2, 3, 4, 1, 2, 3, 4, 1, 2, 3, 4, 1, 2, 3, 4, 1, 2, 3, 4},
+				Backend: "filesystem",
+				FSPath:  "/tmp/test",
+				// A valid config carries at least one credential (plan 8.4:
+				// no credentials is an error outside demo mode). The
+				// empty-map variant is the "no credentials" case below.
+				Credentials: map[string]*config.Credential{
+					"test": {AccessKey: "test-access-key", SecretKey: "test-secret-key"},
+				},
+			},
+			expectedStatus: "PASS",
+		},
+		{
+			name: "valid config with auth file",
+			cfg: &config.Config{
+				Bucket:  "test-bucket",
+				MEK:     []byte{1, 2, 3, 4, 1, 2, 3, 4, 1, 2, 3, 4, 1, 2, 3, 4, 1, 2, 3, 4, 1, 2, 3, 4, 1, 2, 3, 4, 1, 2, 3, 4},
+				Backend: "filesystem",
+				FSPath:  "/tmp/test",
+				Credentials: map[string]*config.Credential{
+					"test": {AccessKey: "test-access-key", SecretKey: "test-secret-key"},
+				},
+				AuthFilePath: "/etc/armor/credentials.yaml",
 			},
 			expectedStatus: "PASS",
 		},

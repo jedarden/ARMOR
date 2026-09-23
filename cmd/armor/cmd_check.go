@@ -197,16 +197,17 @@ func runConfigProbe(cfg *config.Config) []CheckResult {
 		messages = append(messages, "no client credentials configured")
 	}
 
-	// Check auth file
-	if cfg.AuthFilePath != "" {
-		messages = append(messages, fmt.Sprintf("auth file loaded: %s", cfg.AuthFilePath))
-	}
-
 	if len(messages) == 0 {
+		msg := fmt.Sprintf("%d credentials configured", len(cfg.Credentials))
+		if cfg.AuthFilePath != "" {
+			// An auth file is a sanctioned credential source (plan 8.6),
+			// not a failure condition; note it on the passing result.
+			msg = fmt.Sprintf("%d credentials configured (auth file: %s)", len(cfg.Credentials), cfg.AuthFilePath)
+		}
 		return []CheckResult{{
 			Name:    "config",
 			Status:  "PASS",
-			Message: fmt.Sprintf("%d credentials configured", len(cfg.Credentials)),
+			Message: msg,
 		}}
 	}
 
@@ -520,6 +521,20 @@ func runFingerprintProbe(ctx context.Context, b2 backend.Backend, cfg *config.Co
 		return []CheckResult{{
 			Name:    "fingerprint",
 			Status:  "FAIL",
+			Message: msg,
+		}}
+	}
+
+	// An empty histogram means the scan matched no objects at all: a wrong
+	// bucket or prefix looks identical to an empty deployment, and the
+	// retire gate verified nothing either way. Warn instead of reporting
+	// an unearned PASS.
+	if len(histogram) == 0 {
+		msg := fmt.Sprintf("%s; no objects found under '%s' - retire gate scanned nothing (check bucket and prefix)",
+			strings.Join(fingerprintMessages, "; "), cfg.Prefix+".armor/")
+		return []CheckResult{{
+			Name:    "fingerprint",
+			Status:  "WARN",
 			Message: msg,
 		}}
 	}
