@@ -11,7 +11,7 @@
 # tag. There is no floating :latest tag to fall back to.
 services:
   armor-demo:
-    image: ghcr.io/jedarden/armor:${ARMOR_VERSION:-0.1.1972}
+    image: ghcr.io/jedarden/armor:${ARMOR_VERSION:-0.1.1973}
     profiles: [demo]
     command:
       - demo
@@ -24,7 +24,7 @@ services:
       - "9001:9001"
 
   armor-production:
-    image: ghcr.io/jedarden/armor:${ARMOR_VERSION:-0.1.1972}
+    image: ghcr.io/jedarden/armor:${ARMOR_VERSION:-0.1.1973}
     profiles: [production]
     # Configuration reaches the container from the shell environment and from
     # a root .env (compose interpolates the ${...} references below from the
