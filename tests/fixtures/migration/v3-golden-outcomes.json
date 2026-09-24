@@ -1,9 +1,10 @@
 {
   "version": "1.0",
-  "generated": "2026-09-14T00:00:00Z (reconciled with the on-disk fixture tree; originally 2026-09-01T19:00:00Z)",
+  "generated": "2026-09-24T00:00:00Z (counts recomputed from the committed fixture tree and planning-only dispositions recorded, armor-73cb73d8; originally 2026-09-01T19:00:00Z)",
   "description": "Expected V3 layout outcomes for all V1/V2 migration test fixtures",
   "fixtures": {
     "v1_single_put_explicit_version": {
+      "disk_path": "v1_single_put/explicit_version",
       "description": "V1 single-PUT with explicit version metadata (x-amz-meta-armor-version: 1)",
       "source": {
         "version": "v1",
@@ -37,6 +38,7 @@
       "expected_outcome": "success"
     },
     "v1_single_put_implicit_version": {
+      "disk_path": "v1_single_put/implicit_version",
       "description": "V1 single-PUT with missing version metadata (implicit V1 detection)",
       "source": {
         "version": "v1",
@@ -70,6 +72,7 @@
       "expected_outcome": "success"
     },
     "v1_single_put_minimal_metadata": {
+      "disk_path": "v1_single_put/minimal_metadata",
       "description": "V1 single-PUT with minimal metadata (only required fields)",
       "source": {
         "version": "v1",
@@ -103,6 +106,7 @@
       "expected_outcome": "success"
     },
     "v2_single_put_standard": {
+      "disk_path": "v2_single_put/standard",
       "description": "V2 single-PUT with full metadata (fixed counter derivation)",
       "source": {
         "version": "v2",
@@ -166,9 +170,14 @@
           "V2 fixed derivation preserved, re-expressed in V3 format"
         ]
       },
-      "expected_outcome": "success"
+      "expected_outcome": "success",
+      "disposition": "covered",
+      "covered_by": "v1_single_put/minimal_metadata",
+      "planning_only": true,
+      "disposition_reason": "covered by v1_single_put/minimal_metadata - missing-metadata reconstruction is envelope-header-driven and version-agnostic; only the version bump differs, which v2_single_put/standard already pins"
     },
     "v1_multipart_uniform_parts": {
+      "disk_path": "v1_multipart/uniform_parts",
       "description": "V1 multipart with uniform part sizes (legacy ADR-005 contract)",
       "source": {
         "version": "v1",
@@ -207,6 +216,7 @@
       "expected_outcome": "success"
     },
     "v1_multipart_variable_final_part": {
+      "disk_path": "v1_multipart/variable_final_part",
       "description": "V1 multipart with variable final part (ADR-010 exemption)",
       "source": {
         "version": "v1",
@@ -268,7 +278,10 @@
       },
       "expected_outcome": "failure",
       "expected_failure_reason": "HMAC verification failed - corrupt sidecar cannot be validated",
-      "failure_mode": "integrity_check_failed"
+      "failure_mode": "integrity_check_failed",
+      "disposition": "deferred",
+      "planning_only": true,
+      "disposition_reason": "deferred - not required for Phase 8.11 acceptance; the corrupt-sidecar failure is armed as matrix row malformed/corrupted_hmac_table, whose fixture landing is blocked on the migration-defect bead chain (see armor-62119311 notes)"
     },
     "v1_multipart_sidecar_missing": {
       "description": "V1 multipart with missing sidecar HMAC table",
@@ -290,9 +303,13 @@
       },
       "expected_outcome": "failure",
       "expected_failure_reason": "Sidecar not found - cannot verify HMAC integrity",
-      "failure_mode": "missing_sidecar"
+      "failure_mode": "missing_sidecar",
+      "disposition": "deferred",
+      "planning_only": true,
+      "disposition_reason": "deferred - not required for Phase 8.11 acceptance; a missing sidecar fails closed in the live read path (sidecar fetch error) before any migration logic runs; no matrix row"
     },
     "v1_multipart_non_uniform_parts": {
+      "disk_path": "v1_multipart/non_uniform_parts",
       "description": "V1 multipart with non-uniform part sizes (ADR-011); on-disk fixture",
       "source": {
         "version": "v1",
@@ -334,6 +351,7 @@
       "expected_outcome": "success"
     },
     "v2_multipart_uniform_parts": {
+      "disk_path": "v2_multipart/uniform_parts",
       "description": "V2 multipart with uniform part sizes (fixed counter derivation)",
       "source": {
         "version": "v2",
@@ -371,6 +389,7 @@
       "expected_outcome": "success"
     },
     "v2_multipart_variable_final_part": {
+      "disk_path": "v2_multipart/variable_final_part",
       "description": "V2 multipart with variable final part",
       "source": {
         "version": "v2",
@@ -411,6 +430,7 @@
       "expected_outcome": "success"
     },
     "v2_multipart_non_uniform_parts": {
+      "disk_path": "v2_multipart/non_uniform_parts",
       "description": "V2 multipart with non-uniform part sizes (ADR-011)",
       "source": {
         "version": "v2",
@@ -466,7 +486,10 @@
       "expected_outcome": "failure",
       "expected_failure_reason": "Invalid version format 'foobar' - must be numeric 1, 2, or 3",
       "failure_mode": "metadata_parse_error",
-      "resolution_strategy": "Skip and log - cannot determine source version for migration"
+      "resolution_strategy": "Skip and log - cannot determine source version for migration",
+      "disposition": "deferred",
+      "planning_only": true,
+      "disposition_reason": "deferred - not required for Phase 8.11 acceptance; armed as matrix row malformed/invalid_version_string, fixture landing blocked on armor-d36c2a36 (reader deliberately defaults an unparsable version to V1; classification gap)"
     },
     "malformed_negative_block_size": {
       "description": "Malformed: negative block size",
@@ -481,7 +504,10 @@
       "expected_outcome": "failure",
       "expected_failure_reason": "Invalid block size -1 (must be positive power of 2)",
       "failure_mode": "metadata_validation_error",
-      "resolution_strategy": "Skip and log - invalid encryption parameters"
+      "resolution_strategy": "Skip and log - invalid encryption parameters",
+      "disposition": "deferred",
+      "planning_only": true,
+      "disposition_reason": "deferred - not required for Phase 8.11 acceptance; no matrix row - block-size validation happens at metadata parse/read time and no migration-specific behavior depends on it"
     },
     "malformed_zero_plaintext_size": {
       "description": "Malformed: zero plaintext size",
@@ -505,7 +531,10 @@
         "Edge case: zero-size file migrates to empty V3 object",
         "No encryption needed, version bump only"
       ],
-      "resolution_strategy": "Migrate successfully (empty object is valid)"
+      "resolution_strategy": "Migrate successfully (empty object is valid)",
+      "disposition": "deferred",
+      "planning_only": true,
+      "disposition_reason": "deferred - not required for Phase 8.11 acceptance; no matrix row - the recorded expectation is success (envelope header authoritative over the plaintext-size metadata), which every on-disk single-PUT row already exercises"
     },
     "malformed_corrupt_envelope_header": {
       "description": "Malformed: corrupt envelope header",
@@ -518,7 +547,10 @@
       "expected_outcome": "failure",
       "expected_failure_reason": "Cannot decode envelope header - corrupt magic or version byte",
       "failure_mode": "header_decode_error",
-      "resolution_strategy": "Skip and log - envelope structure unrecoverable"
+      "resolution_strategy": "Skip and log - envelope structure unrecoverable",
+      "disposition": "deferred",
+      "planning_only": true,
+      "disposition_reason": "deferred - earlier planning name; its defect is armed as matrix row malformed/invalid_envelope_magic (same header-decode failure); not required for Phase 8.11 acceptance"
     },
     "malformed_hmac_table_mismatch": {
       "description": "Malformed: HMAC table size mismatch",
@@ -534,10 +566,13 @@
       "expected_outcome": "failure",
       "expected_failure_reason": "HMAC table has 99 entries but metadata claims 100 blocks",
       "failure_mode": "integrity_check_failed",
-      "resolution_strategy": "Skip and log - cannot verify integrity, data may be corrupt"
+      "resolution_strategy": "Skip and log - cannot verify integrity, data may be corrupt",
+      "disposition": "deferred",
+      "planning_only": true,
+      "disposition_reason": "deferred - earlier planning name; its defect (fewer HMAC entries than blocks) is armed as matrix row malformed/truncated_sidecar; not required for Phase 8.11 acceptance"
     },
     "malformed_invalid_envelope_magic": {
-      "description": "Malformed: envelope header magic corrupted (0xDEADBEEF instead of \"ARMR\"); on-disk fixture",
+      "description": "Malformed: envelope header magic corrupted (0xDEADBEEF instead of \"ARMR\")",
       "source": {
         "version": "malformed",
         "defect": "invalid_envelope_magic",
@@ -550,10 +585,13 @@
       "expected_error_class": "invalid ARMOR magic",
       "enforcement_stage": "decrypt",
       "failure_mode": "header_decode_error",
-      "resolution_strategy": "Skip and log - envelope structure unrecoverable"
+      "resolution_strategy": "Skip and log - envelope structure unrecoverable",
+      "disposition": "deferred",
+      "planning_only": true,
+      "disposition_reason": "deferred - not required for Phase 8.11 acceptance; armed as matrix row malformed/invalid_envelope_magic, fixture landing blocked on the migration-defect bead chain (see armor-62119311 notes)"
     },
     "malformed_truncated_ciphertext": {
-      "description": "Malformed: ciphertext truncated to 164 bytes while the header declares 119 bytes of plaintext (HMAC table missing); on-disk fixture",
+      "description": "Malformed: ciphertext truncated to 164 bytes while the header declares 119 bytes of plaintext (HMAC table missing)",
       "source": {
         "version": "malformed",
         "defect": "truncated_ciphertext",
@@ -566,10 +604,13 @@
       "expected_error_class": "ciphertext too short to contain HMAC table",
       "enforcement_stage": "decrypt",
       "failure_mode": "truncation_error",
-      "resolution_strategy": "Skip and log - object incomplete, data unrecoverable"
+      "resolution_strategy": "Skip and log - object incomplete, data unrecoverable",
+      "disposition": "deferred",
+      "planning_only": true,
+      "disposition_reason": "deferred - not required for Phase 8.11 acceptance; armed as matrix row malformed/truncated_ciphertext, fixture landing blocked on the migration-defect bead chain (see armor-62119311 notes)"
     },
     "malformed_corrupted_hmac_table": {
-      "description": "Malformed: HMAC table corrupted (bit flip); on-disk fixture",
+      "description": "Malformed: HMAC table corrupted (bit flip)",
       "source": {
         "version": "malformed",
         "defect": "corrupted_hmac_table",
@@ -582,10 +623,13 @@
       "expected_error_class": "HMAC verification failed",
       "enforcement_stage": "decrypt",
       "failure_mode": "integrity_check_failed",
-      "resolution_strategy": "Skip and log - cannot verify integrity, data may be corrupt"
+      "resolution_strategy": "Skip and log - cannot verify integrity, data may be corrupt",
+      "disposition": "deferred",
+      "planning_only": true,
+      "disposition_reason": "deferred - not required for Phase 8.11 acceptance; armed as matrix row malformed/corrupted_hmac_table, fixture landing blocked on the migration-defect bead chain (see armor-62119311 notes)"
     },
     "malformed_corrupted_wrapped_dek_tag": {
-      "description": "Malformed: authentication tag on the wrapped DEK corrupted (bit flip in the final 16 bytes); on-disk fixture",
+      "description": "Malformed: authentication tag on the wrapped DEK corrupted (bit flip in the final 16 bytes)",
       "source": {
         "version": "malformed",
         "defect": "corrupted_wrapped_dek_auth_tag",
@@ -598,10 +642,13 @@
       "expected_error_class": "key unwrap failed",
       "enforcement_stage": "decrypt",
       "failure_mode": "dek_unwrap_error",
-      "resolution_strategy": "Skip and log - cannot decrypt, data unrecoverable without correct DEK"
+      "resolution_strategy": "Skip and log - cannot decrypt, data unrecoverable without correct DEK",
+      "disposition": "deferred",
+      "planning_only": true,
+      "disposition_reason": "deferred - not required for Phase 8.11 acceptance; armed as matrix row malformed/corrupted_wrapped_dek_tag, landing blocked on the defect chain (including armor-69bb38c1, the stageDecrypt masking-branch test defect)"
     },
     "malformed_invalid_sidecar_format": {
-      "description": "Malformed: HMAC sidecar is invalid binary (malformed protobuf-style wire format; neither a valid sidecar document nor a raw HMAC table); on-disk fixture",
+      "description": "Malformed: HMAC sidecar is invalid binary (malformed protobuf-style wire format; neither a valid sidecar document nor a raw HMAC table)",
       "source": {
         "version": "malformed",
         "defect": "invalid_sidecar_format",
@@ -615,10 +662,13 @@
       "expected_error_class": "sidecar size is not a multiple of the 32-byte HMAC",
       "enforcement_stage": "accounting",
       "failure_mode": "sidecar_parse_error",
-      "resolution_strategy": "Skip and log - per-block integrity cannot be verified"
+      "resolution_strategy": "Skip and log - per-block integrity cannot be verified",
+      "disposition": "deferred",
+      "planning_only": true,
+      "disposition_reason": "deferred - not required for Phase 8.11 acceptance; armed as matrix row malformed/invalid_sidecar_format, fixture landing blocked on the migration-defect bead chain (see armor-62119311 notes)"
     },
     "malformed_truncated_sidecar": {
-      "description": "Malformed: HMAC sidecar truncated - final 32-byte block entry missing, fewer HMACs than blocks; on-disk fixture",
+      "description": "Malformed: HMAC sidecar truncated - final 32-byte block entry missing, fewer HMACs than blocks",
       "source": {
         "version": "malformed",
         "defect": "truncated_sidecar",
@@ -632,10 +682,13 @@
       "expected_error_class": "sidecar holds fewer HMAC entries than the object has blocks",
       "enforcement_stage": "accounting",
       "failure_mode": "integrity_check_failed",
-      "resolution_strategy": "Skip and log - cannot verify integrity, data may be corrupt"
+      "resolution_strategy": "Skip and log - cannot verify integrity, data may be corrupt",
+      "disposition": "deferred",
+      "planning_only": true,
+      "disposition_reason": "deferred - not required for Phase 8.11 acceptance; armed as matrix row malformed/truncated_sidecar, fixture landing blocked on the migration-defect bead chain (see armor-62119311 notes)"
     },
     "malformed_envelope_version_mismatch": {
-      "description": "Malformed: envelope header is V1 but metadata claims V2; on-disk fixture",
+      "description": "Malformed: envelope header is V1 but metadata claims V2",
       "source": {
         "version": "malformed",
         "defect": "envelope_version_mismatch",
@@ -647,10 +700,13 @@
       "expected_failure_reason": "envelope header version (1) != metadata version (2)",
       "enforcement_stage": "classify",
       "failure_mode": "metadata_validation_error",
-      "resolution_strategy": "Skip and log - source version cannot be established"
+      "resolution_strategy": "Skip and log - source version cannot be established",
+      "disposition": "deferred",
+      "planning_only": true,
+      "disposition_reason": "deferred - not required for Phase 8.11 acceptance; armed as matrix row malformed/envelope_version_mismatch, landing blocked on armor-7203ef90 (no header-vs-metadata version cross-check)"
     },
     "malformed_inconsistent_part_metadata": {
-      "description": "Malformed: multipart metadata (part count/size) is inconsistent with the actual object structure; on-disk fixture",
+      "description": "Malformed: multipart metadata (part count/size) is inconsistent with the actual object structure",
       "source": {
         "version": "malformed",
         "defect": "inconsistent_part_metadata",
@@ -661,10 +717,13 @@
       "expected_failure_reason": "part count/size in metadata doesn't match actual structure",
       "enforcement_stage": "classify",
       "failure_mode": "metadata_validation_error",
-      "resolution_strategy": "Skip and log - part structure cannot be reconciled"
+      "resolution_strategy": "Skip and log - part structure cannot be reconciled",
+      "disposition": "deferred",
+      "planning_only": true,
+      "disposition_reason": "deferred - not required for Phase 8.11 acceptance; armed as matrix row malformed/inconsistent_part_metadata, landing blocked on armor-0637df55 (no declared-vs-actual part accounting)"
     },
     "malformed_multipart_part_size_mismatch": {
-      "description": "Malformed: multipart part-size metadata (307200 bytes) contradicts the actual part size (524288 bytes); on-disk fixture",
+      "description": "Malformed: multipart part-size metadata (307200 bytes) contradicts the actual part size (524288 bytes)",
       "source": {
         "version": "malformed",
         "defect": "multipart_part_size_mismatch",
@@ -677,10 +736,13 @@
       "expected_failure_reason": "declared part size does not match actual part boundaries derived from plaintext size",
       "enforcement_stage": "classify",
       "failure_mode": "metadata_validation_error",
-      "resolution_strategy": "Skip and log - part boundaries cannot be derived"
+      "resolution_strategy": "Skip and log - part boundaries cannot be derived",
+      "disposition": "deferred",
+      "planning_only": true,
+      "disposition_reason": "deferred - not required for Phase 8.11 acceptance; armed as matrix row malformed/multipart_part_size_mismatch, landing blocked on armor-0637df55 (no declared-vs-actual part accounting)"
     },
     "malformed_multipart_contradictory_hashes": {
-      "description": "Malformed: multipart metadata SHA-256 contradicts the plaintext SHA-256 embedded in the envelope header; on-disk fixture",
+      "description": "Malformed: multipart metadata SHA-256 contradicts the plaintext SHA-256 embedded in the envelope header",
       "source": {
         "version": "malformed",
         "defect": "multipart_contradictory_hashes",
@@ -693,10 +755,13 @@
       "expected_failure_reason": "metadata sha256 != envelope header sha256; integrity cannot be established",
       "enforcement_stage": "classify",
       "failure_mode": "integrity_check_failed",
-      "resolution_strategy": "Skip and log - integrity cannot be established against either digest"
+      "resolution_strategy": "Skip and log - integrity cannot be established against either digest",
+      "disposition": "deferred",
+      "planning_only": true,
+      "disposition_reason": "deferred - not required for Phase 8.11 acceptance; armed as matrix row malformed/multipart_contradictory_hashes, landing blocked on armor-85bc5a14 (decryptMultipartObject lacks the plaintext-SHA enforcement)"
     },
     "malformed_v1_object_v2_metadata": {
-      "description": "Malformed: genuine V1 object (V1 header + V1 counter derivation) whose metadata claims V2; on-disk fixture",
+      "description": "Malformed: genuine V1 object (V1 header + V1 counter derivation) whose metadata claims V2",
       "source": {
         "version": "malformed",
         "defect": "v1_object_with_v2_metadata",
@@ -708,10 +773,13 @@
       "expected_failure_reason": "metadata version (2) disagrees with envelope header version (1); V2 counter derivation cannot decrypt V1 ciphertext",
       "enforcement_stage": "classify",
       "failure_mode": "metadata_validation_error",
-      "resolution_strategy": "Skip and log - trust the envelope header; metadata is wrong"
+      "resolution_strategy": "Skip and log - trust the envelope header; metadata is wrong",
+      "disposition": "deferred",
+      "planning_only": true,
+      "disposition_reason": "deferred - not required for Phase 8.11 acceptance; armed as matrix row malformed/v1_object_v2_metadata, landing blocked on armor-7203ef90 (no header-vs-metadata version cross-check)"
     },
     "malformed_v2_object_v1_metadata": {
-      "description": "Malformed: genuine V2 object (V2 header + V2 counter derivation) whose metadata claims V1 (V1-style wrapped DEK, no ETag); on-disk fixture",
+      "description": "Malformed: genuine V2 object (V2 header + V2 counter derivation) whose metadata claims V1 (V1-style wrapped DEK, no ETag)",
       "source": {
         "version": "malformed",
         "defect": "v2_object_with_v1_metadata",
@@ -723,9 +791,13 @@
       "expected_failure_reason": "metadata version (1) disagrees with envelope header version (2); V1 counter derivation cannot decrypt V2 ciphertext",
       "enforcement_stage": "classify",
       "failure_mode": "metadata_validation_error",
-      "resolution_strategy": "Skip and log - trust the envelope header; metadata is wrong"
+      "resolution_strategy": "Skip and log - trust the envelope header; metadata is wrong",
+      "disposition": "deferred",
+      "planning_only": true,
+      "disposition_reason": "deferred - not required for Phase 8.11 acceptance; armed as matrix row malformed/v2_object_v1_metadata, landing blocked on armor-7203ef90 (no header-vs-metadata version cross-check)"
     },
     "contradictory_version_says_v1_layout_v2": {
+      "disk_path": "contradictory/version_says_v1_layout_v2",
       "description": "Contradictory: version says V1, layout uses V2 counter derivation (multi-block, 4 x 64 KiB)",
       "source": {
         "version": "contradictory",
@@ -765,7 +837,10 @@
         "Multipart metadata flag corrected",
         "Logs warning about metadata inconsistency"
       ],
-      "resolution_strategy": "Trust structure, correct metadata, migrate normally"
+      "resolution_strategy": "Trust structure, correct metadata, migrate normally",
+      "disposition": "deferred",
+      "planning_only": true,
+      "disposition_reason": "deferred - not required for Phase 8.11 acceptance; the recorded expectation is success (structure authoritative over the multipart flag, warning logged) and structural dispatch is exercised by every on-disk single-PUT row; no matrix row"
     },
     "contradictory_size_mismatch": {
       "description": "Contradictory: envelope size differs from metadata size",
@@ -791,7 +866,10 @@
         "Migration uses envelope size",
         "Logs warning about metadata inconsistency"
       ],
-      "resolution_strategy": "Trust envelope header, correct metadata, migrate normally"
+      "resolution_strategy": "Trust envelope header, correct metadata, migrate normally",
+      "disposition": "deferred",
+      "planning_only": true,
+      "disposition_reason": "deferred - not required for Phase 8.11 acceptance; the recorded expectation is success (envelope header authoritative for plaintext size, warning logged), which the on-disk decryption rows already pin; no matrix row"
     },
     "edge_case_empty_plaintext": {
       "description": "Edge case: empty plaintext (zero-byte file)",
@@ -817,7 +895,10 @@
         "Zero blocks \u2192 zero HMAC entries",
         "Version bump only, no re-encryption needed"
       ],
-      "edge_case_notes": "Tests block_count = 0 edge case in migration logic"
+      "edge_case_notes": "Tests block_count = 0 edge case in migration logic",
+      "disposition": "deferred",
+      "planning_only": true,
+      "disposition_reason": "deferred - not required for Phase 8.11 acceptance; armed as matrix row edge_cases/empty_plaintext, fixture landing blocked on the migration-defect bead chain (see armor-62119311 notes)"
     },
     "edge_case_single_byte_plaintext": {
       "description": "Edge case: single-byte plaintext",
@@ -842,7 +923,10 @@
         "Full HMAC computed for partial block",
         "Tests partial block handling in migration"
       ],
-      "edge_case_notes": "Tests partial last block encryption/decryption"
+      "edge_case_notes": "Tests partial last block encryption/decryption",
+      "disposition": "deferred",
+      "planning_only": true,
+      "disposition_reason": "deferred - not required for Phase 8.11 acceptance; armed as matrix row edge_cases/single_byte_plaintext, fixture landing blocked on the migration-defect bead chain (see armor-62119311 notes)"
     },
     "edge_case_exact_block_boundary": {
       "description": "Edge case: plaintext is exact multiple of block size",
@@ -867,7 +951,11 @@
         "Exactly 2 blocks \u2192 2 HMAC entries",
         "Tests boundary condition in block counting"
       ],
-      "edge_case_notes": "Tests block_count = plaintext_size / block_size (no remainder)"
+      "edge_case_notes": "Tests block_count = plaintext_size / block_size (no remainder)",
+      "disposition": "covered",
+      "covered_by": "contradictory/version_says_v1_layout_v2",
+      "planning_only": true,
+      "disposition_reason": "covered by contradictory/version_says_v1_layout_v2 (single-PUT of exactly 4 x 64 KiB blocks: embedded-table sizing with no partial block) and generated_fixtures/v1-multipart-uniform (the same exact boundary on the sidecar path)"
     },
     "edge_case_one_byte_over_boundary": {
       "description": "Edge case: one byte over exact block boundary",
@@ -892,7 +980,10 @@
         "Tests ceil(plaintext_size / block_size) logic",
         "Partial block HMAC computed correctly"
       ],
-      "edge_case_notes": "Tests partial block HMAC computation"
+      "edge_case_notes": "Tests partial block HMAC computation",
+      "disposition": "deferred",
+      "planning_only": true,
+      "disposition_reason": "deferred - not required for Phase 8.11 acceptance; per-block crypto is position-independent - partial-block padding is exercised on disk (119 B and 47 B fixtures) and exact multi-block boundaries by the 262144 B fixtures; no matrix row"
     },
     "edge_case_very_large_object": {
       "description": "Edge case: very large object (>5GB, CopyObject limit)",
@@ -921,7 +1012,10 @@
         "Migrated part-by-part (no whole-object re-upload)",
         "Tests ADR-016 implementation in migration"
       ],
-      "edge_case_notes": "Tests ADR-016 manifest object pattern for >5GB objects"
+      "edge_case_notes": "Tests ADR-016 manifest object pattern for >5GB objects",
+      "disposition": "deferred",
+      "planning_only": true,
+      "disposition_reason": "deferred - not required for Phase 8.11 acceptance; a 6 GB fixture exercises the ADR-016 >5 GiB manifest-migration pattern at untestable in-tree scale; belongs with the migration endpoint's own acceptance, not the fixture tree"
     },
     "edge_case_unicode_metadata_keys": {
       "description": "Edge case: Unicode characters in metadata keys/values",
@@ -953,7 +1047,10 @@
         "UTF-8 encoding preserved",
         "Tests Unicode handling in metadata migration"
       ],
-      "edge_case_notes": "Tests metadata preservation with Unicode characters"
+      "edge_case_notes": "Tests metadata preservation with Unicode characters",
+      "disposition": "deferred",
+      "planning_only": true,
+      "disposition_reason": "deferred - not required for Phase 8.11 acceptance; user metadata is carried opaquely through migration (keys/values copied verbatim), so charset handling is the client's S3 contract, not the format's; no matrix row"
     },
     "generated_fixtures_v1_single_explicit_short": {
       "disk_path": "generated_fixtures/v1-single-explicit-short",
@@ -1117,7 +1214,10 @@
         "MEK fingerprint computed and added",
         "Tests backward compatibility with legacy DEK format"
       ],
-      "resolution_strategy": "Upgrade DEK format during migration"
+      "resolution_strategy": "Upgrade DEK format during migration",
+      "disposition": "deferred",
+      "planning_only": true,
+      "disposition_reason": "deferred - not required for Phase 8.11 acceptance; pre-fingerprint wrap parsing with no matrix row and no known on-fleet producer; re-arm if such an object is ever found"
     },
     "legacy_wrapped_dek_invalid": {
       "description": "Legacy: invalid wrapped DEK (cannot unwrap)",
@@ -1130,18 +1230,43 @@
       "expected_outcome": "failure",
       "expected_failure_reason": "Cannot unwrap DEK - invalid wrapped DEK format",
       "failure_mode": "dek_unwrap_error",
-      "resolution_strategy": "Skip and log - cannot decrypt, data unrecoverable without correct DEK"
+      "resolution_strategy": "Skip and log - cannot decrypt, data unrecoverable without correct DEK",
+      "disposition": "deferred",
+      "planning_only": true,
+      "disposition_reason": "deferred - not required for Phase 8.11 acceptance; the DEK-unwrap fail-closed path is armed as matrix row malformed/corrupted_wrapped_dek_tag"
     }
   },
   "summary": {
     "total_entries": 46,
-    "on_disk_fixture_dirs": 32,
+    "on_disk_fixture_dirs": 16,
+    "on_disk_dirs": [
+      "contradictory/version_says_v1_layout_v2",
+      "generated_fixtures/v1-multipart-uniform",
+      "generated_fixtures/v1-single-explicit-short",
+      "generated_fixtures/v1-single-implicit-short",
+      "generated_fixtures/v2-multipart-uniform",
+      "generated_fixtures/v2-single-short",
+      "v1_multipart/non_uniform_parts",
+      "v1_multipart/uniform_parts",
+      "v1_multipart/variable_final_part",
+      "v1_single_put/explicit_version",
+      "v1_single_put/implicit_version",
+      "v1_single_put/minimal_metadata",
+      "v2_multipart/non_uniform_parts",
+      "v2_multipart/uniform_parts",
+      "v2_multipart/variable_final_part",
+      "v2_single_put/standard"
+    ],
     "on_disk_expected_outcomes": {
-      "success": 18,
-      "failure": 14
+      "success": 15,
+      "failure": 1
     },
-    "planning_only_entries": 14,
-    "planning_only_note": "Entries without an on-disk directory (v2_single_put_minimal_metadata, v1_multipart_sidecar_corrupt, v1_multipart_sidecar_missing, malformed_negative_block_size, malformed_zero_plaintext_size, malformed_corrupt_envelope_header, malformed_hmac_table_mismatch, contradictory_multipart_flag_mismatch, contradictory_size_mismatch, edge_case_one_byte_over_boundary, edge_case_very_large_object, edge_case_unicode_metadata_keys, legacy_wrapped_dek_base64_only, legacy_wrapped_dek_invalid). malformed_corrupt_envelope_header and malformed_hmac_table_mismatch are earlier planning names whose defects are now covered by the on-disk entries malformed_invalid_envelope_magic and malformed_corrupted_hmac_table respectively.",
+    "planning_only_entries": 30,
+    "planning_only_note": "Counts recomputed from the committed fixture tree (armor-73cb73d8, 2026-09-24): 46 manifest entries, 16 committed fixture directories, 30 planning-only. The earlier 32/14 split counted goldenFixtureMatrix rows (internal/server/format_migration_fixture_matrix_test.go: 18 success + 14 failure = 32), not directories - the malformed/ (13 rows) and edge_cases/ (3 rows) categories have never been committed, so only 16 of the 32 matrix rows are on disk. Every planning-only row carries an explicit disposition below (covered: 2, deferred: 28); covered rows name the on-disk directory that already exercises their scenario; deferred rows are not required for Phase 8.11 acceptance and say why. Rows: v2_single_put_minimal_metadata, v1_multipart_sidecar_corrupt, v1_multipart_sidecar_missing, malformed_invalid_version_string, malformed_negative_block_size, malformed_zero_plaintext_size, malformed_corrupt_envelope_header, malformed_hmac_table_mismatch, malformed_invalid_envelope_magic, malformed_truncated_ciphertext, malformed_corrupted_hmac_table, malformed_corrupted_wrapped_dek_tag, malformed_invalid_sidecar_format, malformed_truncated_sidecar, malformed_envelope_version_mismatch, malformed_inconsistent_part_metadata, malformed_multipart_part_size_mismatch, malformed_multipart_contradictory_hashes, malformed_v1_object_v2_metadata, malformed_v2_object_v1_metadata, contradictory_multipart_flag_mismatch, contradictory_size_mismatch, edge_case_empty_plaintext, edge_case_single_byte_plaintext, edge_case_exact_block_boundary, edge_case_one_byte_over_boundary, edge_case_very_large_object, edge_case_unicode_metadata_keys, legacy_wrapped_dek_base64_only, legacy_wrapped_dek_invalid. malformed_corrupt_envelope_header and malformed_hmac_table_mismatch are earlier planning names whose defects are armed as matrix rows malformed_invalid_envelope_magic and malformed_truncated_sidecar / malformed_corrupted_hmac_table respectively. An entry arms into a real fixture only when its category directory is committed (see README, 'Planning-only manifest rows').",
+    "planning_only_dispositions": {
+      "covered": 2,
+      "deferred": 28
+    },
     "coverage_areas": [
       "V1 vulnerable counter derivation \u2192 V3 per-part independence",
       "Implicit version detection",

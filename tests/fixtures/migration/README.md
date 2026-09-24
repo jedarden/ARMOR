@@ -115,6 +115,10 @@ tests/fixtures/migration/
 │                                 #   are `package main` declaring the same
 │                                 #   symbols, which broke every ./... build
 ├── README.md                     # This file
+├── golden_manifest_consistency_test.go
+│                                 # Pins v3-golden-outcomes.json/.yml to this
+│                                 #   tree and to explicit planning-only
+│                                 #   dispositions
 ├── v3-golden-outcomes.json/.yml  # Expected-outcome manifest (all fixtures,
 │                                 #   incl. planning-only entries)
 ├── v3-golden-outcomes-computed.json/.yml
@@ -141,40 +145,32 @@ tests/fixtures/migration/
 │   ├── v2-single-short/
 │   ├── v1-multipart-uniform/
 │   └── v2-multipart-uniform/
-├── malformed/                    # 13 corrupt variants; each documents the
-│   │                             #   specific failure it must produce
-│   ├── invalid_version_string/
-│   ├── invalid_envelope_magic/
-│   ├── invalid_sidecar_format/
-│   ├── envelope_version_mismatch/
-│   ├── corrupted_hmac_table/
-│   ├── corrupted_wrapped_dek_tag/
-│   ├── inconsistent_part_metadata/
-│   ├── truncated_ciphertext/
-│   ├── truncated_sidecar/
-│   ├── multipart_part_size_mismatch/
-│   ├── multipart_contradictory_hashes/
-│   ├── v1_object_v2_metadata/
-│   └── v2_object_v1_metadata/
-├── contradictory/
-│   └── version_says_v1_layout_v2/
-└── edge_cases/
-    ├── empty_plaintext/
-    ├── single_byte_plaintext/
-    └── exact_block_boundary/
+└── contradictory/
+    └── version_says_v1_layout_v2/
 ```
+
+This tree is the complete committed set: **16 fixture directories**. The
+generator also emits `malformed/` (13 variants) and `edge_cases/` (3
+variants), but no fixture from either category has ever been committed —
+their landing is blocked on the migration-defect bead chain (see
+"Planning-only manifest rows" below). `TestGoldenManifestOnDiskDirsMatchTree`
+fails if the manifests' on-disk list and this tree ever disagree in either
+direction.
 
 ## Fixture Inventory and Expected V3 Outcomes
 
-Every fixture directory below carries a documented expected V3 conversion
+Every committed fixture directory below carries a documented expected V3 conversion
 outcome: the target layout for valid fixtures, the specific failure a corrupt
 fixture must produce otherwise. The long-form expectations live in
 `v3-golden-outcomes.json` / `.yml` (this table is the index); the values in
 `v3-golden-outcomes-computed.json` are cross-checked by
-`TestGoldenFixturesMigrate`, and every pass/fail class in the table is pinned
+`TestGoldenFixturesMigrate`, and every pass/fail class in the tables is pinned
 by `internal/server/format_migration_fixture_matrix_test.go`
 (`goldenFixtureMatrix`), which fails if a fixture dir appears on disk without
-a row, or a row without its fixture.
+a row, or a listed row's fixture goes missing once its category has landed.
+The manifests themselves are pinned to the tree by
+`TestGoldenManifestOnDiskDirsMatchTree`
+(`golden_manifest_consistency_test.go`).
 
 Enforcement stages for corrupt fixtures, strictest first:
 
@@ -186,6 +182,9 @@ Enforcement stages for corrupt fixtures, strictest first:
   must fail the object and process nothing.
 
 ### Valid fixtures (success: migrate, then read back the documented plaintext)
+
+Exactly one row per committed fixture directory (15 success + 1 failure = the
+16 dirs on disk).
 
 | Fixture | Source | Expected V3 layout |
 |---|---|---|
@@ -199,9 +198,6 @@ Enforcement stages for corrupt fixtures, strictest first:
 | `v2_multipart/uniform_parts` | V2 multipart-uniform | structure preserved; per-part independence completes |
 | `v2_multipart/variable_final_part` | V2 multipart, ADR-010 | variable final part preserved; version bump |
 | `v2_multipart/non_uniform_parts` | V2 multipart, ADR-011 | non-uniform parts preserved; version bump |
-| `edge_cases/empty_plaintext` | V1, 0 bytes | valid empty V3 object; version bump only |
-| `edge_cases/single_byte_plaintext` | V1, 1 byte | single, 1 partial block; padding handled by AEAD |
-| `edge_cases/exact_block_boundary` | V1, 131072 bytes (2 × 64 KiB) | blocks exactly fill; no partial last block |
 | `generated_fixtures/v1-single-explicit-short` | V1 single, 47 B | single, 1 block (regeneration set) |
 | `generated_fixtures/v1-single-implicit-short` | V1 single implicit, 47 B | single, 1 block; implicit detection |
 | `generated_fixtures/v2-single-short` | V2 single, 47 B | single, 1 block |
@@ -212,29 +208,57 @@ Enforcement stages for corrupt fixtures, strictest first:
 
 | Fixture | Defect | Required failure (stage: what must fire) |
 |---|---|---|
-| `malformed/invalid_envelope_magic` | header magic `0xDEADBEEF`, not `ARMR` | decrypt: `invalid ARMOR magic` — header undecodable |
-| `malformed/truncated_ciphertext` | stored bytes < header-declared table + data | decrypt: `ciphertext too short to contain HMAC table` |
-| `malformed/corrupted_hmac_table` | bit flip in HMAC table | decrypt: `HMAC verification failed` |
-| `malformed/corrupted_wrapped_dek_tag` | bit flip in wrapped-DEK auth tag | decrypt: `key unwrap failed` — KWP/auth-tag verification |
-| `malformed/invalid_sidecar_format` | sidecar is neither a sidecar document nor a raw HMAC table | accounting: sidecar size not a multiple of the 32-byte HMAC |
-| `malformed/truncated_sidecar` | final 32-byte HMAC entry missing | accounting: fewer HMAC entries than blocks |
-| `malformed/invalid_version_string` | unparsable version metadata | classify: reader deliberately defaults to V1 (backward compat); dry-run migrator must fail the object |
-| `malformed/inconsistent_part_metadata` | part count/size contradicts actual structure | classify: inventory accounting rejects |
-| `malformed/multipart_part_size_mismatch` | declared part size (307200 B) vs actual (524288 B) | classify: derived part boundaries contradict metadata |
-| `malformed/multipart_contradictory_hashes` | metadata sha256 ≠ envelope-header sha256 | classify: integrity cannot be established against either digest |
-| `malformed/envelope_version_mismatch` | header V1, metadata V2 | classify: header-vs-metadata version compare |
-| `malformed/v1_object_v2_metadata` | genuine V1 object claiming V2 | classify: version compare; V2 derivation cannot decrypt V1 ciphertext |
-| `malformed/v2_object_v1_metadata` | genuine V2 object claiming V1 | classify: version compare; V1 derivation cannot decrypt V2 ciphertext |
 | `contradictory/version_says_v1_layout_v2` | metadata + envelope header claim V1; stored layout is V2 (counter = blockIndex × 4096 AES blocks per 64 KiB block). Multi-block: 262144 B plaintext (4 × 64 KiB, plaintext SHA-256 `2312394b…`), so the contradiction is real — block 0 coincides (both derivations produce counter 0) and block 1 diverges (V1 derives counter 1, reusing bytes [16, 65536) of block 0's keystream; V2 wrote counter 4096) | classify: dry-run must fail the object — V1 derivation decrypts blocks 1–3 to garbage, so the header plaintext SHA-256 cannot match and plaintext-integrity enforcement fails the object closed |
 
 No corrupt fixture may pass through every layer: if the read path and
 accounting both accept it and the dry run processes it, the matrix test fails
 even when individual layers had no opinion.
 
-Entries in the golden manifest without an on-disk directory
-(`v1_multipart_sidecar_missing`, `edge_case_very_large_object`,
-`legacy_wrapped_dek_*`, …) are planning-only variants listed in the
-manifest's `summary`; they arm in the matrix automatically when generated.
+### Planning-only manifest rows (no committed fixture)
+
+The 30 remaining `v3-golden-outcomes.json` rows have no fixture directory.
+Each carries an explicit `disposition` in the manifest — `covered` (an
+on-disk row already exercises the scenario) or `deferred` (not required for
+Phase 8.11 acceptance, with the reason) — enforced by
+`TestGoldenManifestOnDiskDirsMatchTree/planning_only_rows_have_dispositions`.
+The 13 malformed rows and 3 edge-case rows below are armed in
+`goldenFixtureMatrix` and land as fixtures when their category directory is
+committed; today that landing is blocked on the migration-defect bead chain
+filed from armor-62119311 (armor-d36c2a36, armor-7203ef90, armor-0637df55,
+armor-85bc5a14, armor-69bb38c1).
+
+| Manifest row | Disposition | Detail |
+|---|---|---|
+| `v2_single_put_minimal_metadata` | covered | `v1_single_put/minimal_metadata` — missing-metadata reconstruction is envelope-header-driven and version-agnostic; only the version bump differs, which `v2_single_put/standard` already pins |
+| `v1_multipart_sidecar_corrupt` | deferred | corrupt-sidecar failure is armed as matrix row `malformed/corrupted_hmac_table`, whose fixture landing is blocked on the migration-defect bead chain |
+| `v1_multipart_sidecar_missing` | deferred | a missing sidecar fails closed in the live read path (sidecar fetch error) before any migration logic; no matrix row |
+| `malformed_invalid_version_string` | deferred | armed as matrix row `malformed/invalid_version_string`; landing blocked on armor-d36c2a36 (reader deliberately defaults an unparsable version to V1) |
+| `malformed_negative_block_size` | deferred | no matrix row — block-size validation happens at metadata parse/read time; no migration-specific behavior depends on it |
+| `malformed_zero_plaintext_size` | deferred | no matrix row — recorded expectation is success (envelope header authoritative over the plaintext-size metadata), which every on-disk single-PUT row exercises |
+| `malformed_corrupt_envelope_header` | deferred | earlier planning name; defect armed as matrix row `malformed/invalid_envelope_magic` (same header-decode failure) |
+| `malformed_hmac_table_mismatch` | deferred | earlier planning name; defect (fewer HMAC entries than blocks) armed as matrix row `malformed/truncated_sidecar` |
+| `malformed_invalid_envelope_magic` | deferred | armed as matrix row; fixture landing blocked on the migration-defect bead chain |
+| `malformed_truncated_ciphertext` | deferred | armed as matrix row; fixture landing blocked on the migration-defect bead chain |
+| `malformed_corrupted_hmac_table` | deferred | armed as matrix row; fixture landing blocked on the migration-defect bead chain |
+| `malformed_corrupted_wrapped_dek_tag` | deferred | armed as matrix row; landing blocked on the defect chain (incl. armor-69bb38c1, the stageDecrypt masking-branch test defect) |
+| `malformed_invalid_sidecar_format` | deferred | armed as matrix row; fixture landing blocked on the migration-defect bead chain |
+| `malformed_truncated_sidecar` | deferred | armed as matrix row; fixture landing blocked on the migration-defect bead chain |
+| `malformed_envelope_version_mismatch` | deferred | armed as matrix row; landing blocked on armor-7203ef90 (no header-vs-metadata version cross-check) |
+| `malformed_inconsistent_part_metadata` | deferred | armed as matrix row; landing blocked on armor-0637df55 (no declared-vs-actual part accounting) |
+| `malformed_multipart_part_size_mismatch` | deferred | armed as matrix row; landing blocked on armor-0637df55 |
+| `malformed_multipart_contradictory_hashes` | deferred | armed as matrix row; landing blocked on armor-85bc5a14 (multipart plaintext-SHA enforcement) |
+| `malformed_v1_object_v2_metadata` | deferred | armed as matrix row; landing blocked on armor-7203ef90 |
+| `malformed_v2_object_v1_metadata` | deferred | armed as matrix row; landing blocked on armor-7203ef90 |
+| `contradictory_multipart_flag_mismatch` | deferred | recorded expectation is success (structure authoritative over the multipart flag, warning logged); structural dispatch is exercised by every on-disk single-PUT row; no matrix row |
+| `contradictory_size_mismatch` | deferred | recorded expectation is success (envelope header authoritative for plaintext size, warning logged), pinned by the on-disk decryption rows; no matrix row |
+| `edge_case_empty_plaintext` | deferred | armed as matrix row `edge_cases/empty_plaintext`; fixture landing blocked on the migration-defect bead chain |
+| `edge_case_single_byte_plaintext` | deferred | armed as matrix row `edge_cases/single_byte_plaintext`; fixture landing blocked on the migration-defect bead chain |
+| `edge_case_exact_block_boundary` | covered | `contradictory/version_says_v1_layout_v2` (single-PUT of exactly 4 × 64 KiB blocks: embedded-table sizing, no partial block) and `generated_fixtures/v1-multipart-uniform` (same exact boundary on the sidecar path) |
+| `edge_case_one_byte_over_boundary` | deferred | per-block crypto is position-independent — partial-block padding is exercised on disk (119 B / 47 B fixtures) and exact multi-block boundaries by the 262144 B fixtures; no matrix row |
+| `edge_case_very_large_object` | deferred | a 6 GB fixture exercises the ADR-016 >5 GiB manifest-migration pattern at untestable in-tree scale; belongs with the migration endpoint's own acceptance, not the fixture tree |
+| `edge_case_unicode_metadata_keys` | deferred | user metadata is carried opaquely through migration (keys/values copied verbatim); charset handling is the client's S3 contract, not the format's; no matrix row |
+| `legacy_wrapped_dek_base64_only` | deferred | pre-fingerprint wrap parsing; no matrix row and no known on-fleet producer; re-arm if such an object is ever found |
+| `legacy_wrapped_dek_invalid` | deferred | the DEK-unwrap fail-closed path is armed as matrix row `malformed/corrupted_wrapped_dek_tag` |
 
 
 
@@ -376,6 +400,12 @@ Fixtures can be validated against the migration code:
   above) and enforces bidirectional coverage between `goldenFixtureMatrix`
   and the on-disk fixture tree. A new fixture directory cannot land without
   declaring its class, and a class whose fixture disappears fails.
+- `golden_manifest_consistency_test.go` (this directory) pins
+  `v3-golden-outcomes.json`/`.yml` to the tree: `summary.on_disk_dirs` and
+  the per-entry `disk_path` fields must equal exactly the committed fixture
+  directories, the summary counts must derive from those lists, every
+  planning-only row must carry its `covered`/`deferred` disposition, and the
+  `.yml` must stay semantically identical to the `.json`.
 
 ## Maintenance
 
