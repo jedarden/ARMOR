@@ -611,6 +611,27 @@ func (fm *FormatMigrator) Migrate(ctx context.Context, dryRun bool, concurrency 
 				continue
 			}
 
+			// A single-PUT object carries its structural version in the
+			// envelope header as well as in metadata.  Do not let metadata
+			// route a structurally different object into migrateObject: the
+			// decryptor intentionally follows the header version, while the
+			// migration candidate selection above follows metadata.
+			if ok {
+				if err := fm.validateEnvelopeVersion(ctx, obj, rawMeta, armorMeta); err != nil {
+					log.Printf("Warning: failed to validate envelope version for %s: %v", obj.Key, err)
+					failure := fm.recordFailure(obj.Key, err.Error())
+					result.FailedObjects++
+					result.Failures = append(result.Failures, failure)
+					fm.stateMu.Lock()
+					fm.state.FailedObjects++
+					fm.state.Failures = append(fm.state.Failures, failure)
+					fm.stateMu.Unlock()
+					fm.classifyOutcome(outcomeFailed)
+					fm.advanceCursor(obj.Key)
+					continue
+				}
+			}
+
 			// If we get here, the object is a migration candidate
 			// If metadata parsing failed but version is in include list, attempt migration (will fail and be recorded)
 			if !ok {
@@ -695,6 +716,35 @@ func (fm *FormatMigrator) Migrate(ctx context.Context, dryRun bool, concurrency 
 	log.Printf("Migration %s classification:\n%s", result.Status, result.Classification.Summary())
 
 	return result, nil
+}
+
+// validateEnvelopeVersion establishes the structural version of a migration
+// candidate before migrateObject is allowed to decrypt it. Single-PUT objects
+// carry an envelope header, while multipart objects are headerless and use the
+// metadata version as their structural version by design.
+func (fm *FormatMigrator) validateEnvelopeVersion(ctx context.Context, obj backend.ObjectInfo, rawMeta map[string]string, armorMeta *backend.ARMORMetadata) error {
+	if rawMeta[armorMetaMultipart] == "true" {
+		return nil
+	}
+
+	reader, err := fm.backend.GetRange(ctx, fm.bucket, obj.Key, 0, int64(crypto.HeaderSize))
+	if err != nil {
+		return fmt.Errorf("failed to read envelope header: %w", err)
+	}
+	defer reader.Close()
+
+	header, err := crypto.ReadEnvelopeHeader(reader)
+	if err != nil {
+		// Header decoding failures remain on migrateObject's existing
+		// fail-closed path.  This guard is specifically the agreement check;
+		// preserving the existing path also keeps metadata validation errors
+		// (for example invalid base64) as the reported cause.
+		return nil
+	}
+	if int(header.Version) != armorMeta.Version {
+		return fmt.Errorf("header version disagrees with metadata version: header=%d metadata=%d", header.Version, armorMeta.Version)
+	}
+	return nil
 }
 
 // migrateObject migrates a single object to the current write format.
