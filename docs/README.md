@@ -20,6 +20,7 @@ This index organizes all durable documentation by audience. Every file under `do
 - **[Cloudflare Setup](cloudflare-setup.md)** — DNS and CDN configuration for zero-egress downloads
 - **[Dashboard](dashboard.md)** — Web UI for bucket browsing, encryption status, and metrics
 - **[Metrics](metrics.md)** — Prometheus metrics reference and alerting guidance
+- **[Observability Contract](observability-contract.md)** — The published canary and restore-verifier contract: status API response fields and transitions, exact Prometheus series and labels, freshness windows, alert rules, and escalation deduplication (ADR-002/ADR-004), pinned by contract tests
 - **[Litestream Restore Procedure](litestream-restore-procedure-and-verification.md)** — Restoring PostgreSQL databases via Litestream through ARMOR
 - **[Restore Verifier Deployment Guide](restore-verifier-deployment-guide.md)** — Deploying the continuous restore verification harness
 - **[MEK Rotation Future Considerations](mek-rotation-future-considerations.md)** — Multi-key routing and per-prefix rotation design notes

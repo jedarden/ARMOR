@@ -628,11 +628,16 @@ scrapes `/metrics` in the cluster (see the Phase 6 caveat in `docs/plan/plan.md`
 **Description:** Total number of canary check failures  
 **Labels:** None
 
-### `armor_canary_healthy`
+### Small-object canary health
 
-**Type:** Gauge  
-**Description:** Canary health status (1 = healthy, 0 = unhealthy)  
-**Labels:** None
+There is **no** `armor_canary_healthy` series — that gauge has never been
+exported despite appearing in earlier revisions of this document. The
+small-object canary's health is carried by the `status` field of the
+`/armor/canary` endpoint (public, token-free) and consumed by `/readyz`;
+only the multipart and secondary families have `*_healthy` gauges. The full
+status/metric contract for the canary and restore-verifier families —
+response fields, labels, freshness windows, alert thresholds, and escalation
+deduplication — is [observability-contract.md](observability-contract.md).
 
 ### `armor_multipart_canary_healthy`
 
