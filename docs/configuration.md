@@ -17,11 +17,34 @@ else on this page is optional or backend-dependent.
 | `ARMOR_ADMIN_TOKEN` | No | — | Bearer token that gates every `/admin/*` route and `/armor/audit`. When unset those routes are disabled and return 403 (fail-closed). Surrounding whitespace is trimmed so a provisioned value with a trailing newline still works |
 | `ARMOR_ADMIN_READ_TIMEOUT` | No | disabled | Max time the admin listener spends reading a request. Go duration (`30s`, `5m`), or `0`/unset for no deadline |
 | `ARMOR_ADMIN_WRITE_TIMEOUT` | No | disabled | Max time the admin listener spends writing a response. Leave unset for `POST /admin/key/rotate` and `GET /admin/key/ring?census=head`, which walk the whole bucket and can take hours |
+| `ARMOR_MAX_CONN_REQUESTS` | No | disabled | Max requests one S3 keep-alive connection may serve before its next response carries `Connection: close` and the connection is closed. Non-negative integer; `0`/unset disables. See [Keep-alive connection recycling](#keep-alive-connection-recycling) |
+| `ARMOR_MAX_CONN_AGE` | No | disabled | Max age of one S3 keep-alive connection before its next response carries `Connection: close` and the connection is closed. Go duration (`90s`, `5m`); `0`/unset disables. See [Keep-alive connection recycling](#keep-alive-connection-recycling) |
 | `ARMOR_LOG_LEVEL` | No | `info` | `debug`, `info`, `warn` or `error`. `debug` logs request and response headers and bodies |
 | `ARMOR_WRITER_ID` | No | hostname | Provenance chain writer ID |
 | `ARMOR_FORMAT_VERSION` | No | `3` | Envelope format written for new objects: `3` (current) or `2` (legacy). Reported by `armor version --json` and `/version` as `format_write_version` |
 | `ARMOR_CANARY_DISABLED` | No | `false` | `true` skips the canary check in `/readyz` (readiness then reports 200 without verifying the MEK) |
 | `ARMOR_ALLOW_NO_CREDENTIALS` | No | `false` | Start without any client credential. Set by the `demo` subcommand only; never in production |
+
+### Keep-alive connection recycling
+
+A load balancer that forwards per TCP connection (kube-proxy in particular)
+pins every client connection to one replica for as long as it stays open.
+Long-lived client connection pools therefore skew traffic across replicas, and
+scaling out does not redistribute connections that already exist.
+
+Setting either variable makes the S3 listener recycle connections: once a
+connection has served more than `ARMOR_MAX_CONN_REQUESTS` requests or lived
+longer than `ARMOR_MAX_CONN_AGE`, its next response carries
+`Connection: close` and the server closes the connection after that response
+completes. Clients close their end cleanly, re-dial on the next request, and
+the new connection is balanced afresh.
+
+The close always lands on a response boundary: a request that has begun --
+including a streamed download or a single multipart-part upload -- always
+completes normally. The cost is one reconnection per recycled connection (a
+TCP handshake, plus TLS if the client's path terminates it), which is why both
+thresholds default to disabled and deployments opt in. A typical setting for a
+deployment whose traffic skews across replicas is `ARMOR_MAX_CONN_AGE=90s`.
 
 ## Backend
 

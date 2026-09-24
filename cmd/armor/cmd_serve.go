@@ -8,12 +8,14 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
 	"github.com/jedarden/armor/internal/config"
 	"github.com/jedarden/armor/internal/logging"
 	"github.com/jedarden/armor/internal/server"
+	"github.com/jedarden/armor/internal/server/middleware"
 )
 
 func init() {
@@ -37,6 +39,16 @@ const (
 const (
 	EnvAdminReadTimeout  = "ARMOR_ADMIN_READ_TIMEOUT"
 	EnvAdminWriteTimeout = "ARMOR_ADMIN_WRITE_TIMEOUT"
+)
+
+// S3 keep-alive connection recycling. ARMOR_MAX_CONN_REQUESTS caps how many
+// requests one connection may serve and ARMOR_MAX_CONN_AGE caps how long one
+// may live; whichever limit trips first makes the next response carry
+// `Connection: close`, so the client re-dials and kube-proxy balances the new
+// connection across pods. Both default to disabled.
+const (
+	EnvMaxConnRequests = "ARMOR_MAX_CONN_REQUESTS"
+	EnvMaxConnAge      = "ARMOR_MAX_CONN_AGE"
 )
 
 const (
@@ -135,6 +147,46 @@ func adminTimeoutFromEnv(getenv func(string) string, key string) (time.Duration,
 	return d, nil
 }
 
+// connRecycleSettings resolves the S3 listener's keep-alive recycling
+// thresholds. Both default to 0 (disabled) so a deployment opts in by setting
+// one or both: ARMOR_MAX_CONN_REQUESTS takes a non-negative integer request
+// count, ARMOR_MAX_CONN_AGE a non-negative Go duration.
+func connRecycleSettings(getenv func(string) string) (maxRequests int, maxAge time.Duration, err error) {
+	if raw := getenv(EnvMaxConnRequests); raw != "" {
+		n, convErr := strconv.Atoi(raw)
+		if convErr != nil || n < 0 {
+			return 0, 0, fmt.Errorf("%s: invalid request count %q (want a non-negative integer; 0 disables)", EnvMaxConnRequests, raw)
+		}
+		maxRequests = n
+	}
+	if raw := getenv(EnvMaxConnAge); raw != "" {
+		d, convErr := time.ParseDuration(raw)
+		if convErr != nil {
+			return 0, 0, fmt.Errorf("%s: invalid duration %q (want Go duration syntax, e.g. 90s or 5m, or 0 to disable)", EnvMaxConnAge, raw)
+		}
+		if d < 0 {
+			return 0, 0, fmt.Errorf("%s: must be zero or positive, got %s", EnvMaxConnAge, d)
+		}
+		maxAge = d
+	}
+	return maxRequests, maxAge, nil
+}
+
+// s3HandlerWithRecycling wraps handler with keep-alive connection recycling
+// when either threshold is configured, and returns the resolved thresholds so
+// the caller can log them. With both disabled the handler is returned
+// unchanged.
+func s3HandlerWithRecycling(handler http.Handler, getenv func(string) string) (http.Handler, int, time.Duration, error) {
+	maxRequests, maxAge, err := connRecycleSettings(getenv)
+	if err != nil {
+		return nil, 0, 0, err
+	}
+	if maxRequests <= 0 && maxAge <= 0 {
+		return handler, 0, 0, nil
+	}
+	return middleware.NewConnRecycler(maxRequests, maxAge).Wrap(handler), maxRequests, maxAge, nil
+}
+
 func serve(fs *flag.FlagSet) {
 	// No flags and no positional arguments; anything after the subcommand
 	// name was previously swallowed silently by the global parse.
@@ -183,8 +235,23 @@ func serve(fs *flag.FlagSet) {
 		logger.Fatalf("failed to create server: %v", err)
 	}
 
+	// Wrap the S3 handler with keep-alive connection recycling when either
+	// threshold is configured (both default to disabled). Clients whose
+	// connections get recycled re-dial, and the new connections are balanced
+	// across pods afresh.
+	s3Handler, maxConnRequests, maxConnAge, err := s3HandlerWithRecycling(srv.Handler(), os.Getenv)
+	if err != nil {
+		logger.Fatalf("failed to configure S3 connection recycling: %v", err)
+	}
+	if maxConnRequests > 0 || maxConnAge > 0 {
+		logger.WithFields(map[string]interface{}{
+			"max_requests": maxConnRequests,
+			"max_age":      maxConnAge.String(),
+		}).Info("S3 keep-alive recycling enabled")
+	}
+
 	// Create HTTP server
-	httpServer := newS3HTTPServer(cfg.Listen, srv.Handler())
+	httpServer := newS3HTTPServer(cfg.Listen, s3Handler)
 
 	// Create admin HTTP server
 	adminServer, err := newAdminHTTPServer(cfg.AdminListen, srv.AdminHandler(), os.Getenv)
