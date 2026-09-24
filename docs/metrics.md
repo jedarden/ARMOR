@@ -204,6 +204,44 @@ sum(rate(armor_request_duration_ms_count[5m])) by (operation)
     description: "95th percentile latency for {{ $labels.operation }} is {{ $value }}ms"
 ```
 
+### `armor_put_backend_ms`, `armor_put_provenance_lock_wait_ms`, `armor_put_provenance_write_ms`
+
+**Type:** Histogram (three series)  
+**Description:** PUT latency split (armor-69dd394b): `armor_put_backend_ms` is the
+upstream backend object PUT, `armor_put_provenance_lock_wait_ms` is the time the
+request spent waiting for the provenance append mutex, and
+`armor_put_provenance_write_ms` is the provenance chain work done while holding
+it (chain-entry and chain-head B2 writes, or the head read plus in-memory head
+update on the manifest path). Recorded only for PUTs that took the
+provenance-recording path, matching the `backend_put_ms`,
+`provenance_lock_wait_ms` and `provenance_write_ms` fields on the
+`request completed` log line.  
+**Labels:** `operation` — `put` (buffered) or `put-streaming`
+
+**Buckets:** Fixed buckets at `[1, 5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000]` milliseconds, plus `+Inf`
+
+**Example Output:**
+```
+# HELP armor_put_backend_ms PUT latency split in milliseconds
+# TYPE armor_put_backend_ms histogram
+armor_put_backend_ms_bucket{operation="put",le="1000"} 19
+armor_put_backend_ms_bucket{operation="put",le="+Inf"} 20
+armor_put_backend_ms_sum{operation="put"} 16000
+armor_put_backend_ms_count{operation="put"} 20
+```
+
+**Grafana Dashboard Query:**
+```promql
+# Median provenance lock wait per operation — a value that grows with PUT
+# rate indicates queueing on the per-pod appendMu
+histogram_quantile(0.5, sum(rate(armor_put_provenance_lock_wait_ms_bucket[5m])) by (le, operation))
+
+# Share of PUT latency spent waiting for the provenance lock
+sum(rate(armor_put_provenance_lock_wait_ms_sum[5m])) by (operation)
+  /
+sum(rate(armor_put_backend_ms_sum[5m])) by (operation)
+```
+
 ### `armor_bytes_uploaded_total`
 
 **Type:** Counter  

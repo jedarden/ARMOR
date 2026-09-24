@@ -147,6 +147,15 @@ type Metrics struct {
 	requestDurationCount      *expvar.Map // operation -> count of observations
 	requestDurationBucketsMap *expvar.Map // operation_bucket_le -> cumulative count
 
+	// PUT latency split histograms (armor-69dd394b): the upstream backend
+	// object PUT, the wait for the provenance append mutex, and the provenance
+	// chain work done while holding it. Recorded per PUT operation
+	// ("put"/"put-streaming") alongside the request-completed log fields of
+	// the same names.
+	putBackendPut         *latencyHistogram
+	putProvenanceLockWait *latencyHistogram
+	putProvenanceWrite    *latencyHistogram
+
 	// Restore verifier metrics (Phase 6)
 	RestoreVerifierLastCheckTime   *expvar.String
 	RestoreVerifierLastCheckError  *expvar.String
@@ -290,6 +299,13 @@ func NewMetrics() *Metrics {
 	m.requestDurationCount = new(expvar.Map).Init()
 	m.requestDurationBucketsMap = new(expvar.Map).Init()
 
+	// PUT latency split histograms (same buckets, plus a 1ms bucket so
+	// uncontended provenance lock waits — often sub-millisecond — still land
+	// in a finite bucket)
+	m.putBackendPut = newLatencyHistogram(putBackendPutName, []int64{1, 5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000})
+	m.putProvenanceLockWait = newLatencyHistogram(putProvenanceLockWaitName, []int64{1, 5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000})
+	m.putProvenanceWrite = newLatencyHistogram(putProvenanceWriteName, []int64{1, 5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000})
+
 	// Restore verifier metrics
 	m.RestoreVerifierLastCheckTime = new(expvar.String)
 	m.RestoreVerifierLastCheckError = new(expvar.String)
@@ -396,6 +412,99 @@ func (m *Metrics) RecordRequestDuration(operation string, duration time.Duration
 		infBucketVal.Set(1)
 	}
 	m.requestDurationBucketsMap.Set(infBucketKey, &infBucketVal)
+}
+
+// latencyHistogram is a fixed-bucket cumulative histogram over durations,
+// backed by the same expvar maps as the request-duration histogram above but
+// reusable, since the PUT latency split needs three identical series. Durations
+// are observed in whole milliseconds; PrometheusFormat emits each as
+// <name>_sum/_count/_bucket with one operation label.
+type latencyHistogram struct {
+	name       string
+	buckets    []int64
+	sum        *expvar.Map // operation -> sum of millis
+	count      *expvar.Map // operation -> count of observations
+	bucketsMap *expvar.Map // operation_bucket_le -> cumulative count
+}
+
+// newLatencyHistogram builds a named histogram with the given fixed
+// millisecond buckets. The name is the Prometheus series name without the
+// "armor_" prefix.
+func newLatencyHistogram(name string, buckets []int64) *latencyHistogram {
+	return &latencyHistogram{
+		name:       name,
+		buckets:    buckets,
+		sum:        new(expvar.Map).Init(),
+		count:      new(expvar.Map).Init(),
+		bucketsMap: new(expvar.Map).Init(),
+	}
+}
+
+// observe records one duration (under a mutex held by the Metrics receiver's
+// caller, like the rest of the record methods — expvar.Map operations are
+// individually atomic, matching the request-duration histogram's tolerance).
+func (h *latencyHistogram) observe(operation string, duration time.Duration) {
+	millis := duration.Milliseconds()
+
+	sumKey := operation
+	var currentSum expvar.Int
+	if existingSum := h.sum.Get(sumKey); existingSum != nil {
+		currentSum.Set(existingSum.(*expvar.Int).Value() + millis)
+	} else {
+		currentSum.Set(millis)
+	}
+	h.sum.Set(sumKey, &currentSum)
+
+	countKey := operation
+	var currentCount expvar.Int
+	if existingCount := h.count.Get(countKey); existingCount != nil {
+		currentCount.Set(existingCount.(*expvar.Int).Value() + 1)
+	} else {
+		currentCount.Set(1)
+	}
+	h.count.Set(countKey, &currentCount)
+
+	for _, bucketLe := range h.buckets {
+		if millis <= bucketLe {
+			bucketKey := fmt.Sprintf("%s_bucket_le_%d", operation, bucketLe)
+			var bucketVal expvar.Int
+			if existingBucket := h.bucketsMap.Get(bucketKey); existingBucket != nil {
+				bucketVal.Set(existingBucket.(*expvar.Int).Value() + 1)
+			} else {
+				bucketVal.Set(1)
+			}
+			h.bucketsMap.Set(bucketKey, &bucketVal)
+		}
+	}
+
+	infBucketKey := fmt.Sprintf("%s_bucket_le_Inf", operation)
+	var infBucketVal expvar.Int
+	if existingInf := h.bucketsMap.Get(infBucketKey); existingInf != nil {
+		infBucketVal.Set(existingInf.(*expvar.Int).Value() + 1)
+	} else {
+		infBucketVal.Set(1)
+	}
+	h.bucketsMap.Set(infBucketKey, &infBucketVal)
+}
+
+// Names of the PUT latency split histograms. PrometheusFormat emits
+// "armor_" + name for each.
+const (
+	putBackendPutName         = "put_backend_ms"
+	putProvenanceLockWaitName = "put_provenance_lock_wait_ms"
+	putProvenanceWriteName    = "put_provenance_write_ms"
+)
+
+// RecordPutLatency records the PUT latency split (armor-69dd394b): the
+// upstream backend object PUT duration, the time spent waiting for the
+// provenance append mutex, and the provenance chain work done while holding
+// it, all for one PUT operation ("put" or "put-streaming"). Recorded only for
+// PUTs that took the provenance-recording path, matching the
+// backend_put_ms / provenance_lock_wait_ms / provenance_write_ms log fields.
+func (m *Metrics) RecordPutLatency(operation string, backendPut, provenanceLockWait, provenanceWrite time.Duration) {
+	m.putBackendPut.observe(operation, backendPut)
+	m.putProvenanceLockWait.observe(operation, provenanceLockWait)
+	m.putProvenanceWrite.observe(operation, provenanceWrite)
 }
 
 // AddBytesUploaded adds to the uploaded bytes counter.
@@ -761,6 +870,38 @@ func (m *Metrics) PrometheusFormat() string {
 			fmt.Fprintf(&sb, "armor_request_duration_ms_bucket{operation=%q,le=\"+Inf\"} %s\n", operation, infBucket.(*expvar.Int).String())
 		}
 	})
+
+	// PUT latency split histograms (armor-69dd394b): backend object PUT,
+	// provenance append-mutex wait, and provenance chain work under the lock.
+	for _, h := range []*latencyHistogram{m.putBackendPut, m.putProvenanceLockWait, m.putProvenanceWrite} {
+		fmt.Fprintf(&sb, "\n# HELP armor_%s PUT latency split in milliseconds\n", h.name)
+		fmt.Fprintf(&sb, "# TYPE armor_%s histogram\n", h.name)
+
+		h.count.Do(func(kv expvar.KeyValue) {
+			operation := kv.Key
+			countVal := kv.Value.(*expvar.Int).Value()
+
+			var sumVal int64
+			if sum := h.sum.Get(operation); sum != nil {
+				sumVal = sum.(*expvar.Int).Value()
+			}
+
+			fmt.Fprintf(&sb, "armor_%s_sum{operation=%q} %d\n", h.name, operation, sumVal)
+			fmt.Fprintf(&sb, "armor_%s_count{operation=%q} %d\n", h.name, operation, countVal)
+
+			for _, bucketLe := range h.buckets {
+				bucketKey := fmt.Sprintf("%s_bucket_le_%d", operation, bucketLe)
+				if bucket := h.bucketsMap.Get(bucketKey); bucket != nil {
+					fmt.Fprintf(&sb, "armor_%s_bucket{operation=%q,le=%q} %s\n", h.name, operation, fmt.Sprintf("%d", bucketLe), bucket.(*expvar.Int).String())
+				} else {
+					fmt.Fprintf(&sb, "armor_%s_bucket{operation=%q,le=%q} 0\n", h.name, operation, fmt.Sprintf("%d", bucketLe))
+				}
+			}
+			if infBucket := h.bucketsMap.Get(fmt.Sprintf("%s_bucket_le_Inf", operation)); infBucket != nil {
+				fmt.Fprintf(&sb, "armor_%s_bucket{operation=%q,le=\"+Inf\"} %s\n", h.name, operation, infBucket.(*expvar.Int).String())
+			}
+		})
+	}
 
 	// Canary metrics
 	writeMetric("canary_checks_total", "Total number of canary checks", "counter", m.CanaryChecksTotal)

@@ -214,8 +214,18 @@ func (m *Manager) CreateChainEntry(ctx context.Context, objectKey, plaintextSHA2
 		return nil, nil
 	}
 
+	// When the caller attached a Timings to the context, record how long this
+	// call spent waiting for appendMu and how long the locked section took
+	// (armor-69dd394b). The write defer is registered after the unlock defer,
+	// so it observes the locked body before the lock is released.
+	waitStart := time.Now()
 	m.appendMu.Lock()
 	defer m.appendMu.Unlock()
+	if timed := timingsFrom(ctx); timed != nil {
+		timed.LockWait += time.Since(waitStart)
+		writeStart := time.Now()
+		defer func() { timed.Write += time.Since(writeStart) }()
+	}
 
 	// Get or load the current chain head
 	head, err := m.getOrCreateHead(ctx)
@@ -267,8 +277,20 @@ func (m *Manager) RecordUpload(ctx context.Context, objectKey, plaintextSHA256, 
 		return nil
 	}
 
+	// When the caller attached a Timings to the context, record how long this
+	// call spent waiting for appendMu and how long the locked section took
+	// (armor-69dd394b) — on this path the locked body is the chain-entry and
+	// chain-head B2 writes plus a cold head read. The write defer is
+	// registered after the unlock defer, so it observes the locked body
+	// before the lock is released.
+	waitStart := time.Now()
 	m.appendMu.Lock()
 	defer m.appendMu.Unlock()
+	if timed := timingsFrom(ctx); timed != nil {
+		timed.LockWait += time.Since(waitStart)
+		writeStart := time.Now()
+		defer func() { timed.Write += time.Since(writeStart) }()
+	}
 
 	// Get or load the current chain head
 	head, err := m.getOrCreateHead(ctx)

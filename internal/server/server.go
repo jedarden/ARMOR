@@ -1795,6 +1795,17 @@ func (s *Server) logCompletedRequest(r *http.Request, start time.Time, statusCod
 		fields["part_number"] = partNumber
 	}
 
+	// PUT latency split (armor-69dd394b): the upstream backend object PUT,
+	// the wait for the provenance append mutex, and the provenance chain work
+	// done while holding it. The PUT handlers publish this only when the
+	// request took the provenance-recording path, so the fields are absent
+	// from the log line otherwise.
+	if put := middleware.GetPutLatency(r.Context()); put != nil {
+		fields["backend_put_ms"] = put.BackendPutMs
+		fields["provenance_lock_wait_ms"] = put.ProvenanceLockWaitMs
+		fields["provenance_write_ms"] = put.ProvenanceWriteMs
+	}
+
 	// Log at appropriate level: denials at Warn, allows at Info
 	if authzResult == "deny-auth" || authzResult == "deny-acl" {
 		s.logger.WithFields(fields).Warn("request completed")

@@ -574,9 +574,24 @@ func (h *Handlers) PutObject(w http.ResponseWriter, r *http.Request, bucket, key
 
 	// Upload to B2 with prefix applied
 	prefixedKey := h.applyPrefix(key)
+	backendPutStart := time.Now()
 	if err := h.storePutObject(ctx, bucket, prefixedKey, bytes.NewReader(envelope), int64(len(envelope)), meta, createOnly); err != nil {
 		h.writePutObjectError(w, r, err)
 		return
+	}
+	backendPutDuration := time.Since(backendPutStart)
+
+	// PUT latency instrumentation (armor-69dd394b): when the request takes the
+	// provenance-recording path below, collect the provenance lock-wait/write
+	// split and publish it — with the backend PUT duration — to the request
+	// context for the request-completed log (backend_put_ms,
+	// provenance_lock_wait_ms, provenance_write_ms) and the armor_put_*_ms
+	// histograms. Absent otherwise, so the fields mark exactly the PUTs the
+	// provenance path contributed to.
+	recordProvenance := h.provenance != nil && h.provenance.ShouldRecord(key)
+	var provTimings *provenance.Timings
+	if recordProvenance {
+		provTimings = &provenance.Timings{}
 	}
 
 	// Record in manifest for fast metadata lookup (async B2 persistence)
@@ -585,7 +600,7 @@ func (h *Handlers) PutObject(w http.ResponseWriter, r *http.Request, bucket, key
 	var chainEntry *manifest.ChainEntry
 	if h.manifest != nil && h.provenance != nil && h.provenance.ShouldRecord(key) {
 		plaintextSHAHex := hex.EncodeToString(plaintextSHA[:])
-		entryData, err := h.provenance.CreateChainEntry(ctx, key, plaintextSHAHex, "put")
+		entryData, err := h.provenance.CreateChainEntry(provenance.WithTimings(ctx, provTimings), key, plaintextSHAHex, "put")
 		if err == nil && entryData != nil {
 			chainEntry = &manifest.ChainEntry{
 				Sequence:      entryData.Sequence,
@@ -608,7 +623,21 @@ func (h *Handlers) PutObject(w http.ResponseWriter, r *http.Request, bucket, key
 	// Record provenance (fallback when manifest is disabled)
 	if h.manifest == nil && h.provenance != nil && h.provenance.ShouldRecord(key) {
 		plaintextSHAHex := hex.EncodeToString(plaintextSHA[:])
-		_ = h.provenance.RecordUpload(ctx, key, plaintextSHAHex, "put")
+		_ = h.provenance.RecordUpload(provenance.WithTimings(ctx, provTimings), key, plaintextSHAHex, "put")
+	}
+
+	// Publish the PUT latency split to the request context (the in-place
+	// mutation logCompletedRequest reads, same pattern as writeError) and
+	// record the histograms.
+	if recordProvenance {
+		*r = *r.WithContext(middleware.WithPutLatency(r.Context(), &middleware.PutLatency{
+			BackendPutMs:         backendPutDuration.Milliseconds(),
+			ProvenanceLockWaitMs: provTimings.LockWait.Milliseconds(),
+			ProvenanceWriteMs:    provTimings.Write.Milliseconds(),
+		}))
+		if h.metrics != nil {
+			h.metrics.RecordPutLatency("put", backendPutDuration, provTimings.LockWait, provTimings.Write)
+		}
 	}
 
 	// Invalidate list cache entries covering this key's directory
@@ -859,6 +888,7 @@ func (h *Handlers) putObjectStreaming(ctx context.Context, w http.ResponseWriter
 
 	// Upload to B2 with prefix applied using streaming reader
 	prefixedKey := h.applyPrefix(key)
+	backendPutStart := time.Now()
 	if err := h.storePutObject(ctx, bucket, prefixedKey, pr, envelopeSize, meta, createOnly); err != nil {
 		_ = pr.CloseWithError(err)
 		tmpFile.Close()
@@ -872,6 +902,7 @@ func (h *Handlers) putObjectStreaming(ctx context.Context, w http.ResponseWriter
 		h.writePutObjectError(w, r, err)
 		return
 	}
+	backendPutDuration := time.Since(backendPutStart)
 
 	// Close temp file
 	tmpFile.Close()
@@ -882,13 +913,22 @@ func (h *Handlers) putObjectStreaming(ctx context.Context, w http.ResponseWriter
 		return
 	}
 
+	// PUT latency instrumentation (armor-69dd394b): same split as the buffered
+	// path — see the comment there. On this path the backend PUT leg includes
+	// waiting on the concurrent encryption goroutine feeding the pipe reader.
+	recordProvenance := h.provenance != nil && h.provenance.ShouldRecord(key)
+	var provTimings *provenance.Timings
+	if recordProvenance {
+		provTimings = &provenance.Timings{}
+	}
+
 	// Record in manifest for fast metadata lookup (async B2 persistence)
 	// When manifest is enabled, provenance is embedded in delta lines.
 	// When manifest is disabled, provenance uses per-object entries.
 	var chainEntry *manifest.ChainEntry
 	if h.manifest != nil && h.provenance != nil && h.provenance.ShouldRecord(key) {
 		plaintextSHAHex := hex.EncodeToString(plaintextSHA[:])
-		entryData, err := h.provenance.CreateChainEntry(ctx, key, plaintextSHAHex, "put-streaming")
+		entryData, err := h.provenance.CreateChainEntry(provenance.WithTimings(ctx, provTimings), key, plaintextSHAHex, "put-streaming")
 		if err == nil && entryData != nil {
 			chainEntry = &manifest.ChainEntry{
 				Sequence:      entryData.Sequence,
@@ -909,7 +949,21 @@ func (h *Handlers) putObjectStreaming(ctx context.Context, w http.ResponseWriter
 	// Record provenance (fallback when manifest is disabled)
 	if h.manifest == nil && h.provenance != nil && h.provenance.ShouldRecord(key) {
 		plaintextSHAHex := hex.EncodeToString(plaintextSHA[:])
-		_ = h.provenance.RecordUpload(ctx, key, plaintextSHAHex, "put-streaming")
+		_ = h.provenance.RecordUpload(provenance.WithTimings(ctx, provTimings), key, plaintextSHAHex, "put-streaming")
+	}
+
+	// Publish the PUT latency split to the request context (the in-place
+	// mutation logCompletedRequest reads, same pattern as writeError) and
+	// record the histograms.
+	if recordProvenance {
+		*r = *r.WithContext(middleware.WithPutLatency(r.Context(), &middleware.PutLatency{
+			BackendPutMs:         backendPutDuration.Milliseconds(),
+			ProvenanceLockWaitMs: provTimings.LockWait.Milliseconds(),
+			ProvenanceWriteMs:    provTimings.Write.Milliseconds(),
+		}))
+		if h.metrics != nil {
+			h.metrics.RecordPutLatency("put-streaming", backendPutDuration, provTimings.LockWait, provTimings.Write)
+		}
 	}
 
 	// Invalidate list cache entries covering this key's directory
