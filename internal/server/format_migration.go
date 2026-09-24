@@ -825,7 +825,7 @@ func (fm *FormatMigrator) migrateObject(ctx context.Context, obj backend.ObjectI
 	isMultipart := rawMeta[armorMetaMultipart] == "true"
 	if isMultipart {
 		// Multipart objects: load HMAC table from sidecar and decrypt
-		plaintext, err = fm.decryptMultipartObject(armorMeta, obj.Key, reader)
+		plaintext, err = fm.decryptMultipartObject(armorMeta, obj.Key, rawMeta, reader)
 	} else {
 		// Single-PUT objects: envelope header embedded in object
 		plaintext, err = fm.decryptSingleObject(armorMeta, reader)
@@ -989,8 +989,10 @@ func (fm *FormatMigrator) decryptSingleObject(armorMeta *backend.ARMORMetadata, 
 // decryptMultipartObject decrypts a multipart object.
 // Multipart objects have no embedded envelope header; the HMAC table is stored
 // in a sidecar at the location GetSidecarKey computes (ADR-003 sidecar
-// addendum).
-func (fm *FormatMigrator) decryptMultipartObject(armorMeta *backend.ARMORMetadata, key string, reader io.Reader) ([]byte, error) {
+// addendum). rawMeta is the object's raw metadata, read for the declared
+// plaintext digest (armorMeta alone does not carry every spelling writers
+// have used).
+func (fm *FormatMigrator) decryptMultipartObject(armorMeta *backend.ARMORMetadata, key string, rawMeta map[string]string, reader io.Reader) ([]byte, error) {
 	// Unwrap DEK
 	dek, err := crypto.UnwrapDEK(fm.mek, armorMeta.WrappedDEK)
 	if err != nil {
@@ -1020,6 +1022,39 @@ func (fm *FormatMigrator) decryptMultipartObject(armorMeta *backend.ARMORMetadat
 	plaintext, err := decryptor.Decrypt(ciphertext, hmacTable)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrIntegrityVerification, err)
+	}
+
+	// Plaintext integrity: the per-block HMACs cover ciphertext bytes only
+	// and are blind to counter-derivation errors, so a wrong-version decrypt
+	// can verify every HMAC yet yield garbage plaintext — the same gap the
+	// single-PUT path closes with header.VerifyPlaintextSHA. Multipart objects
+	// have no envelope header and declare the digest in metadata instead, in
+	// either spelling a writer has used (x-amz-meta-armor-sha256 — this
+	// migrator's own output — and x-amz-meta-armor-plaintext-sha256, which
+	// ParseARMORMetadata surfaces). Enforce every well-formed declaration:
+	// placeholder values (pre bf-1v2ehf uploads) and strings that are not a
+	// SHA-256 mean "no digest declared" and stay exempt, the same rules the
+	// streaming GET path applies. Dry run, live migration and any re-read all
+	// pass through here, so a multipart object whose integrity metadata
+	// contradicts its content fails closed instead of migrating — and above
+	// the multipart threshold, instead of being overwritten.
+	computedSHA := sha256.Sum256(plaintext)
+	for _, declared := range []struct{ key, value string }{
+		{armorMetaPlaintextSHA, rawMeta[armorMetaPlaintextSHA]},
+		{"x-amz-meta-armor-plaintext-sha256", armorMeta.PlaintextSHA},
+	} {
+		if backend.IsPlaceholderPlaintextSHA(declared.value) {
+			continue // no digest declared for this spelling
+		}
+		declaredSHA, err := hex.DecodeString(declared.value)
+		if err != nil || len(declaredSHA) != sha256.Size {
+			continue // not a well-formed digest; nothing to enforce
+		}
+		if !bytes.Equal(declaredSHA, computedSHA[:]) {
+			return nil, fmt.Errorf("%w: %w: %s declares %s, plaintext computes %s",
+				ErrIntegrityVerification, crypto.ErrPlaintextMismatch,
+				declared.key, declared.value, hex.EncodeToString(computedSHA[:]))
+		}
 	}
 
 	return plaintext, nil

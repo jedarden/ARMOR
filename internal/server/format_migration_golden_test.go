@@ -52,6 +52,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -342,7 +343,7 @@ func decryptGoldenFixture(t *testing.T, f goldenFixture, key string) ([]byte, er
 	seedGoldenObject(t, g, key, f.Data, f.Sidecar, f.ObjectMeta)
 	fm := newGoldenMigrator(g)
 	if f.Sidecar != nil {
-		return fm.decryptMultipartObject(armorMeta, key, bytes.NewReader(f.Data))
+		return fm.decryptMultipartObject(armorMeta, key, f.ObjectMeta, bytes.NewReader(f.Data))
 	}
 	return fm.decryptSingleObject(armorMeta, bytes.NewReader(f.Data))
 }
@@ -604,7 +605,7 @@ func verifyGoldenMigration(t *testing.T, g *goldenMultipartBackend, f goldenFixt
 	var plaintext []byte
 	var err error
 	if obj.Metadata["x-amz-meta-armor-multipart"] == "true" {
-		plaintext, err = fm.decryptMultipartObject(armorMeta, key, bytes.NewReader(obj.Data))
+		plaintext, err = fm.decryptMultipartObject(armorMeta, key, obj.Metadata, bytes.NewReader(obj.Data))
 	} else {
 		plaintext, err = fm.decryptSingleObject(armorMeta, bytes.NewReader(obj.Data))
 	}
@@ -736,7 +737,7 @@ func probeGoldenMigratorMultipartDefect(t *testing.T) (defect bool, detail strin
 	if _, err := fm.decryptSingleObject(armorMeta, bytes.NewReader(obj.Data)); err == nil {
 		return false, "replaced object decrypts as single-PUT"
 	}
-	if _, err := fm.decryptMultipartObject(armorMeta, key, bytes.NewReader(obj.Data)); err == nil {
+	if _, err := fm.decryptMultipartObject(armorMeta, key, obj.Metadata, bytes.NewReader(obj.Data)); err == nil {
 		return false, "replaced object decrypts as multipart"
 	}
 	return true, reason
@@ -756,6 +757,145 @@ func TestGoldenMultipartMigratorDefect(t *testing.T) {
 		t.Fatalf("defect no longer reproduces: %s -- the migrator changed; revisit this pin test and the TestGoldenFixturesMigrate skip", detail)
 	}
 	t.Logf("defect reproduced: object replaced with an unreadable body, failure reason=%q", detail)
+}
+
+// TestGoldenMultipartDeclaredSHAEnforcement pins the multipart read path's
+// declared-plaintext-digest enforcement (the malformed/
+// multipart_contradictory_hashes matrix row, whose fixture category has not
+// landed): a multipart object whose declared digest disagrees with its
+// decryptable content fails with ErrIntegrityVerification even though every
+// per-block HMAC verifies, and the dry run records exactly one failure
+// without rewriting anything -- so neither run can migrate (and above the
+// multipart threshold, overwrite) an object whose integrity metadata lies.
+// The exemptions that keep legacy objects migrating are pinned on the other
+// side: a matching declared digest and an absent one (the pre-bf-1v2ehf
+// placeholder shape) both decrypt and migrate.
+func TestGoldenMultipartDeclaredSHAEnforcement(t *testing.T) {
+	data, sidecar, _, meta := synthesizeGoldenMultipartObject(t, 1<<20)
+
+	trueSHA := meta["x-amz-meta-armor-sha256"]
+	if len(trueSHA) != 64 {
+		t.Fatalf("synthesized declared sha256 = %q, want 64 hex digits", trueSHA)
+	}
+	badSHA := []byte(trueSHA)
+	if badSHA[0] == '0' {
+		badSHA[0] = '1'
+	} else {
+		badSHA[0] = '0'
+	}
+	contradicted := withMeta(meta, "x-amz-meta-armor-sha256", string(badSHA))
+
+	t.Run("decrypt_rejects_contradicted_declaration", func(t *testing.T) {
+		armorMeta, ok := backend.ParseARMORMetadata(contradicted)
+		if !ok {
+			t.Fatal("tampered metadata does not parse as ARMOR")
+		}
+		g := newGoldenMultipartBackend()
+		key := "golden/declared-sha/reject"
+		seedGoldenObject(t, g, key, data, sidecar, contradicted)
+		fm := newGoldenMigrator(g)
+		_, err := fm.decryptMultipartObject(armorMeta, key,
+			contradicted, bytes.NewReader(data))
+		if err == nil {
+			t.Fatal("contradicted declaration decrypted cleanly")
+		}
+		if !errors.Is(err, ErrIntegrityVerification) {
+			t.Fatalf("error is not ErrIntegrityVerification-class: %v", err)
+		}
+	})
+
+	t.Run("matching_and_absent_declarations_still_decrypt", func(t *testing.T) {
+		for name, declaredMeta := range map[string]map[string]string{
+			"matching_digest": meta,
+			// Legacy multipart objects predate whole-object digests entirely.
+			"absent_digest": withMeta(meta, "x-amz-meta-armor-sha256", ""),
+		} {
+			t.Run(name, func(t *testing.T) {
+				armorMeta, ok := backend.ParseARMORMetadata(declaredMeta)
+				if !ok {
+					t.Fatal("metadata does not parse as ARMOR")
+				}
+				g := newGoldenMultipartBackend()
+				key := "golden/declared-sha/" + name
+				seedGoldenObject(t, g, key, data, sidecar, declaredMeta)
+				fm := newGoldenMigrator(g)
+				plaintext, err := fm.decryptMultipartObject(armorMeta, key,
+					declaredMeta, bytes.NewReader(data))
+				if err != nil {
+					t.Fatalf("declared digest %q rejected valid multipart object: %v", declaredMeta["x-amz-meta-armor-sha256"], err)
+				}
+				sum := sha256.Sum256(plaintext)
+				if got := hex.EncodeToString(sum[:]); got != trueSHA {
+					t.Fatalf("plaintext sha256 = %s, want %s", got, trueSHA)
+				}
+			})
+		}
+	})
+
+	// Both runs through the migrator: the contradicted declaration must fail
+	// closed (exactly one recorded failure, stored object byte-identical,
+	// version untouched) while the same bytes under the true digest migrate
+	// cleanly -- proving the rejection comes from the enforcement and not the
+	// object material.
+	for _, dryRun := range []struct {
+		name   string
+		isDry  bool
+		expect func(t *testing.T, result *MigrationResult, untouched bool)
+	}{
+		{"dry_run", true, func(t *testing.T, result *MigrationResult, untouched bool) {
+			if result.FailedObjects != 1 || len(result.Failures) != 1 {
+				t.Fatalf("dry run did not reject: FailedObjects=%d failures=%+v", result.FailedObjects, result.Failures)
+			}
+			if reason := result.Failures[0].Reason; !strings.Contains(reason, "plaintext SHA-256 mismatch") {
+				t.Fatalf("failure reason %q does not name the digest mismatch", reason)
+			}
+			if !untouched {
+				t.Error("dry run rewrote the rejected object")
+			}
+		}},
+		{"live", false, func(t *testing.T, result *MigrationResult, untouched bool) {
+			if result.FailedObjects != 1 || len(result.Failures) != 1 {
+				t.Fatalf("live run did not reject: FailedObjects=%d failures=%+v", result.FailedObjects, result.Failures)
+			}
+			if !untouched {
+				t.Error("live run rewrote the rejected object")
+			}
+		}},
+	} {
+		t.Run("contradicted_"+dryRun.name, func(t *testing.T) {
+			g := newGoldenMultipartBackend()
+			key := "golden/declared-sha/contradicted-" + dryRun.name
+			seedGoldenObject(t, g, key, data, sidecar, contradicted)
+
+			result, err := newGoldenMigrator(g).Migrate(context.Background(), dryRun.isDry, 1)
+			if err != nil {
+				t.Fatalf("Migrate returned error: %v", err)
+			}
+			obj := g.objects[key]
+			if obj == nil {
+				t.Fatal("rejected object was removed")
+			}
+			untouched := bytes.Equal(obj.Data, data) && obj.Metadata["x-amz-meta-armor-version"] != "3"
+			dryRun.expect(t, result, untouched)
+		})
+	}
+
+	t.Run("control_matching_digest_migrates", func(t *testing.T) {
+		g := newGoldenMultipartBackend()
+		key := "golden/declared-sha/control"
+		seedGoldenObject(t, g, key, data, sidecar, meta)
+
+		result, err := newGoldenMigrator(g).Migrate(context.Background(), false, 1)
+		if err != nil {
+			t.Fatalf("Migrate returned error: %v", err)
+		}
+		if result.FailedObjects != 0 {
+			t.Fatalf("matching digest failed migration: %+v", result.Failures)
+		}
+		if got := g.objects[key].Metadata["x-amz-meta-armor-version"]; got != "3" {
+			t.Fatalf("control object not migrated, version = %q", got)
+		}
+	})
 }
 
 // TestGoldenFixtureCorruptions derives corrupted variants from valid fixture
@@ -789,6 +929,18 @@ func TestGoldenFixtureCorruptions(t *testing.T) {
 			b[i] = 'B'
 		} else {
 			b[i] = 'A'
+		}
+		return string(b)
+	}
+	flipFirstHexDigit := func(s string) string {
+		// Stay inside the hex alphabet so the declaration stays a well-formed
+		// digest and the corruption reaches the declared-digest comparison
+		// rather than the not-a-digest exemption.
+		b := []byte(s)
+		if b[0] == '0' {
+			b[0] = '1'
+		} else {
+			b[0] = '0'
 		}
 		return string(b)
 	}
@@ -874,6 +1026,18 @@ func TestGoldenFixtureCorruptions(t *testing.T) {
 			sidecar: mpSidecar,
 			meta: withMeta(mpMeta, "x-amz-meta-armor-wrapped-dek",
 				flipBase64Char(mpMeta["x-amz-meta-armor-wrapped-dek"])),
+		},
+		{
+			// Declared digest contradicts the content (the
+			// malformed/multipart_contradictory_hashes matrix row; its fixture
+			// category has not landed, so this synthesized case arms the
+			// enforcement now). Every per-block HMAC verifies -- only the
+			// declared-digest check can reject it.
+			name:    "multipart/contradicted_declared_sha256",
+			data:    mpData,
+			sidecar: mpSidecar,
+			meta: withMeta(mpMeta, "x-amz-meta-armor-sha256",
+				flipFirstHexDigit(mpMeta["x-amz-meta-armor-sha256"])),
 		},
 	}
 
