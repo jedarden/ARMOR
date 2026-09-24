@@ -43,6 +43,10 @@ const (
 	// internal/crypto/hkdf.go). Duplicated here because internal packages
 	// cannot be imported by this standalone generator.
 	hmacKeyInfo = "armor-hmac-v1"
+
+	// envelopeHeaderSize is the fixed 64-byte envelope header length
+	// (encodeEnvelopeHeader).
+	envelopeHeaderSize = 64
 )
 
 // FixtureMetadata records the plaintext properties and expected V3 layout.
@@ -1176,6 +1180,240 @@ func (fg *FixtureGenerator) GenerateMalformedInconsistentPartMetadata(plaintext 
 	return bundle, nil
 }
 
+// GenerateMalformedInvalidEnvelopeMagic creates a malformed fixture whose
+// envelope magic can never decode: 0xDEADBEEF where ARMR belongs (the
+// malformed/invalid_envelope_magic matrix row). Only the four magic bytes
+// change; the rest of the envelope is the valid V1 base.
+func (fg *FixtureGenerator) GenerateMalformedInvalidEnvelopeMagic(plaintext []byte) (*FixtureBundle, error) {
+	bundle, err := fg.GenerateV1SingleExplicit(plaintext)
+	if err != nil {
+		return nil, err
+	}
+
+	// Overwrite the magic so crypto.DecodeHeader rejects the header before
+	// any other stage can run.
+	bundle.StoredCiphertext[0] = 0xDE
+	bundle.StoredCiphertext[1] = 0xAD
+	bundle.StoredCiphertext[2] = 0xBE
+	bundle.StoredCiphertext[3] = 0xEF
+
+	bundle.Metadata.SourceVersion = "malformed"
+	bundle.Metadata.Description = "Malformed: envelope magic is 0xDEADBEEF, not ARMR"
+	bundle.Metadata.ExpectedMigrationOutcome = "failure"
+	bundle.Metadata.ExpectedFailureReason = "invalid ARMOR magic: header is undecodable"
+
+	return bundle, nil
+}
+
+// GenerateMalformedTruncatedCiphertext creates a malformed fixture whose
+// stored bytes stop short of the header-declared HMAC table (the
+// malformed/truncated_ciphertext matrix row). The envelope is cut to header +
+// 16 ciphertext bytes: a single-block base needs a 32-byte table and finds 16.
+func (fg *FixtureGenerator) GenerateMalformedTruncatedCiphertext(plaintext []byte) (*FixtureBundle, error) {
+	bundle, err := fg.GenerateV1SingleExplicit(plaintext)
+	if err != nil {
+		return nil, err
+	}
+
+	truncatedLen := envelopeHeaderSize + 16
+	if len(bundle.StoredCiphertext) <= truncatedLen {
+		return nil, fmt.Errorf("base envelope is %d bytes, too short to truncate to %d", len(bundle.StoredCiphertext), truncatedLen)
+	}
+
+	// A truncated upload: everything past the first 16 ciphertext bytes,
+	// including the whole embedded HMAC table, is gone.
+	bundle.StoredCiphertext = bundle.StoredCiphertext[:truncatedLen]
+
+	bundle.Metadata.SourceVersion = "malformed"
+	bundle.Metadata.Description = "Malformed: stored bytes are shorter than the header-declared HMAC table"
+	bundle.Metadata.ExpectedMigrationOutcome = "failure"
+	bundle.Metadata.ExpectedFailureReason = "ciphertext too short to contain HMAC table"
+
+	return bundle, nil
+}
+
+// GenerateMalformedCorruptedWrappedDEKTag creates a malformed fixture whose
+// wrapped DEK fails KWP authentication (the malformed/corrupted_wrapped_dek_tag
+// matrix row): the final byte of the 40-byte wrap is flipped, so unwrap fails
+// its integrity check rather than any length check.
+func (fg *FixtureGenerator) GenerateMalformedCorruptedWrappedDEKTag(plaintext []byte) (*FixtureBundle, error) {
+	bundle, err := fg.GenerateV1SingleExplicit(plaintext)
+	if err != nil {
+		return nil, err
+	}
+
+	encoded := bundle.ObjectMetadata["x-amz-meta-armor-wrapped-dek"]
+	wrapped, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil {
+		return nil, fmt.Errorf("base wrapped DEK is not valid base64: %w", err)
+	}
+	if len(wrapped) != 40 {
+		return nil, fmt.Errorf("base wrapped DEK is %d bytes, want 40 (KWP of a 32-byte DEK)", len(wrapped))
+	}
+
+	wrapped[len(wrapped)-1] ^= 0xFF
+	bundle.ObjectMetadata["x-amz-meta-armor-wrapped-dek"] = base64.StdEncoding.EncodeToString(wrapped)
+
+	bundle.Metadata.SourceVersion = "malformed"
+	bundle.Metadata.Description = "Malformed: wrapped-DEK authentication tag is corrupted (bit flip in the final KWP byte)"
+	bundle.Metadata.ExpectedMigrationOutcome = "failure"
+	bundle.Metadata.ExpectedFailureReason = "key unwrap failed: corrupted KWP tag fails DEK unwrap"
+
+	return bundle, nil
+}
+
+// GenerateMalformedInvalidSidecarFormat creates a malformed multipart fixture
+// whose sidecar length is not a multiple of the 32-byte HMAC entry (the
+// malformed/invalid_sidecar_format matrix row): the final byte is dropped,
+// which pure byte math rejects before any crypto runs.
+func (fg *FixtureGenerator) GenerateMalformedInvalidSidecarFormat(plaintext []byte, partSize int) (*FixtureBundle, error) {
+	bundle, err := fg.GenerateV1Multipart(plaintext, partSize)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(bundle.SidecarData) < 32 {
+		return nil, fmt.Errorf("base sidecar is %d bytes, need >= 32 so the defect is a broken format rather than an empty sidecar", len(bundle.SidecarData))
+	}
+
+	// Drop the final byte: the table is no longer a whole number of HMAC entries.
+	bundle.SidecarData = bundle.SidecarData[:len(bundle.SidecarData)-1]
+
+	bundle.Metadata.SourceVersion = "malformed"
+	bundle.Metadata.Description = "Malformed: sidecar length is not a multiple of the 32-byte HMAC"
+	bundle.Metadata.ExpectedMigrationOutcome = "failure"
+	bundle.Metadata.ExpectedFailureReason = "sidecar is neither a whole HMAC table nor any documented format"
+
+	return bundle, nil
+}
+
+// GenerateMalformedTruncatedSidecar creates a malformed multipart fixture
+// whose sidecar is missing its final 32-byte HMAC entry (the
+// malformed/truncated_sidecar matrix row): the length stays a multiple of 32
+// but the table holds one entry fewer than the object has blocks.
+func (fg *FixtureGenerator) GenerateMalformedTruncatedSidecar(plaintext []byte, partSize int) (*FixtureBundle, error) {
+	bundle, err := fg.GenerateV1Multipart(plaintext, partSize)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(bundle.SidecarData) < 64 {
+		return nil, fmt.Errorf("base sidecar is %d bytes, need >= 64 (two HMAC entries) so the truncation leaves a whole-number table", len(bundle.SidecarData))
+	}
+
+	bundle.SidecarData = bundle.SidecarData[:len(bundle.SidecarData)-32]
+
+	bundle.Metadata.SourceVersion = "malformed"
+	bundle.Metadata.Description = "Malformed: final 32-byte HMAC entry is missing from the sidecar"
+	bundle.Metadata.ExpectedMigrationOutcome = "failure"
+	bundle.Metadata.ExpectedFailureReason = "sidecar holds fewer HMAC entries than the object has blocks"
+
+	return bundle, nil
+}
+
+// GenerateMalformedMultipartPartSizeMismatch creates a malformed multipart
+// fixture whose declared part size contradicts the boundaries the bytes were
+// written with (the malformed/multipart_part_size_mismatch matrix row): the
+// base is written with 512 KiB parts while the metadata declares 300 KiB.
+func (fg *FixtureGenerator) GenerateMalformedMultipartPartSizeMismatch(plaintext []byte) (*FixtureBundle, error) {
+	const (
+		actualPartSize   = 512 * 1024 // 524288: the boundaries the bytes follow
+		declaredPartSize = 300 * 1024 // 307200: the size the metadata claims
+	)
+
+	if len(plaintext) <= declaredPartSize {
+		return nil, fmt.Errorf("plaintext is %d bytes, must exceed the declared %d-byte part size for the boundary contradiction to exist", len(plaintext), declaredPartSize)
+	}
+
+	bundle, err := fg.GenerateV1Multipart(plaintext, actualPartSize)
+	if err != nil {
+		return nil, err
+	}
+
+	bundle.ObjectMetadata["x-amz-meta-armor-part-size"] = fmt.Sprintf("%d", declaredPartSize)
+
+	bundle.Metadata.SourceVersion = "malformed"
+	bundle.Metadata.Description = "Malformed: declared part size (307200 B) contradicts the actual 524288 B boundaries"
+	bundle.Metadata.ExpectedMigrationOutcome = "failure"
+	bundle.Metadata.ExpectedFailureReason = "declared part size contradicts derived part boundaries"
+
+	return bundle, nil
+}
+
+// GenerateMalformedMultipartContradictoryHashes creates a malformed multipart
+// fixture whose metadata sha256 disagrees with the documented plaintext digest
+// (the malformed/multipart_contradictory_hashes matrix row): the first hex
+// digit of the true digest is flipped, so integrity cannot be established
+// against either value.
+func (fg *FixtureGenerator) GenerateMalformedMultipartContradictoryHashes(plaintext []byte, partSize int) (*FixtureBundle, error) {
+	bundle, err := fg.GenerateV1Multipart(plaintext, partSize)
+	if err != nil {
+		return nil, err
+	}
+
+	trueSHA := bundle.ObjectMetadata["x-amz-meta-armor-sha256"]
+	if len(trueSHA) != 64 {
+		return nil, fmt.Errorf("base sha256 metadata is %d chars, want 64 hex digits", len(trueSHA))
+	}
+
+	// Flip the first digit to the other hex value: still a well-formed
+	// SHA-256 string, never the true digest.
+	badSHA := []byte(trueSHA)
+	if badSHA[0] == '0' {
+		badSHA[0] = '1'
+	} else {
+		badSHA[0] = '0'
+	}
+	bundle.ObjectMetadata["x-amz-meta-armor-sha256"] = string(badSHA)
+
+	bundle.Metadata.SourceVersion = "malformed"
+	bundle.Metadata.Description = "Malformed: metadata sha256 disagrees with the documented plaintext digest"
+	bundle.Metadata.ExpectedMigrationOutcome = "failure"
+	bundle.Metadata.ExpectedFailureReason = "metadata sha256 disagrees with the documented digest; integrity cannot be established"
+
+	return bundle, nil
+}
+
+// GenerateMalformedV1ObjectV2Metadata creates a malformed fixture that is a
+// genuine V1 object wearing V2 metadata (the malformed/v1_object_v2_metadata
+// matrix row): only the version field lies — the envelope header byte still
+// says 1 and the counter derivation is still V1.
+func (fg *FixtureGenerator) GenerateMalformedV1ObjectV2Metadata(plaintext []byte) (*FixtureBundle, error) {
+	bundle, err := fg.GenerateV1SingleExplicit(plaintext)
+	if err != nil {
+		return nil, err
+	}
+
+	bundle.ObjectMetadata["x-amz-meta-armor-version"] = "2"
+
+	bundle.Metadata.SourceVersion = "malformed"
+	bundle.Metadata.Description = "Malformed: genuine V1 object wearing V2 metadata"
+	bundle.Metadata.ExpectedMigrationOutcome = "failure"
+	bundle.Metadata.ExpectedFailureReason = "V1 envelope wearing V2 metadata; header-vs-metadata version compare"
+
+	return bundle, nil
+}
+
+// GenerateMalformedV2ObjectV1Metadata creates a malformed fixture that is a
+// genuine V2 object wearing V1 metadata (the malformed/v2_object_v1_metadata
+// matrix row): only the version field lies — the envelope header byte still
+// says 2 and the counter derivation is still V2.
+func (fg *FixtureGenerator) GenerateMalformedV2ObjectV1Metadata(plaintext []byte) (*FixtureBundle, error) {
+	bundle, err := fg.GenerateV2Single(plaintext)
+	if err != nil {
+		return nil, err
+	}
+
+	bundle.ObjectMetadata["x-amz-meta-armor-version"] = "1"
+
+	bundle.Metadata.SourceVersion = "malformed"
+	bundle.Metadata.Description = "Malformed: genuine V2 object wearing V1 metadata"
+	bundle.Metadata.ExpectedMigrationOutcome = "failure"
+	bundle.Metadata.ExpectedFailureReason = "V2 envelope wearing V1 metadata; header-vs-metadata version compare"
+
+	return bundle, nil
+}
+
 // GenerateContradictoryVersionLayout creates a contradictory fixture with version/layout mismatch.
 func (fg *FixtureGenerator) GenerateContradictoryVersionLayout(plaintext []byte) (*FixtureBundle, error) {
 	blockSize := 65536
@@ -1660,6 +1898,105 @@ func main() {
 	}
 	fmt.Println("  ✓ malformed/inconsistent_part_metadata")
 
+	invalidMagic, err := gen.GenerateMalformedInvalidEnvelopeMagic(testPlaintext)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to generate invalid magic: %v\n", err)
+		os.Exit(1)
+	}
+	if err := gen.WriteFixture("malformed/invalid_envelope_magic", invalidMagic); err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to write invalid magic: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Println("  ✓ malformed/invalid_envelope_magic")
+
+	truncatedCiphertext, err := gen.GenerateMalformedTruncatedCiphertext(testPlaintext)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to generate truncated ciphertext: %v\n", err)
+		os.Exit(1)
+	}
+	if err := gen.WriteFixture("malformed/truncated_ciphertext", truncatedCiphertext); err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to write truncated ciphertext: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Println("  ✓ malformed/truncated_ciphertext")
+
+	corruptedDEKTag, err := gen.GenerateMalformedCorruptedWrappedDEKTag(testPlaintext)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to generate corrupted DEK tag: %v\n", err)
+		os.Exit(1)
+	}
+	if err := gen.WriteFixture("malformed/corrupted_wrapped_dek_tag", corruptedDEKTag); err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to write corrupted DEK tag: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Println("  ✓ malformed/corrupted_wrapped_dek_tag")
+
+	invalidSidecar, err := gen.GenerateMalformedInvalidSidecarFormat(multipartPlaintext, 5*1024*1024)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to generate invalid sidecar: %v\n", err)
+		os.Exit(1)
+	}
+	if err := gen.WriteFixture("malformed/invalid_sidecar_format", invalidSidecar); err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to write invalid sidecar: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Println("  ✓ malformed/invalid_sidecar_format")
+
+	truncatedSidecar, err := gen.GenerateMalformedTruncatedSidecar(multipartPlaintext, 5*1024*1024)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to generate truncated sidecar: %v\n", err)
+		os.Exit(1)
+	}
+	if err := gen.WriteFixture("malformed/truncated_sidecar", truncatedSidecar); err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to write truncated sidecar: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Println("  ✓ malformed/truncated_sidecar")
+
+	partSizeMismatch, err := gen.GenerateMalformedMultipartPartSizeMismatch(multipartPlaintext)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to generate part size mismatch: %v\n", err)
+		os.Exit(1)
+	}
+	if err := gen.WriteFixture("malformed/multipart_part_size_mismatch", partSizeMismatch); err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to write part size mismatch: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Println("  ✓ malformed/multipart_part_size_mismatch")
+
+	contradictoryHashes, err := gen.GenerateMalformedMultipartContradictoryHashes(multipartPlaintext, 5*1024*1024)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to generate contradictory hashes: %v\n", err)
+		os.Exit(1)
+	}
+	if err := gen.WriteFixture("malformed/multipart_contradictory_hashes", contradictoryHashes); err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to write contradictory hashes: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Println("  ✓ malformed/multipart_contradictory_hashes")
+
+	v1ObjV2Meta, err := gen.GenerateMalformedV1ObjectV2Metadata(testPlaintext)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to generate v1 object with v2 metadata: %v\n", err)
+		os.Exit(1)
+	}
+	if err := gen.WriteFixture("malformed/v1_object_v2_metadata", v1ObjV2Meta); err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to write v1 object with v2 metadata: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Println("  ✓ malformed/v1_object_v2_metadata")
+
+	v2ObjV1Meta, err := gen.GenerateMalformedV2ObjectV1Metadata(testPlaintext)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to generate v2 object with v1 metadata: %v\n", err)
+		os.Exit(1)
+	}
+	if err := gen.WriteFixture("malformed/v2_object_v1_metadata", v2ObjV1Meta); err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to write v2 object with v1 metadata: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Println("  ✓ malformed/v2_object_v1_metadata")
+
 	// Generate contradictory fixtures
 	fmt.Println("Generating contradictory fixtures...")
 
@@ -1722,12 +2059,12 @@ func main() {
 
 	fmt.Printf("\n✓ Comprehensive fixture generation complete!\n")
 	fmt.Printf("Output directory: %s\n", outputDir)
-	fmt.Printf("\nFixtures generated: 20 total\n")
+	fmt.Printf("\nFixtures generated: 27 total\n")
 	fmt.Printf("  V1 single-PUT:    3 variants (explicit, implicit, minimal)\n")
 	fmt.Printf("  V2 single-PUT:    1 variant (standard)\n")
 	fmt.Printf("  V1 multipart:     3 variants (uniform, variable-final, non-uniform)\n")
 	fmt.Printf("  V2 multipart:     3 variants (uniform, variable-final, non-uniform)\n")
-	fmt.Printf("  Malformed:        4 variants (invalid version, envelope mismatch, corrupted HMAC, inconsistent metadata)\n")
+	fmt.Printf("  Malformed:        13 variants (every goldenFixtureMatrix malformed/* row)\n")
 	fmt.Printf("  Contradictory:    1 variant (version/layout mismatch)\n")
 	fmt.Printf("  Edge cases:       3 variants (empty, single byte, exact boundary)\n")
 	fmt.Printf("\nKey independence guarantee:\n")
