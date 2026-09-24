@@ -263,8 +263,11 @@ per-object keys. The CLI is a thin client of the admin API
 - **Safe use:** this mutates objects (re-encryption in place). Always start
   with `-dry-run` and read its classification report; check
   `ARMOR_FORMAT_VERSION` on the server before choosing `-target`. Point
-  `-admin-url` at the admin listener, never the public S3 listener. The full
-  procedure, failure behavior, and per-format outcomes: [V3 Migration
+  `-admin-url` at the admin listener, never the public S3 listener. The
+  operator procedure — safety gates, monitoring, failure triage, and
+  evidence requirements — is the
+  [Format Migration Runbook](runbooks/format-migration.md); the full
+  per-format technical detail: [V3 Migration
   Reference](research/migration/V3_Migration_Reference.md); rotation context:
   [Key Rotation Runbook](key-rotation-runbook.md).
 

@@ -208,9 +208,12 @@ The zero-knowledge claim depends on the object's envelope version:
 
 Migrating legacy objects re-encrypts them to v3 under fresh per-object keys:
 `armor migrate --admin-url http://127.0.0.1:9001 --target v3` (requires
-`ARMOR_ADMIN_TOKEN`; start with `--dry-run`). The full procedure, failure
-behavior and per-format outcomes: [V3 Migration
-Reference](docs/research/migration/V3_Migration_Reference.md). Verify
+`ARMOR_ADMIN_TOKEN`; start with `--dry-run`). The operator procedure —
+safety gates, monitoring, failure recovery, and the per-bucket evidence
+record — is the [Format Migration
+Runbook](docs/runbooks/format-migration.md); per-format outcomes and known
+issues: [V3 Migration Reference](docs/research/migration/V3_Migration_Reference.md).
+Verify
 migrated objects with `armor verify` (offline audit; exits non-zero when any
 object is corrupted) or the continuous restore verifier
 ([deployment guide](docs/restore-verifier-deployment-guide.md),
@@ -225,7 +228,7 @@ object is corrupted) or the continuous restore verifier
 | ARMOR server compromise | MEK exposed: rotate immediately; per-file DEKs limit blast radius |
 | Ciphertext tampering (bit-flip, reorder, truncate) | Per-block HMAC-SHA256 detects modification; the block index is implicit in the offset and the HMAC table length validates the block count |
 | Unauthorized access | ARMOR-side SigV4 authentication plus prefix/verb ACLs (not B2 access control) |
-| V1 keystream reuse | Version 1 envelopes had a CTR counter bug (keystream reuse between adjacent blocks), so the zero-knowledge claim holds only after migration. Migrate with `armor migrate --target v3` ([procedure](docs/research/migration/V3_Migration_Reference.md)), then verify with `armor verify`. See [ADR-005](docs/adr/005-ctr-counter-stride-fix.md) |
+| V1 keystream reuse | Version 1 envelopes had a CTR counter bug (keystream reuse between adjacent blocks), so the zero-knowledge claim holds only after migration. Migrate with `armor migrate --target v3` ([runbook](docs/runbooks/format-migration.md)), then verify with `armor verify`. See [ADR-005](docs/adr/005-ctr-counter-stride-fix.md) |
 
 ## Configuration reference
 
