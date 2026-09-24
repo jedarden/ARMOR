@@ -14,6 +14,23 @@ Entries before 0.1.1958 were written by hand on the Forgejo releases and are
 reproduced here; entries from 0.1.1958 on were reconstructed from git history
 on 2026-09-18 (bead armor-43ec803f).
 
+## 0.1.1975 (2026-09-24)
+
+- fix(metrics): drop unused typeLine struct that fails golangci-lint (armor-b36ec129)
+- feat(provenance): group-commit chain appends to remove per-pod PUT serialization (armor-e44b9c0a)
+- feat(observability): split PUT latency into backend, provenance lock-wait, and provenance write (armor-69dd394b)
+- feat(server): recycle S3 keep-alive connections on request count or age (armor-9a911044)
+- docs(observability): publish canary + restore-verifier observability contract (armor-3316f1b0)
+- docs(runbooks): add the V1/V2-to-V3 format migration runbook (armor-bfac5f85)
+- docs(cli): add operator-facing CLI command reference (armor-16892c14)
+- docs(compat): scope unmodified-client claim to the multipart contract; add tested client config examples (armor-01e923f3)
+- docs(readme): scope encryption claims to envelope v2/v3, gate on v1 migration (armor-6cb447d9)
+- test(migration): assert intended decrypt class before the wrap-defect mask (armor-69bb38c1)
+- fix(migration): enforce declared plaintext SHA-256 on multipart decrypt (armor-85bc5a14)
+- fix(migration): fail closed on contradicting declared part structure (armor-0637df55)
+- fix(migration): reject envelope metadata version mismatch (armor-7203ef90)
+- fix(migration): reject unparsable armor version as migration failure (armor-d36c2a36)
+
 ## 0.1.1974 (2026-09-24)
 
 - feat(provenance): group-commit chain appends to remove per-pod PUT serialization (armor-e44b9c0a)
