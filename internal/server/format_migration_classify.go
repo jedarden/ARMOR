@@ -203,7 +203,7 @@ func classifyContradictions(rawMeta map[string]string, version int) []string {
 	iv := rawMeta[armorMetaIV]
 	multipart := rawMeta[armorMetaMultipart] == "true"
 
-	if multipart && (!(partPresent && partSize > 0) || !(plainPresent && plainSize > 0)) {
+	if multipart && (!partPresent || partSize <= 0 || !plainPresent || plainSize <= 0) {
 		rule("multipart-claims-missing-sizes", armorMetaMultipart, armorMetaPartSize, armorMetaPlaintextSize)
 	}
 	if !multipart && partPresent {
@@ -215,7 +215,7 @@ func classifyContradictions(rawMeta map[string]string, version int) []string {
 	if version >= 2 && dek != "" && !dekHasV2FingerprintPrefix(dek) {
 		rule("v2-dek-lacks-fingerprint-prefix", armorMetaVersion, armorMetaWrappedDEK)
 	}
-	if !(blockPresent && blockSize > 0) {
+	if !blockPresent || blockSize <= 0 {
 		rule("nonpositive-block-size", armorMetaVersion, armorMetaBlockSize)
 	}
 	if plainPresent && plainSize < 0 {

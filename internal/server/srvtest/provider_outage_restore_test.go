@@ -264,7 +264,7 @@ func assertSinglePutRestored(t *testing.T, handler http.Handler, h *Harness, o o
 		t.Errorf("restore GET %s: ETag %q, want the pre-outage ETag %q", o.key, got, o.etag)
 	}
 
-	info, err := h.Secondary.Backend.Head(context.Background(), h.Bucket, h.StoredKey(o.key))
+	info, err := h.Secondary.Head(context.Background(), h.Bucket, h.StoredKey(o.key))
 	if err != nil {
 		t.Fatalf("secondary Head %s: %v", o.key, err)
 	}
@@ -310,7 +310,7 @@ func assertMultipartMirrorLimitation(t *testing.T, handler http.Handler, h *Harn
 	// manifest absent the object carries no ARMOR metadata, so the read falls
 	// to the non-ARMOR passthrough and streams the stored bytes opaquely
 	// (200, not the read error the runbook describes — see file header).
-	body, _, err := h.Secondary.Backend.Get(context.Background(), h.Bucket, h.StoredKey(o.key))
+	body, _, err := h.Secondary.Get(context.Background(), h.Bucket, h.StoredKey(o.key))
 	if err != nil {
 		t.Fatalf("secondary Get %s: %v", o.key, err)
 	}
@@ -394,7 +394,7 @@ func TestProviderOutageRestoreDetectsSecondaryCorruption(t *testing.T) {
 			// the restore path attempts a genuine decrypt that must fail
 			// verification.
 			ctx := context.Background()
-			body, info, err := h.Secondary.Backend.Get(ctx, h.Bucket, stored)
+			body, info, err := h.Secondary.Get(ctx, h.Bucket, stored)
 			if err != nil {
 				t.Fatalf("secondary Get: %v", err)
 			}

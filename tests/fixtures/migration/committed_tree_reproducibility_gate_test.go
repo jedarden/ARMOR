@@ -39,7 +39,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -69,11 +68,7 @@ func runGeneratorMain(t *testing.T) string {
 	}
 	goBin, err := exec.LookPath("go")
 	if err != nil {
-		// Fall back to the toolchain the test binary itself was built with.
-		goBin = filepath.Join(runtime.GOROOT(), "go")
-		if _, statErr := os.Stat(goBin); statErr != nil {
-			t.Fatalf("no go toolchain found to run the generator: %v", err)
-		}
+		t.Fatalf("no go toolchain found to run the generator: %v", err)
 	}
 	outDir := t.TempDir()
 	cmd := exec.Command(goBin, "run", generatorSource, outDir)
