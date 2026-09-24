@@ -9,7 +9,7 @@ ARMOR is an S3-compatible proxy server that encrypts data before storing it in
 through Cloudflare for zero-egress cost. Any S3-compatible client (boto3, AWS
 CLI, DuckDB, rclone, litestream, barman) works without modification.
 
-- **Zero-knowledge encryption** — data is encrypted before it leaves ARMOR; B2 only ever stores ciphertext
+- **Zero-knowledge encryption** — data is encrypted before it leaves ARMOR; B2 only ever stores ciphertext (guaranteed for envelope v2/v3 objects; legacy v1 objects must be migrated first — see [Security model](#security-model))
 - **Zero egress fees** — downloads route through Cloudflare via the Bandwidth Alliance
 - **Seekable encryption** — AES-256-CTR with 64 KB blocks enables byte-range reads without decrypting the whole file
 - **DuckDB-compatible** — query encrypted Parquet files with column pruning and predicate pushdown intact
@@ -179,23 +179,44 @@ ciphertext in B2. File data is AES-256-CTR in 64 KB blocks, each block
 authenticated by an HMAC-SHA256 recorded in the envelope — that is what makes
 reads seekable and tamper-evident.
 
-Key rotation re-wraps DEKs without re-uploading file data — metadata only. The
-on-disk envelope is [format version 3](docs/format/envelope-v3.md) (the
-default write format); version 2 is still readable and can be written with
-`ARMOR_FORMAT_VERSION=2`. Version 1 objects are readable but are migrated to
-v3 by `armor migrate` because of the CTR counter defect described in
-[ADR-005](docs/adr/005-ctr-counter-stride-fix.md).
+Key rotation re-wraps DEKs without re-uploading file data — metadata only.
+
+The zero-knowledge claim depends on the object's envelope version:
+
+- **v1 (legacy; no current release writes it)** — a CTR counter defect
+  ([ADR-005](docs/adr/005-ctr-counter-stride-fix.md)) reused keystream
+  between adjacent 64 KB blocks, so ciphertext alone reveals the XOR of the
+  plaintexts of any two adjacent blocks. v1 objects remain readable, but the
+  zero-knowledge claim does **not** apply to them until they are migrated.
+- **v2 (the 2024-08 fix)** — the counter advances by the full AES-block count
+  of each 64 KB block, so keystreams never overlap and the zero-knowledge
+  claim holds. Still readable, and selectable for new writes with
+  `ARMOR_FORMAT_VERSION=2`.
+- **v3 (the default write format)** —
+  [spec](docs/format/envelope-v3.md); keeps v2's non-overlapping counters,
+  gives each multipart part its own counter namespace, and adds
+  self-describing parts and optional per-block zstd compression.
+
+Migrating legacy objects re-encrypts them to v3 under fresh per-object keys:
+`armor migrate --admin-url http://127.0.0.1:9001 --target v3` (requires
+`ARMOR_ADMIN_TOKEN`; start with `--dry-run`). The full procedure, failure
+behavior and per-format outcomes: [V3 Migration
+Reference](docs/research/migration/V3_Migration_Reference.md). Verify
+migrated objects with `armor verify` (offline audit; exits non-zero when any
+object is corrupted) or the continuous restore verifier
+([deployment guide](docs/restore-verifier-deployment-guide.md),
+[ADR-004](docs/adr/004-continuous-restore-verification.md)).
 
 ## Security model
 
 | Threat | Mitigation |
 |--------|-----------|
-| B2 data breach | All stored data is AES-256-CTR encrypted with per-file DEKs; useless without the MEK |
+| B2 data breach | v2/v3 objects are AES-256-CTR encrypted with per-file DEKs — useless without the MEK. Legacy v1 objects are the exception: their keystream reuse ([ADR-005](docs/adr/005-ctr-counter-stride-fix.md)) lets ciphertext alone reveal plaintext XOR between adjacent blocks; migrate them (see [Encryption design](#encryption-design)) |
 | CDN or on-path inspection | Cached and transmitted content is ciphertext — the CDN sees only opaque blobs; TLS on the ARMOR listener |
 | ARMOR server compromise | MEK exposed: rotate immediately; per-file DEKs limit blast radius |
 | Ciphertext tampering (bit-flip, reorder, truncate) | Per-block HMAC-SHA256 detects modification; the block index is implicit in the offset and the HMAC table length validates the block count |
 | Unauthorized access | ARMOR-side SigV4 authentication plus prefix/verb ACLs (not B2 access control) |
-| V1 keystream reuse | Version 1 envelopes had a CTR counter bug (keystream reuse between adjacent blocks). Migrate with `armor migrate`. See [ADR-005](docs/adr/005-ctr-counter-stride-fix.md) |
+| V1 keystream reuse | Version 1 envelopes had a CTR counter bug (keystream reuse between adjacent blocks), so the zero-knowledge claim holds only after migration. Migrate with `armor migrate --target v3` ([procedure](docs/research/migration/V3_Migration_Reference.md)), then verify with `armor verify`. See [ADR-005](docs/adr/005-ctr-counter-stride-fix.md) |
 
 ## Configuration reference
 
