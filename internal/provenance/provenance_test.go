@@ -16,7 +16,10 @@ import (
 )
 
 // mockBackend implements backend.Backend for testing provenance.
+// Group commit (armor-e44b9c0a) writes a batch's chain entries concurrently,
+// so the object maps are guarded by a mutex.
 type mockBackend struct {
+	mu       sync.Mutex
 	objects  map[string][]byte
 	metadata map[string]map[string]string
 }
@@ -33,6 +36,8 @@ func (m *mockBackend) Put(ctx context.Context, bucket, key string, body io.Reade
 	if err != nil {
 		return err
 	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.objects[bucket+"/"+key] = data
 	if meta != nil {
 		m.metadata[bucket+"/"+key] = meta
@@ -41,6 +46,8 @@ func (m *mockBackend) Put(ctx context.Context, bucket, key string, body io.Reade
 }
 
 func (m *mockBackend) Get(ctx context.Context, bucket, key string) (io.ReadCloser, *backend.ObjectInfo, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	data, ok := m.objects[bucket+"/"+key]
 	if !ok {
 		return nil, nil, fmt.Errorf("not found")
@@ -68,6 +75,8 @@ func (m *mockBackend) GetRange(ctx context.Context, bucket, key string, offset, 
 }
 
 func (m *mockBackend) GetRangeWithHeaders(ctx context.Context, bucket, key string, offset, length int64) (io.ReadCloser, map[string]string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	data, ok := m.objects[bucket+"/"+key]
 	if !ok {
 		return nil, nil, fmt.Errorf("not found")
@@ -81,6 +90,8 @@ func (m *mockBackend) GetRangeWithHeaders(ctx context.Context, bucket, key strin
 }
 
 func (m *mockBackend) Head(ctx context.Context, bucket, key string) (*backend.ObjectInfo, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	data, ok := m.objects[bucket+"/"+key]
 	if !ok {
 		return nil, fmt.Errorf("not found")
@@ -99,12 +110,16 @@ func (m *mockBackend) Head(ctx context.Context, bucket, key string) (*backend.Ob
 }
 
 func (m *mockBackend) Delete(ctx context.Context, bucket, key string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	delete(m.objects, bucket+"/"+key)
 	delete(m.metadata, bucket+"/"+key)
 	return nil
 }
 
 func (m *mockBackend) DeleteObjects(ctx context.Context, bucket string, keys []string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	for _, key := range keys {
 		delete(m.objects, bucket+"/"+key)
 		delete(m.metadata, bucket+"/"+key)
@@ -113,6 +128,8 @@ func (m *mockBackend) DeleteObjects(ctx context.Context, bucket string, keys []s
 }
 
 func (m *mockBackend) List(ctx context.Context, bucket, prefix, delimiter, continuationToken string, maxKeys int) (*backend.ListResult, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	var objects []backend.ObjectInfo
 	for k, v := range m.objects {
 		// Filter to only objects in this bucket
@@ -143,6 +160,8 @@ func (m *mockBackend) ListRaw(ctx context.Context, bucket, prefix, delimiter, co
 }
 
 func (m *mockBackend) Copy(ctx context.Context, srcBucket, srcKey, dstBucket, dstKey string, meta map[string]string, replaceMetadata bool) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	src := srcBucket + "/" + srcKey
 	dst := dstBucket + "/" + dstKey
 	data, ok := m.objects[src]

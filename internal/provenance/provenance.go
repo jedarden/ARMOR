@@ -11,6 +11,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"sort"
@@ -34,6 +35,16 @@ const (
 
 	// InitialChainHash is the zero value for the first chain entry
 	InitialChainHash = "0000000000000000000000000000000000000000000000000000000000000000"
+
+	// appendQueueDepth bounds how many appends may sit queued for the appender
+	// goroutine. Enqueue blocks once full, applying the same backpressure a
+	// contended appendMu applied before group commit.
+	appendQueueDepth = 1024
+
+	// maxParallelEntryWrites bounds the concurrent B2 writes used to persist
+	// one batch's chain entries. The batch's head write happens only after
+	// every entry write in it has succeeded, regardless of this bound.
+	maxParallelEntryWrites = 8
 )
 
 // Entry represents a single entry in the provenance chain.
@@ -160,10 +171,23 @@ type Manager struct {
 	bucket   string
 	writerID string
 
-	// appendMu serializes the read-head/write-entry/write-head transaction.
-	// A writer serves concurrent HTTP requests, so protecting only the cached
-	// head would allow two uploads to claim the same sequence number.
+	// appendMu serializes chain mutation: sequence allocation, the batch's
+	// entry writes, and the head write. The appender goroutine holds it for
+	// one group commit at a time and CreateChainEntry (manifest mode) holds
+	// it per call, so the two paths can never claim the same sequence number
+	// or fork the chain. A writer serves concurrent HTTP requests, so
+	// protecting only the cached head would allow two uploads to claim the
+	// same sequence number.
 	appendMu sync.Mutex
+
+	// appendQueue carries pending appends from RecordUpload/RecordKeyEvent to
+	// the appender goroutine. Created in NewManager; the goroutine itself is
+	// started lazily on the first append, so managers that only audit or
+	// compact never pay for it.
+	appendQueue chan *pendingAppend
+
+	// appendStarted guards the one-time start of the appender goroutine.
+	appendStarted sync.Once
 
 	// In-memory cache of the current chain head
 	mu   sync.RWMutex
@@ -176,9 +200,10 @@ type Manager struct {
 // NewManager creates a new provenance manager.
 func NewManager(be backend.Backend, bucket, writerID string) *Manager {
 	return &Manager{
-		backend:  be,
-		bucket:   bucket,
-		writerID: writerID,
+		backend:      be,
+		bucket:       bucket,
+		writerID:     writerID,
+		appendQueue:  make(chan *pendingAppend, appendQueueDepth),
 		skipPrefixes: []string{
 			".armor/", // Internal ARMOR objects
 		},
@@ -271,76 +296,32 @@ func (m *Manager) CreateChainEntry(ctx context.Context, objectKey, plaintextSHA2
 // This should be called after a successful upload.
 // This method is used when the manifest is disabled; when manifest is enabled,
 // use CreateChainEntry instead and embed the result in the delta line.
+//
+// The record is written by group commit (armor-e44b9c0a): the call queues a
+// pending append and returns only after a batch containing it has written its
+// entry object and one chain head covering the whole batch durably to B2.
+// Failure of any write in a batch fails every waiter in that batch, and a
+// failed batch leaves the chain head — and the sequence allocator — at the
+// pre-batch position, so the next batch reuses those sequence numbers.
 func (m *Manager) RecordUpload(ctx context.Context, objectKey, plaintextSHA256, operation string) error {
 	// Skip internal objects
 	if !m.ShouldRecord(objectKey) {
 		return nil
 	}
 
-	// When the caller attached a Timings to the context, record how long this
-	// call spent waiting for appendMu and how long the locked section took
-	// (armor-69dd394b) — on this path the locked body is the chain-entry and
-	// chain-head B2 writes plus a cold head read. The write defer is
-	// registered after the unlock defer, so it observes the locked body
-	// before the lock is released.
-	waitStart := time.Now()
-	m.appendMu.Lock()
-	defer m.appendMu.Unlock()
-	if timed := timingsFrom(ctx); timed != nil {
-		timed.LockWait += time.Since(waitStart)
-		writeStart := time.Now()
-		defer func() { timed.Write += time.Since(writeStart) }()
-	}
-
-	// Get or load the current chain head
-	head, err := m.getOrCreateHead(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to get chain head: %w", err)
-	}
-
-	// Create the new entry
-	now := time.Now().UTC()
-	entry := &Entry{
-		Sequence:        head.Sequence + 1,
-		ObjectKey:       objectKey,
-		PlaintextSHA256: plaintextSHA256,
-		PrevChainHash:   head.ChainHash,
-		Timestamp:       now,
-		WriterID:        m.writerID,
-		Operation:       operation,
-	}
-
-	// Compute the chain hash
-	entry.ChainHash = computeChainHash(entry, head.ChainHash)
-
-	// Save the entry
-	if err := m.saveEntry(ctx, entry); err != nil {
-		return fmt.Errorf("failed to save chain entry: %w", err)
-	}
-
-	// Update and save the chain head
-	newHead := &ChainHead{
-		WriterID:  m.writerID,
-		Sequence:  entry.Sequence,
-		ChainHash: entry.ChainHash,
-		Updated:   now,
-	}
-
-	if err := m.saveHead(ctx, newHead); err != nil {
-		return fmt.Errorf("failed to save chain head: %w", err)
-	}
-
-	// Update in-memory cache
-	m.mu.Lock()
-	m.head = newHead
-	m.mu.Unlock()
-
-	return nil
+	return m.enqueue(ctx, &pendingAppend{
+		kind:            appendUpload,
+		objectKey:       objectKey,
+		plaintextSHA256: plaintextSHA256,
+		operation:       operation,
+	})
 }
 
 // RecordKeyEvent records a key management event in the provenance chain.
 // Supported event types: "key-rotate-start", "key-rotate-complete", "key-export".
 // This should be called after a successful key operation.
+// Key events join the same group-commit pipeline as uploads, since they share
+// the writer's single chain and sequence space.
 func (m *Manager) RecordKeyEvent(ctx context.Context, eventType string, opts KeyEventOpts) error {
 	// Validate event type
 	switch eventType {
@@ -350,64 +331,11 @@ func (m *Manager) RecordKeyEvent(ctx context.Context, eventType string, opts Key
 		return fmt.Errorf("invalid event type: %s", eventType)
 	}
 
-	m.appendMu.Lock()
-	defer m.appendMu.Unlock()
-
-	// Get or load the current chain head
-	head, err := m.getOrCreateHead(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to get chain head: %w", err)
-	}
-
-	// Create the new key event
-	now := time.Now().UTC()
-	event := &KeyEvent{
-		Sequence:      head.Sequence + 1,
-		EventType:     eventType,
-		PrevChainHash: head.ChainHash,
-		Timestamp:     now,
-		WriterID:      m.writerID,
-	}
-
-	// Set optional fields based on event type
-	switch eventType {
-	case "key-rotate-start", "key-rotate-complete":
-		event.OldMEKHash = opts.OldMEKHash
-		event.NewMEKHash = opts.NewMEKHash
-		event.RotationID = opts.RotationID
-		if eventType == "key-rotate-complete" && opts.RotationResult != nil {
-			event.RotationResult = opts.RotationResult
-		}
-	case "key-export":
-		event.ExportedMEKHash = opts.ExportedMEKHash
-	}
-
-	// Compute the chain hash
-	event.ChainHash = computeKeyEventHash(event, head.ChainHash)
-
-	// Save the event
-	if err := m.saveKeyEvent(ctx, event); err != nil {
-		return fmt.Errorf("failed to save key event: %w", err)
-	}
-
-	// Update and save the chain head
-	newHead := &ChainHead{
-		WriterID:  m.writerID,
-		Sequence:  event.Sequence,
-		ChainHash: event.ChainHash,
-		Updated:   now,
-	}
-
-	if err := m.saveHead(ctx, newHead); err != nil {
-		return fmt.Errorf("failed to save chain head: %w", err)
-	}
-
-	// Update in-memory cache
-	m.mu.Lock()
-	m.head = newHead
-	m.mu.Unlock()
-
-	return nil
+	return m.enqueue(ctx, &pendingAppend{
+		kind:         appendKeyEvent,
+		keyEventType: eventType,
+		keyEventOpts: opts,
+	})
 }
 
 // KeyEventOpts holds optional parameters for key events.
@@ -502,42 +430,277 @@ func computeKeyEventHash(event *KeyEvent, prevChainHash string) string {
 	return fmt.Sprintf("%064x", h.Sum(nil))
 }
 
-// saveEntry saves a chain entry to B2.
-func (m *Manager) saveEntry(ctx context.Context, entry *Entry) error {
-	key := fmt.Sprintf("%s%s/%d.json", ChainPrefix, m.writerID, entry.Sequence)
+// appendKind distinguishes the two record types that share one writer chain.
+type appendKind int
 
-	data, err := json.MarshalIndent(entry, "", "  ")
+const (
+	appendUpload appendKind = iota
+	appendKeyEvent
+)
+
+// pendingAppend is one queued chain append awaiting a group commit.
+type pendingAppend struct {
+	kind appendKind
+
+	// Upload payload (kind == appendUpload).
+	objectKey       string
+	plaintextSHA256 string
+	operation       string
+
+	// Key-event payload (kind == appendKeyEvent).
+	keyEventType string
+	keyEventOpts KeyEventOpts
+
+	// writeCtx is the caller's context with cancellation detached: a client
+	// that disconnects mid-batch must not fail its batch-mates, and an object
+	// that was successfully uploaded must still land in the chain even if its
+	// requester is gone — the handlers ignore RecordUpload errors, so a
+	// dropped entry would surface as an untracked object at the next audit.
+	writeCtx context.Context
+
+	// done receives exactly one result, buffered so the appender never blocks
+	// on a waiter.
+	done chan error
+
+	// enqueuedAt feeds the Timings.LockWait split (armor-69dd394b).
+	enqueuedAt time.Time
+
+	// timed is the caller's Timings, or nil when uninstrumented.
+	timed *Timings
+}
+
+// complete delivers the batch result to the waiter exactly once.
+func (p *pendingAppend) complete(err error) {
+	select {
+	case p.done <- err:
+	default:
+	}
+}
+
+// enqueue hands one pending append to the appender goroutine and blocks until
+// the group commit carrying it finishes.
+func (m *Manager) enqueue(ctx context.Context, item *pendingAppend) error {
+	item.writeCtx = context.WithoutCancel(ctx)
+	item.timed = timingsFrom(ctx)
+	item.done = make(chan error, 1)
+	item.enqueuedAt = time.Now()
+
+	m.appendStarted.Do(func() {
+		go m.appendLoop()
+	})
+
+	m.appendQueue <- item
+	return <-item.done
+}
+
+// appendLoop is the single writer of a manager's chain. Each iteration takes
+// every append queued at that moment as one batch and commits it. Waiters are
+// released only after the head write covering their entry succeeds; on
+// failure every waiter in the batch receives the error.
+func (m *Manager) appendLoop() {
+	for first := range m.appendQueue {
+		batch := make([]*pendingAppend, 0, 4)
+		batch = append(batch, first)
+		batch = append(batch, m.drainQueue()...)
+		m.commitBatch(batch)
+	}
+}
+
+// drainQueue returns everything currently queued, in arrival order.
+func (m *Manager) drainQueue() []*pendingAppend {
+	var rest []*pendingAppend
+	for {
+		select {
+		case item := <-m.appendQueue:
+			rest = append(rest, item)
+		default:
+			return rest
+		}
+	}
+}
+
+// commitBatch runs one group commit and releases the batch's waiters. The
+// append mutex is held for the whole cycle — allocation through head write —
+// so CreateChainEntry (manifest mode) can never interleave a sequence
+// allocation between this batch's allocation and its durability. The hold is
+// amortized across the batch: one cycle costs roughly one entry-write round
+// trip regardless of batch size, where the pre-group-commit path held the
+// mutex for two synchronous writes per request.
+func (m *Manager) commitBatch(batch []*pendingAppend) {
+	// A panicking backend must not kill the appender goroutine: that would
+	// strand every future append in the queue forever. Fail the batch instead.
+	defer func() {
+		if r := recover(); r != nil {
+			err := fmt.Errorf("provenance chain append panic: %v", r)
+			for _, item := range batch {
+				item.complete(err)
+			}
+		}
+	}()
+
+	m.appendMu.Lock()
+	defer m.appendMu.Unlock()
+	cycleStart := time.Now()
+
+	err := m.appendBatch(batch)
+
+	// LockWait covers both the channel wait for the appender to pick the
+	// append up and any mutex wait behind the previous cycle; Write is the
+	// locked cycle that carried the entry. The caller reads these after done
+	// is delivered, so the channel hand-off orders the writes.
+	writeDur := time.Since(cycleStart)
+	for _, item := range batch {
+		if item.timed != nil {
+			item.timed.LockWait += cycleStart.Sub(item.enqueuedAt)
+			item.timed.Write += writeDur
+		}
+		item.complete(err)
+	}
+}
+
+// chainObjectWrite is one encoded chain entry (upload or key event) awaiting
+// its B2 put in a batch's parallel write phase.
+type chainObjectWrite struct {
+	key  string
+	data []byte
+}
+
+// appendBatch assigns consecutive sequence numbers and chain hashes to every
+// pending append in arrival order, writes the batch's entry objects to B2 in
+// parallel, then writes one head covering the whole batch. The mutex must be
+// held. On any error the in-memory head is left untouched, so the next batch
+// reuses the failed batch's sequence numbers and overwrites any orphaned
+// entries — the same recovery the per-request path had.
+func (m *Manager) appendBatch(batch []*pendingAppend) error {
+	// Get or load the current chain head
+	head, err := m.getOrCreateHead(batch[0].writeCtx)
 	if err != nil {
-		return fmt.Errorf("failed to marshal entry: %w", err)
+		return fmt.Errorf("failed to get chain head: %w", err)
 	}
 
-	if err := m.backend.Put(ctx, m.bucket, key, bytes.NewReader(data), int64(len(data)), map[string]string{
-		"Content-Type": "application/json",
-	}); err != nil {
-		return fmt.Errorf("failed to put entry: %w", err)
+	cur := *head
+	writes := make([]chainObjectWrite, 0, len(batch))
+
+	// Encode every entry before any B2 write: a marshalling failure must fail
+	// the batch before anything is persisted.
+	for _, item := range batch {
+		now := time.Now().UTC()
+		switch item.kind {
+		case appendUpload:
+			entry := &Entry{
+				Sequence:        cur.Sequence + 1,
+				ObjectKey:       item.objectKey,
+				PlaintextSHA256: item.plaintextSHA256,
+				PrevChainHash:   cur.ChainHash,
+				Timestamp:       now,
+				WriterID:        m.writerID,
+				Operation:       item.operation,
+			}
+			entry.ChainHash = computeChainHash(entry, cur.ChainHash)
+			data, marshalErr := json.MarshalIndent(entry, "", "  ")
+			if marshalErr != nil {
+				return fmt.Errorf("failed to marshal entry: %w", marshalErr)
+			}
+			writes = append(writes, chainObjectWrite{
+				key:  fmt.Sprintf("%s%s/%d.json", ChainPrefix, m.writerID, entry.Sequence),
+				data: data,
+			})
+			cur = ChainHead{Sequence: entry.Sequence, ChainHash: entry.ChainHash, Updated: now}
+
+		case appendKeyEvent:
+			// Key events are stored in the same chain namespace as upload
+			// events, ensuring they're part of the same tamper-evident audit
+			// trail.
+			event := &KeyEvent{
+				Sequence:      cur.Sequence + 1,
+				EventType:     item.keyEventType,
+				PrevChainHash: cur.ChainHash,
+				Timestamp:     now,
+				WriterID:      m.writerID,
+			}
+			// Set optional fields based on event type
+			switch item.keyEventType {
+			case "key-rotate-start", "key-rotate-complete":
+				event.OldMEKHash = item.keyEventOpts.OldMEKHash
+				event.NewMEKHash = item.keyEventOpts.NewMEKHash
+				event.RotationID = item.keyEventOpts.RotationID
+				if item.keyEventType == "key-rotate-complete" && item.keyEventOpts.RotationResult != nil {
+					event.RotationResult = item.keyEventOpts.RotationResult
+				}
+			case "key-export":
+				event.ExportedMEKHash = item.keyEventOpts.ExportedMEKHash
+			}
+			event.ChainHash = computeKeyEventHash(event, cur.ChainHash)
+			data, marshalErr := json.MarshalIndent(event, "", "  ")
+			if marshalErr != nil {
+				return fmt.Errorf("failed to marshal key event: %w", marshalErr)
+			}
+			writes = append(writes, chainObjectWrite{
+				key:  fmt.Sprintf("%s%s/%d.json", ChainPrefix, m.writerID, event.Sequence),
+				data: data,
+			})
+			cur = ChainHead{Sequence: event.Sequence, ChainHash: event.ChainHash, Updated: now}
+		}
 	}
+
+	// Write all entry objects in parallel with bounded concurrency. Every
+	// write is attempted even when some fail, and the batch head is written
+	// only when all of them succeeded.
+	if err := m.writeChainObjects(batch, writes); err != nil {
+		return fmt.Errorf("failed to save chain entry: %w", err)
+	}
+
+	// Write the head once for the whole batch
+	newHead := &ChainHead{
+		WriterID:  m.writerID,
+		Sequence:  cur.Sequence,
+		ChainHash: cur.ChainHash,
+		Updated:   cur.Updated,
+	}
+
+	if err := m.saveHead(batch[0].writeCtx, newHead); err != nil {
+		return fmt.Errorf("failed to save chain head: %w", err)
+	}
+
+	// Update in-memory cache only after the head covering the batch is
+	// durable, keeping the sequence allocator at the durable tip.
+	m.mu.Lock()
+	m.head = newHead
+	m.mu.Unlock()
 
 	return nil
 }
 
-// saveKeyEvent saves a key event to B2.
-// Key events are stored in the same chain namespace as upload events,
-// ensuring they're part of the same tamper-evident audit trail.
-func (m *Manager) saveKeyEvent(ctx context.Context, event *KeyEvent) error {
-	key := fmt.Sprintf("%s%s/%d.json", ChainPrefix, m.writerID, event.Sequence)
+// writeChainObjects puts every entry object of one batch, at most
+// maxParallelEntryWrites concurrently. All writes are attempted; the joined
+// error fails the whole batch.
+func (m *Manager) writeChainObjects(batch []*pendingAppend, writes []chainObjectWrite) error {
+	var (
+		wg     sync.WaitGroup
+		errMu  sync.Mutex
+		errs   []error
+		tokens = make(chan struct{}, maxParallelEntryWrites)
+	)
 
-	data, err := json.MarshalIndent(event, "", "  ")
-	if err != nil {
-		return fmt.Errorf("failed to marshal key event: %w", err)
+	for i := range writes {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			tokens <- struct{}{}
+			defer func() { <-tokens }()
+
+			if err := m.backend.Put(batch[i].writeCtx, m.bucket, writes[i].key, bytes.NewReader(writes[i].data), int64(len(writes[i].data)), map[string]string{
+				"Content-Type": "application/json",
+			}); err != nil {
+				errMu.Lock()
+				errs = append(errs, fmt.Errorf("failed to put entry %s: %w", writes[i].key, err))
+				errMu.Unlock()
+			}
+		}(i)
 	}
+	wg.Wait()
 
-	if err := m.backend.Put(ctx, m.bucket, key, bytes.NewReader(data), int64(len(data)), map[string]string{
-		"Content-Type": "application/json",
-	}); err != nil {
-		return fmt.Errorf("failed to put key event: %w", err)
-	}
-
-	return nil
+	return errors.Join(errs...)
 }
 
 // saveHead saves the chain head to B2.
