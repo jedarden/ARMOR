@@ -7,7 +7,14 @@
 ARMOR is an S3-compatible proxy server that encrypts data before storing it in
 [Backblaze B2](https://www.backblaze.com/cloud-storage) and serves downloads
 through Cloudflare for zero-egress cost. Any S3-compatible client (boto3, AWS
-CLI, DuckDB, rclone, litestream, barman) works without modification.
+CLI, DuckDB, rclone, litestream, barman) works without modification: reads,
+range reads and single-PUT writes are plain S3, and multipart writers run with
+their default concurrency on the default write format (v3), whose only
+multipart rule is B2's own ≥ 5 MiB non-final-part minimum. The legacy v2
+format keeps a uniform-part-size contract that stock client retry behavior
+already covers. Per-client behavior, tested configuration examples for AWS
+CLI, litestream and barman, and the behaviors each format rejects:
+[docs/multipart-client-compatibility.md](docs/multipart-client-compatibility.md).
 
 - **Zero-knowledge encryption** — data is encrypted before it leaves ARMOR; B2 only ever stores ciphertext (guaranteed for envelope v2/v3 objects; legacy v1 objects must be migrated first — see [Security model](#security-model))
 - **Zero egress fees** — downloads route through Cloudflare via the Bandwidth Alliance

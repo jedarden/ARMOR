@@ -4,7 +4,7 @@
 
 ## The claim, and what reconciles it
 
-The README promises: *"Any S3-compatible client — boto3, AWS CLI, DuckDB, rclone — works without modification."*
+The README promises, scoped: *"Any S3-compatible client — boto3, AWS CLI, DuckDB, rclone, litestream, barman — works without modification: reads, range reads and single-PUT writes are plain S3, and multipart writers run with their default concurrency on the default write format (v3), whose only multipart rule is B2's own ≥ 5 MiB non-final-part minimum. The legacy v2 format keeps a uniform-part-size contract that stock client retry behavior already covers."* This page is what that scoping means, client by client, with the tests that back it.
 
 ADR-003 §4 (2026-07-18) once contradicted that: the interim implementation
 enforced sequential part arrival and rejected concurrent or out-of-order
@@ -79,6 +79,119 @@ needed on either format.
   the missing part.
 - **`InvalidPartOrder`** — no longer exists for well-formed uploads; it was
   ADR-003 §4's rejection and is gone from the error surface.
+
+## Tested configuration examples — AWS CLI, litestream, barman
+
+These are the configurations `armor client-config --for <tool> --endpoint <url>`
+emits (run it against your deployment and it appends the multipart contract in
+force, so the config carries its own scope), followed by the behaviors the
+tests in the next section assert for each: what is supported, and what is
+rejected with which error. Placeholders below are literal — real credentials
+travel by reference, never into a committed config.
+
+### AWS CLI
+
+`~/.aws/config` (as `armor client-config --for aws-cli` emits it):
+
+```ini
+[profile armor]
+endpoint_url = https://armor.example.com:9000
+s3 =
+    addressing_style = path
+region = us-east-1
+```
+
+Credentials via `aws configure --profile armor` (or the `ARMOR_AUTH_*`
+environment variables). `addressing_style = path` is required — B2 does not
+serve virtual-hosted style; the region value is a client-side requirement,
+unused by ARMOR.
+
+**Supported:**
+
+- `aws s3 cp` at default concurrency — multipart fan-out with the short final
+  part usually completing first. Accepted as-is on v3; on v2 the final part's
+  first attempt is deferred with a retryable `503 SlowDown` that the CLI's
+  default retry clears (`TestMultipartClientCompat_AWSCliDefaultConcurrent/{format_v3,format_v2}`).
+- `max_concurrent_requests = 1` serial mode — works on every ARMOR version
+  (`TestMultipartClientCompat_Serial`).
+- Byte-identical GET and Range reads of the completed object.
+
+**Rejected:**
+
+- A non-final part under 5 MiB — B2's own rule, failed upstream at
+  `UploadPart`; on v3 ARMOR additionally backstops at
+  `CompleteMultipartUpload` using part 1's size → **`InvalidPartSize`** (400).
+- (v2) Retrying a part with a *different* size than its first attempt — the
+  contradiction poisons the upload; every further part gets **`InvalidPart`**
+  until the client aborts and restarts with stable part sizing.
+
+### litestream
+
+`litestream.yml` replica (as `armor client-config --for litestream` emits it):
+
+```yaml
+dbs:
+  - path: /path/to/db.sqlite
+    replicas:
+      - type: s3
+        endpoint: https://armor.example.com:9000
+        bucket: YOUR_BUCKET
+        region: us-east-1
+        access-key-id: YOUR_ACCESS_KEY_ID
+        secret-access-key: YOUR_SECRET_ACCESS_KEY
+```
+
+**Supported:**
+
+- Multipart snapshots at litestream's fixed internal concurrency, out-of-order
+  completion included — litestream exposes no serial knob and needs none; this
+  is the client that motivated ADR-015, and it works unmodified on both
+  formats (`TestMultipartV3ConcurrentOutOfOrder`;
+  `TestMultipartClientCompat_SDKTransferManager` models its shape — a
+  concurrent pool whose 5xx retry covers the v2 deferral).
+
+**Rejected:**
+
+- None of litestream's own behaviors are rejected: it has no part-size or
+  concurrency knobs, so every client-shape violation listed above is
+  unreachable through it. Restores are GET/HEAD-only and unaffected. (The
+  known litestream failure history — bf-24sxh7, bf-2sq7gf — was server-side
+  layout bugs, fixed in 0.1.18xx, not client misconfiguration.)
+
+### barman (barman-cloud-backup)
+
+Environment (as `armor client-config --for barman` emits it):
+
+```bash
+export AWS_ENDPOINT_URL=https://armor.example.com:9000
+export AWS_REGION=us-east-1  # Required but unused by ARMOR
+export AWS_ACCESS_KEY_ID=YOUR_ACCESS_KEY_ID
+export AWS_SECRET_ACCESS_KEY=YOUR_SECRET_ACCESS_KEY
+```
+
+Then `barman-cloud-backup backup` / `barman-cloud-wal-archive` as usual
+(`--endpoint-url "$AWS_ENDPOINT_URL"` where the command does not honor the
+environment variable).
+
+**Supported:**
+
+- barman's tar-aligned part sizes (`chunk_size + N×512`, never
+  block-aligned) — switched to ADR-011 non-uniform mode on v2, no contract at
+  all on v3 (`TestMultipartSuspectPatterns/U8_non_block_aligned_regular_part_accepted_under_adr011`).
+- Single-part base backups (a small database fits one flush) — verified in
+  production 2026-08-27 (ADR-011 §Verification);
+  `TestMultipartLonePartByteVerification` is the in-suite twin.
+
+**Rejected:**
+
+- (v2) A retry that changes a part's size mid-upload — poisons the upload;
+  `CompleteMultipartUpload` fails with **`InvalidPart`** and no object is
+  stored (`TestMultipartADR015Acceptance/second_short_part_poisons_no_object`).
+  barman's part sizing is deterministic, so its own retries are stable.
+- (v2) Completion without part 1 ever uploaded — **`InvalidPart`** naming
+  part 1 (the uniform part size would be unknown).
+- A `--chunk-size` small enough to emit non-final parts under 5 MiB — B2
+  rejects those upstream at `UploadPart`.
 
 ## Executable rows — where each claim is tested
 

@@ -1,7 +1,9 @@
 // The executable half of the multipart client-concurrency compatibility
 // matrix (docs/multipart-client-compatibility.md).
 //
-// README promises "any S3-compatible client works without modification";
+// README scopes its compatibility claim to the multipart contract: any
+// S3-compatible client works without modification for reads and single-PUT
+// writes, and multipart writers work unmodified at their default concurrency;
 // ADR-003 §4's sequential-only enforcement once contradicted that promise,
 // but it was superseded by ADR-015 (uniform-part-size contract, parts pinned
 // from part 1, earlier arrivals deferred with retryable 503 SlowDown) and
