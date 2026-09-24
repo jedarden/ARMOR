@@ -1478,6 +1478,73 @@ func TestFormatMigrationFailure_MissingMetadata(t *testing.T) {
 	}
 }
 
+// TestFormatMigrationFailure_UnparsableVersion verifies that an ARMOR-tagged
+// object whose x-amz-meta-armor-version does not parse is recorded as a
+// migration failure, never silently skipped. The legacy reader deliberately
+// defaults an unparsable version to V1 (backward compat), but the migration
+// walk cannot establish a source format for such an object, so skipping it
+// would exclude it from every future walk without a trace. Both the dry run
+// (the stage the fixture matrix arms against) and the live run must record
+// exactly one failure and process nothing.
+func TestFormatMigrationFailure_UnparsableVersion(t *testing.T) {
+	ctx := context.Background()
+	mek := make([]byte, 32)
+	for i := range mek {
+		mek[i] = byte(i)
+	}
+
+	newFixture := func() *MockBackend {
+		mockBackend := NewMockBackend()
+		mockBackend.objects["bad-version.dat"] = &MockObject{
+			Data: []byte("test data"),
+			Metadata: map[string]string{
+				"x-amz-meta-armor-version": "not-a-number",
+			},
+		}
+		return mockBackend
+	}
+
+	for _, dryRun := range []bool{true, false} {
+		t.Run(fmt.Sprintf("dryRun=%t", dryRun), func(t *testing.T) {
+			mockBackend := newFixture()
+			migrator := NewFormatMigrator(mockBackend, "test-bucket", mek, "default", crypto.Version2, []string{"1"}, nil)
+
+			result, err := migrator.Migrate(ctx, dryRun, 1)
+			if err != nil {
+				t.Logf("Migration completed with errors (expected): %v", err)
+			}
+
+			if result.FailedObjects != 1 {
+				t.Errorf("Expected 1 failed object, got %d", result.FailedObjects)
+			}
+			if len(result.Failures) != 1 {
+				t.Fatalf("Expected 1 failure record, got %d", len(result.Failures))
+			}
+			if result.Failures[0].Key != "bad-version.dat" {
+				t.Errorf("Expected failure for 'bad-version.dat', got: %s", result.Failures[0].Key)
+			}
+			if result.Failures[0].Reason == "" {
+				t.Error("Expected failure reason to be recorded")
+			}
+			if result.ProcessedObjects != 0 {
+				t.Errorf("Expected 0 processed objects, got %d", result.ProcessedObjects)
+			}
+			if result.SkippedObjects != 0 {
+				t.Errorf("Expected 0 skipped objects, got %d (an unparsable version is a failure, not a skip)", result.SkippedObjects)
+			}
+
+			// The object must be untouched either way.
+			obj, ok := mockBackend.objects["bad-version.dat"]
+			if !ok {
+				t.Fatal("Object was deleted during migration")
+			}
+			if obj.Metadata["x-amz-meta-armor-version"] != "not-a-number" {
+				t.Errorf("Object version changed during migration: %q", obj.Metadata["x-amz-meta-armor-version"])
+			}
+		})
+	}
+}
+
 // TestFormatMigrationFailedObjectsNotRetried tests that failed objects are skipped on subsequent migration runs.
 func TestFormatMigrationFailedObjectsNotRetried(t *testing.T) {
 	ctx := context.Background()

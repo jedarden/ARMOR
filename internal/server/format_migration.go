@@ -567,9 +567,25 @@ func (fm *FormatMigrator) Migrate(ctx context.Context, dryRun bool, concurrency 
 					continue
 				}
 				if _, err := fmt.Sscanf(armorVersion, "%d", &version); err != nil {
-					log.Printf("Warning: object %s has invalid version '%s', skipping", obj.Key, armorVersion)
-					result.SkippedObjects++
-					fm.classifyOutcome(outcomeSkipped)
+					// An ARMOR-tagged object whose version does not parse
+					// can never be migrated: its source format is unknown.
+					// Silently excluding it would hide it from every future
+					// walk, so it is a failure, not a skip.
+					log.Printf("Warning: object %s has unparsable version %q, recording failure", obj.Key, armorVersion)
+					failure := fm.recordFailure(obj.Key, fmt.Sprintf("unparseable armor version %q: source format cannot be established, object can never be migrated", armorVersion))
+					result.FailedObjects++
+					result.Failures = append(result.Failures, failure)
+					// Record in state immediately so periodic saves, GetState()
+					// and progress polling reflect the failure even if this run
+					// is interrupted before completion.
+					fm.stateMu.Lock()
+					fm.state.FailedObjects++
+					fm.state.Failures = append(fm.state.Failures, failure)
+					fm.stateMu.Unlock()
+					// Classified malformed by the inventory pass (unparseable
+					// version header); the walk records only the failure
+					// outcome.
+					fm.classifyOutcome(outcomeFailed)
 					fm.advanceCursor(obj.Key)
 					continue
 				}
