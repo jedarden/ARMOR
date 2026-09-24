@@ -14,6 +14,7 @@ This index organizes all durable documentation by audience. Every file under `do
 - **[Fleet Drift Checker](armor-drift-checker.md)** — Continuously scheduled Deployment, live pod comparison, metrics, and escalation
 - **[Authentication](authentication.md)** — Client credential model: default and named credentials, the ACL grammar (`bucket:prefix[:actions]`) and action verbs, append-only writers and the overwrite-as-destruction risk, and the YAML credentials file (`ARMOR_AUTH_FILE`) with its merge rules
 - **[Configuration Reference](configuration.md)** — Full `ARMOR_*` environment-variable reference: listeners, backend, encryption and keys, client authentication, caches, manifest index, dashboard and pre-signed URLs, secondary backend, plus the bucket-alias and multi-key-routing guides; the README keeps only the required minimum
+- **[CLI Command Reference](cli-reference.md)** — Per-command contract for every `armor` subcommand (`serve`, `demo`, `check`, `decrypt`, `verify`, `migrate`, `client-config`, `version`, `help`): flags, inputs and outputs, exit codes, credential/key requirements, and safe-use notes; kept in sync with the binary by smoke tests
 - **[Connection Guide](connection-guide.md)** — Network topology, Cloudflare PNI setup, and connectivity troubleshooting
 - **[Cloudflare Setup](cloudflare-setup.md)** — DNS and CDN configuration for zero-egress downloads
 - **[Dashboard](dashboard.md)** — Web UI for bucket browsing, encryption status, and metrics

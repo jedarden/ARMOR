@@ -113,7 +113,9 @@ backend connectivity, the Cloudflare path, MEK correctness via the canary),
 `client-config` (print known-good configuration for common S3 clients, see
 below), `decrypt` (offline recovery with only the MEK), `verify` (check
 objects for corruption), `migrate` (legacy envelopes to the current format)
-and `version`.
+and `version`. The per-command reference — flags, inputs and outputs, exit
+codes, credential requirements, and safe-use notes — is
+[docs/cli-reference.md](docs/cli-reference.md).
 
 ## Production Docker deployment
 
