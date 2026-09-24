@@ -17,8 +17,15 @@ removing one is a breaking change and must update this document and the
 contract tests in the same change. The contract tests live in:
 
 - `internal/canary/contract_test.go` — status API shape and state transitions
+- `internal/server/canary_endpoint_contract_test.go` — the `/armor/canary`
+  endpoint's HTTP behavior: the not-configured shape, 405 on non-GET, and
+  multipart-failure reporting independent of the small-object status
 - `internal/metrics/observability_contract_test.go` — emitted series and
   gauge/counter transitions
+- `internal/metrics/alert_rules_contract_test.go` — the shipped alert-rule
+  set (expressions, hold durations, severities, component labels, scrape
+  targets) against the in-repo copy of the declarative-config manifest, and
+  the rule that every referenced series is actually exported
 - `internal/restoreverifier/contract_test.go` — verifier status/health/ready/
   trigger endpoints and their transitions
 
@@ -328,9 +335,19 @@ first check has not completed.
 Shipped per cluster in `declarative-config` as
 `restore-verifier-monitoring.yaml.disabled` (`.disabled` because the ARMOR
 clusters run no Prometheus Operator CRDs; drop the suffix once a Prometheus
-scrapes `/metrics`). All five clusters carry the same rule set; scrapes run
-at a 30s interval against the restore-verifier `metrics` port and the ARMOR
-`admin-api` port.
+scrapes `/metrics`). Every cluster that ships the file carries the same rule
+set (enumerate the current copies with `find declarative-config/k8s -name
+restore-verifier-monitoring.yaml.disabled` rather than trusting a count
+here); scrapes run at a 30s interval against the restore-verifier `metrics`
+port and the ARMOR `admin-api` port.
+
+The rule set is pinned in-repo: `internal/metrics/alert_rules_contract_test.go`
+parses `internal/metrics/testdata/restore-verifier-monitoring.yaml` — a
+verbatim copy of the shipped manifest — and asserts the alert table below,
+each rule's expression/hold/severity/labels, the two ServiceMonitor scrape
+targets, and that every series an expression references is one this repo's
+metrics package actually exports. A change to a shipped rule must update the
+fixture, the test's expected table, and this document in the same change.
 
 | Alert | Expression | `for` | Intent |
 |---|---|---|---|
@@ -345,6 +362,19 @@ All five carry `severity: critical`; the restore-verifier rules label
 `ArmorMultipartCanaryUnhealthy` fires against ARMOR's admin metrics; the
 other four against the restore-verifier's — the component label and the two
 ServiceMonitors encode which is which.
+
+`ArmorMultipartCanaryUnhealthy` failure semantics, end to end: the multipart
+canary retries each cycle up to `maxRetries` (default 3) with `retryDelay`
+(default 10s) between attempts; only after the budget is exhausted does the
+status flip to `unhealthy` and the gauge to 0, so one transient B2 error
+never pages. The gauge reads 0 also on a freshly starting pod, before the
+first multipart check completes — the monitor runs one immediately at
+startup, and the 10m `for` absorbs that window; a pod whose startup check
+cannot finish within ~10m will page anyway, which is the intended bias
+toward loudness given the 1h cadence of subsequent checks. Acknowledge a
+firing instance by reading `/armor/canary` (`multipart_healthy_status`,
+`multipart_last_error`, `multipart_consecutive_fails`) rather than the gauge
+alone — the endpoint carries the failure detail the gauge cannot.
 
 Escalation from an alert follows ADR-004 §5 (next section): one bead per
 distinct active failure, never a retry loop.

@@ -1,0 +1,132 @@
+# Verbatim copy of the alert-rule manifest shipped per cluster in
+# jedarden/declarative-config as
+# k8s/<cluster>/armor/restore-verifier-monitoring.yaml.disabled (this copy is
+# the rs-manager revision; the PrometheusRule body is identical in every
+# cluster that ships it — iad-ci adds only an
+# argocd.argoproj.io/sync-options annotation).
+#
+# Pinned by internal/metrics/alert_rules_contract_test.go. If the shipped
+# rules change, update this fixture, the expected table in that test, and
+# docs/observability-contract.md in the same change. The source file's
+# .disabled notice is intentionally not reproduced here: the fixture exists
+# to be parsed, not applied.
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: restore-verifier
+  namespace: armor
+  labels:
+    app: restore-verifier
+    app.kubernetes.io/name: restore-verifier
+spec:
+  selector:
+    # Both verifiers on this cluster: the primary (Service restore-verifier)
+    # and restore-verifier-acb — the armor-apexalgo bucket verifier run here
+    # while apexalgo-iad's ArgoCD is broken. Both Services expose a `metrics`
+    # port. matchLabels alone only selected the primary, leaving the acb
+    # bucket outside the scrape (and therefore the alert) perimeter.
+    matchExpressions:
+      - key: app
+        operator: In
+        values:
+          - restore-verifier
+          - restore-verifier-acb
+  endpoints:
+    - port: metrics
+      path: /metrics
+      interval: 30s
+      scrapeTimeout: 10s
+---
+# Scrape the ARMOR server's admin metrics separately. The multipart canary
+# gauge is exported by ARMOR on the admin-api port, not by restore-verifier.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: armor
+  namespace: armor
+  labels:
+    app: armor
+    app.kubernetes.io/name: armor
+spec:
+  selector:
+    matchLabels:
+      app: armor
+  endpoints:
+    - port: admin-api
+      path: /metrics
+      interval: 30s
+      scrapeTimeout: 10s
+---
+# Restorability alerts for this cluster's bucket. The rules below cover the
+# complete ADR-004/ADR-002 signal set: restore age, failure rate, low
+# verified-object ratio, ModeDual failures (including ARMOR/direct
+# divergence), and the multipart canary.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: restore-verifier-alerts
+  namespace: armor
+  labels:
+    app: restore-verifier
+    app.kubernetes.io/name: restore-verifier
+spec:
+  groups:
+    - name: restore-verifier
+      interval: 30s
+      rules:
+        - alert: ArmorRestoreVerificationStale
+          expr: time() - armor_last_verified_restore_timestamp > 12 * 3600
+          for: 10m
+          labels:
+            severity: critical
+            component: restore-verifier
+          annotations:
+            summary: "ARMOR restore verification is stale for bucket {{ $labels.bucket }}"
+            description: "No verification attempt has registered for bucket {{ $labels.bucket }} in over 12h — the restore-verifier may be down or unable to reach B2."
+        - alert: ArmorRestoreVerificationFailures
+          expr: |
+            sum by (bucket) (
+              rate(armor_restore_verification_failures_total[1h])
+            ) > 0
+          for: 5m
+          labels:
+            severity: critical
+            component: restore-verifier
+          annotations:
+            summary: "ARMOR restore verification failures for bucket {{ $labels.bucket }}"
+            description: "New restore-verification failures are occurring for bucket {{ $labels.bucket }} at {{ $value | humanize }} object(s)/second — backups may not be restorable."
+            runbook: "Inspect the restore-verifier /status endpoint and its logs for object, path, and provenance evidence. Per ADR-004 §5, escalate one bead per distinct active failure; do not add retry loops."
+        - alert: ArmorRestoreVerificationLowObjectRatio
+          expr: armor_verified_object_ratio < 0.95
+          for: 5m
+          labels:
+            severity: critical
+            component: restore-verifier
+          annotations:
+            summary: "ARMOR verified-object ratio is low for bucket {{ $labels.bucket }}"
+            description: "Only {{ $value | humanizePercentage }} of the latest restore-verifier sample passed for bucket {{ $labels.bucket }} (threshold 95%). Confirm the sample and failure counter; a zero-object discovery result is inconclusive per ADR-014."
+            runbook: "Inspect /status, the discovery result, and the failure counter before remediation. Per ADR-004 §5, escalate the distinct object failures once; do not repeatedly re-file or retry from the alert."
+        - alert: ArmorRestoreVerificationDualPathDivergence
+          expr: |
+            sum by (bucket) (
+              increase(armor_restore_verification_failures_total[1h])
+            ) > 0
+          for: 5m
+          labels:
+            severity: critical
+            component: restore-verifier
+          annotations:
+            summary: "ARMOR dual-path restore verification failed for bucket {{ $labels.bucket }}"
+            description: "A periodic ModeDual restore-verifier check failed for bucket {{ $labels.bucket }}. This signal includes ARMOR/direct-ciphertext divergence; inspect /status for Path=direct and both path digests."
+            runbook: "Compare the ARMOR and direct path evidence in /status and the verifier logs, then follow ADR-004 §5's one-bead-per-distinct-failure escalation. Do not treat this alert as authorization for an unbounded retry loop."
+        - alert: ArmorMultipartCanaryUnhealthy
+          expr: armor_multipart_canary_healthy == 0
+          for: 10m
+          labels:
+            severity: critical
+            component: armor-canary
+          annotations:
+            summary: "ARMOR multipart canary is unhealthy"
+            description: "The multipart integrity canary reports multipart_healthy=false for this ARMOR instance. The small-object canary may still be healthy."
+            runbook: "Inspect /armor/canary and ARMOR logs for the multipart upload, read, HMAC, or plaintext-SHA failure. Remediate declaratively and verify recovery; do not bypass the canary."
