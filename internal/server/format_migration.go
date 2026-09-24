@@ -32,6 +32,8 @@ const (
 	armorMetaBlockSize     = "x-amz-meta-armor-block-size"
 	armorMetaMultipart     = "x-amz-meta-armor-multipart"
 	armorMetaPartSize      = "x-amz-meta-armor-part-size"
+	armorMetaPartCount     = "x-amz-meta-armor-part-count"
+	armorMetaNonUniform    = "x-amz-meta-armor-non-uniform"
 	armorMetaPlaintextSize = "x-amz-meta-armor-plaintext-size"
 	armorMetaPlaintextSHA  = "x-amz-meta-armor-sha256"
 	armorMetaContentType   = "x-amz-meta-armor-content-type"
@@ -632,6 +634,32 @@ func (fm *FormatMigrator) Migrate(ctx context.Context, dryRun bool, concurrency 
 				}
 			}
 
+			// A multipart object whose declared part-count/part-size
+			// contradicts the structure the rest of the metadata derives is
+			// not a migration candidate either. decryptMultipartObject never
+			// reads the declared part structure, so without this gate the
+			// contradiction is invisible: the dry run processes the object,
+			// and a live run re-uploads anything above the multipart
+			// threshold — replacing a possibly sound body on the word of
+			// metadata already known to lie. Same failure shape as the
+			// envelope-version gate above: recorded as failed, never
+			// reaching migrateObject.
+			if ok {
+				if err := fm.validatePartAccounting(rawMeta); err != nil {
+					log.Printf("Warning: failed part accounting for %s: %v", obj.Key, err)
+					failure := fm.recordFailure(obj.Key, err.Error())
+					result.FailedObjects++
+					result.Failures = append(result.Failures, failure)
+					fm.stateMu.Lock()
+					fm.state.FailedObjects++
+					fm.state.Failures = append(fm.state.Failures, failure)
+					fm.stateMu.Unlock()
+					fm.classifyOutcome(outcomeFailed)
+					fm.advanceCursor(obj.Key)
+					continue
+				}
+			}
+
 			// If we get here, the object is a migration candidate
 			// If metadata parsing failed but version is in include list, attempt migration (will fail and be recorded)
 			if !ok {
@@ -745,6 +773,20 @@ func (fm *FormatMigrator) validateEnvelopeVersion(ctx context.Context, obj backe
 		return fmt.Errorf("header version disagrees with metadata version: header=%d metadata=%d", header.Version, armorMeta.Version)
 	}
 	return nil
+}
+
+// validatePartAccounting refuses a multipart migration candidate whose
+// declared part-count/part-size contradict the structure the rest of the
+// metadata derives (the rules live in multipartPartAccountingContradictions,
+// shared with ClassifyMigrationObject, so the inventory buckets and this
+// gate can never disagree about which declared part structures are
+// migratable). A nil return means the declared structure is consistent.
+func (fm *FormatMigrator) validatePartAccounting(rawMeta map[string]string) error {
+	reasons := multipartPartAccountingContradictions(rawMeta)
+	if len(reasons) == 0 {
+		return nil
+	}
+	return fmt.Errorf("declared part structure contradicts the derived object structure: %s", strings.Join(reasons, "; "))
 }
 
 // migrateObject migrates a single object to the current write format.

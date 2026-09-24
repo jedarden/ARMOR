@@ -186,6 +186,13 @@ func classifyReasonFields(rawMeta map[string]string, keys ...string) string {
 //     agree with those validations, not diverge: same inputs, Contradictory
 //     here rather than a separate later error. The wrapped-DEK decision is
 //     the shared wrappedDEKBase64Error, so the two cannot drift apart.
+//   - multipart-part-size-not-block-aligned / part-count-contradicts-part-
+//     structure: a declared part structure that contradicts the structure
+//     the rest of the metadata derives (see
+//     multipartPartAccountingContradictions). decryptMultipartObject never
+//     reads the declared part structure, so without these rules the
+//     contradiction is invisible to the inventory and the object is
+//     processed as if it were sound.
 //   - no-wrapped-dek-key-material: an ARMOR version claimed with no wrapped
 //     DEK at all — ParseARMORMetadata treats the object as not
 //     ARMOR-encrypted whatever the version header says, exactly the
@@ -231,6 +238,69 @@ func classifyContradictions(rawMeta map[string]string, version int) []string {
 	}
 	if dek == "" {
 		rule("no-wrapped-dek-key-material", armorMetaVersion, armorMetaWrappedDEK)
+	}
+
+	reasons = append(reasons, multipartPartAccountingContradictions(rawMeta)...)
+
+	sort.Strings(reasons)
+	return reasons
+}
+
+// multipartPartAccountingContradictions evaluates the declared-part-structure
+// rules for one migration candidate: does x-amz-meta-armor-part-count/part-size
+// agree with the structure the rest of the metadata derives? Like
+// classifyContradictions it is pure and metadata-only — the stored bytes
+// carry no part boundaries (the sidecar HMACs are per-block, the body is one
+// assembled stream), so the block grid is the finest structure the inventory
+// can derive. It returns one reason per rule the metadata trips, sorted. A
+// nil return means the declared part structure is consistent. The walk's
+// pre-migrate gate (FormatMigrator.validatePartAccounting) applies the same
+// rules, so a candidate the inventory buckets as Contradictory can never
+// reach migrateObject.
+//
+// The rules, each naming its own slug in the reason it emits:
+//
+//   - multipart-part-size-not-block-aligned: a declared part size that is
+//     not a whole number of 64 KiB blocks. Part boundaries live on the block
+//     grid (every part carries whole blocks — the upload path rejects a
+//     part that is neither the pinned part size nor block-aligned), and a
+//     part size off the grid contradicts the block structure the sidecar
+//     and body were written with. The writer contract makes this exact: a
+//     uniform part size is pinned from part 1, which is block-aligned (a
+//     non-aligned part 1 flips the upload to ADR-011 non-uniform mode), so
+//     no uniform writer emits an unaligned part size.
+//   - part-count-contradicts-part-structure: a declared part count that
+//     differs from ceil(plaintext-size / part-size), the count the declared
+//     sizes derive for the uniform and variable-final layouts.
+//
+// Both rules are gated on the multipart flag (part structure is multipart
+// metadata) and skipped for ADR-011 non-uniform objects: their cumulative
+// part sizes are the declared structure, and the part size a modern writer
+// records there is part 1's unaligned size by definition.
+func multipartPartAccountingContradictions(rawMeta map[string]string) []string {
+	if rawMeta[armorMetaMultipart] != "true" || rawMeta[armorMetaNonUniform] == "true" {
+		return nil
+	}
+
+	partSize, partPresent := metaSize(rawMeta, armorMetaPartSize)
+	plainSize, plainPresent := metaSize(rawMeta, armorMetaPlaintextSize)
+	blockSize, blockPresent := metaSize(rawMeta, armorMetaBlockSize)
+	partCount, countPresent := metaSize(rawMeta, armorMetaPartCount)
+
+	var reasons []string
+	if partPresent && partSize > 0 && blockPresent && blockSize > 0 && partSize%blockSize != 0 {
+		reasons = append(reasons, "multipart-part-size-not-block-aligned: "+
+			classifyReasonFields(rawMeta, armorMetaPartSize, armorMetaBlockSize))
+	}
+	if countPresent && partCount > 0 && partPresent && partSize > 0 && plainPresent && plainSize > 0 {
+		derived := plainSize / partSize
+		if plainSize%partSize != 0 {
+			derived++
+		}
+		if partCount != derived {
+			reasons = append(reasons, "part-count-contradicts-part-structure: "+
+				classifyReasonFields(rawMeta, armorMetaPartCount, armorMetaPartSize, armorMetaPlaintextSize))
+		}
 	}
 
 	sort.Strings(reasons)
