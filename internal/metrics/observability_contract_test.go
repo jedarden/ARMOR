@@ -15,11 +15,6 @@ import (
 // docs/observability-contract.md; a change here that breaks one of these
 // assertions is a breaking change to that document and must land together.
 
-type typeLine struct {
-	name string
-	typ  string
-}
-
 var typeLineRe = regexp.MustCompile(`^# TYPE (armor_\S+) (\w+)$`)
 
 // typeLines parses every "# TYPE armor_..." line from a PrometheusFormat dump.
