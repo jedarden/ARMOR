@@ -24,14 +24,18 @@
 //     asserted structurally: the dry-run migrator must record a failure and
 //     process nothing.
 //
-// Two committed-fixture defects are known at HEAD and handled with the same
-// data-driven re-arming skips the golden test uses (goldenWrapDefect; the
-// stale-plaintext skip was deleted together with its pin when the fixture
-// was regenerated): while the corrupt multipart-generation wrap is
-// AES-GCM instead of AES-KWP, every decrypt-stage fixture fails at unwrap
-// before reaching its intended defect, so the unwrap error itself is what is
-// asserted (and the masking is logged). The moment regenerated fixtures
-// land, the intended class takes over with no test change.
+// Wrap defects are handled with the same data-driven discriminator the
+// golden test uses (goldenWrapDefect): if incompatible wraps ever return to
+// the committed tree, a decrypt-stage subtest whose bytes can no longer
+// reach its intended defect asserts the unwrap failure itself (fail-closed
+// proof, masking logged) instead of a class it cannot observe. That mask is
+// strictly a fallback: a read-path error that already carries the row's
+// intended class is asserted as the class, never as a mask. The ordering
+// matters because a wrap defect and an intended class are not exclusive --
+// corrupted_wrapped_dek_tag flips a byte inside the 40-byte KWP wrap, so
+// production unwrap rejects it by design, and that rejection (KWP
+// authentication, not a length check) is exactly the defect the row asks
+// for.
 //
 // Version-derivation contradictions get one extra discriminator: V1 and V2
 // counters coincide on block 0 (both derive counter 0), so a single-block
@@ -304,10 +308,14 @@ func goldenVersionContradictionVacuous(f goldenFixture) string {
 // row and requires its intended failure mode at its declared stage:
 //
 //   - stageAccounting: the byte-math defect must be present.
-//   - stageDecrypt: the read path must fail, and once the committed wrap
-//     defect is out of the way the error must identify the intended defect.
-//     While the wrap defect masks the bytes, the exact unwrap error is
-//     asserted instead (fail-closed proof) and the masking is logged.
+//   - stageDecrypt: the read path must fail with an error identifying the
+//     intended defect. The wrap-defect mask below is subordinate to that:
+//     an error that already carries the intended class asserts directly (a
+//     corrupted wrap tag fails KWP authentication by design, and that
+//     authentication failure is the defect the row asks for). Only an error
+//     that cannot reach the intended defect because unwrap rejects the
+//     bytes first falls back to the unwrap-only fail-closed proof, with
+//     the masking logged.
 //   - stageClassify: the dry-run migrator must record exactly one failure
 //     and process nothing. A version-contradiction fixture that is vacuous
 //     at its committed size skips with a pointer to the fixture lineage
@@ -350,6 +358,17 @@ func TestGoldenFixtureMatrixCorruptFailClosed(t *testing.T) {
 			case stageDecrypt:
 				if defect := goldenSidecarAccounting(f); defect != "" {
 					t.Fatalf("sidecar accounting defect (%s) on a decrypt-stage fixture; regenerate the fixture", defect)
+				}
+				// A read-path failure that already carries the row's
+				// intended class IS the intended defect: assert it and
+				// nothing else. This precedes the wrap-defect branch below
+				// because the two are not exclusive -- a corrupted wrap tag
+				// makes goldenWrapDefect fire (production unwrap rejects the
+				// bytes by design) while that rejection is itself the
+				// defect the row asks for (KWP authentication, not a length
+				// check), not a mask of something deeper.
+				if decryptErr != nil && exp.class != "" && strings.Contains(decryptErr.Error(), exp.class) {
+					return
 				}
 				if reason := goldenWrapDefect(f); reason != "" {
 					// The committed bytes cannot reach the intended defect:
