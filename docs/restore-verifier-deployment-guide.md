@@ -157,8 +157,12 @@ sampled object recovered direct-only.
   through the gauges and logs only.
 - Scheduler-level proof: `TestStartScheduledDrillExecutesAndReports` (a
   started verifier must drill on its own ticker, recover direct-only, publish
-  the gauges, and leave the dual-path ledger untouched) and
-  `TestStartWithoutDrillIntervalLeavesDrillPaused` (unset interval = paused)
+  the gauges, and leave the dual-path ledger untouched),
+  `TestStartWithoutDrillIntervalLeavesDrillPaused` (unset interval = paused),
+  and `TestStartScheduledDrillFailureSignalsWithoutRetryStorm` (a damaged
+  ciphertext must fail subsequent drills into exactly these signals — stale
+  `drill_last_success`, advancing failure counter, zero ratio — with no bead
+  filed, no ARMOR-read fallback, and a run rate still bounded by one per tick)
   in `internal/restoreverifier/drill_schedule_test.go`.
 
 ### Pausing for maintenance

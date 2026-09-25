@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -189,6 +190,13 @@ type fakeBackend struct {
 	armorGet       int               // calls to Get (the ARMOR read path); a drill run must leave this 0
 	sidecarLookups []string          // object names passed to GetDirect, in call order
 
+	// corrupt, when set, makes GetRange serve damaged bytes (a corrupted copy —
+	// never mutating f.ciphertext, which runs of the verifier read
+	// concurrently and tests observe under -race). It simulates stored
+	// ciphertext damage so scheduler-level tests can drive the drill failure
+	// path end to end.
+	corrupt atomic.Bool
+
 	// direct serves additional raw objects by key (ADR-016 manifest sidecars in
 	// the manifest-metadata tests): info stands in for the stored object's
 	// headers, body for its content. Consulted before sidecars.
@@ -234,7 +242,17 @@ func (f *fakeBackend) GetRange(_ context.Context, _, _ string, offset, length in
 	if offset > int64(len(f.ciphertext)) || offset > end {
 		return io.NopCloser(bytes.NewReader(nil)), nil
 	}
-	return io.NopCloser(bytes.NewReader(f.ciphertext[offset:end])), nil
+	served := f.ciphertext[offset:end]
+	if f.corrupt.Load() && len(served) > 0 {
+		// Corrupt a COPY: the flag is stored from a test goroutine while
+		// verifier runs read here concurrently, so f.ciphertext itself must
+		// stay untouched. Mid-range damage fails every direct read — header
+		// unwrap, data decrypt, HMAC table — the "stored ciphertext damaged"
+		// class the DR drill exists to catch.
+		served = bytes.Clone(served)
+		served[len(served)/2] ^= 0xFF
+	}
+	return io.NopCloser(bytes.NewReader(served)), nil
 }
 
 // GetDirect serves a JSON HMAC sidecar for a multipart object. The key is the
