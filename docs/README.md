@@ -60,6 +60,7 @@ This index organizes all durable documentation by audience. Every file under `do
 ### Format Specifications
 
 - **[Envelope V3 Format](format/envelope-v3.md)** — Version 3 envelope specification (the default write format since 0.1.1943; v2 remains readable and selectable with `ARMOR_FORMAT_VERSION=2`)
+- **[Multipart Layout and Read-Path Contract](multipart-layout-and-read-path.md)** — The authoritative statement of where multipart state lives on B2: prefix composition for sidecars, upload state, object manifests and the manifest index; v2/v3 layouts and part contracts; sidecar naming, wire formats and lifecycle; the object manifest's fields, freshness and quarantine gates, and the pre/post-ADR-016 era split; the normative metadata-dispatch algorithm every ARMOR reader must implement; large-object finalization; and per-operation lifecycle edges (delete orphans the sidecar and manifest, cross-key copies of multipart objects break)
 - **[Named Credential Provisioning Spec](named-credential-provisioning-spec.md)** — External credential provisioning interface design
 - **[Decompression Verification API Design](decompression-verification-api-design.md)** — Zstd compression verification API
 

@@ -2,7 +2,11 @@
 
 ## Status
 
-**Status:** Accepted (2026-08-31)
+**Status:** Accepted (2026-08-31). The current-as-implemented contract this
+decision produced — manifest naming and contents, the read-path dispatch
+order, the freshness and quarantine gates, and the lifecycle under S3
+operations — is consolidated in the [multipart layout and read-path
+contract](../multipart-layout-and-read-path.md).
 
 **Context:** ARMOR multipart upload must securely finalize metadata (plaintext size, SHA-256, ETag, envelope version, wrapped DEK, IV, key ID) for objects at all sizes, including those exceeding B2's 5 GB CopyObject limit.
 
