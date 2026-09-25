@@ -1,0 +1,163 @@
+# Offline semantics tests for the shipped ARMOR alert set (ADR-002 / ADR-004
+# §6) — the "freshness failures and multipart health transitions" half of
+# activation verification, provable without waiting 12h on the live stack or
+# forcing a real canary to fail.
+#
+# Run by scripts/alerting-rule-unittest.sh, which materializes `rules.yml`
+# beside this file: the rule group extracted from
+# internal/metrics/testdata/restore-verifier-monitoring.yaml, the SAME
+# contract-pinned fixture the vmalert deployment copies verbatim. A failure
+# here means the shipped expressions no longer fire (or quiet) as the
+# contract promises; fixing it means fixing the fixture and its two verbatim
+# copies (declarative-config manifest, iad-ci vmalert.yml) in one change.
+#
+# Format: promtool test rules (run via the pinned prom/prometheus image).
+# promtool's clock starts at unix 0 and time() returns eval_time, so the
+# staleness scenarios use a timestamp of 0 and a horizon past 12h.
+rule_files:
+  - rules.yml
+
+evaluation_interval: 1m
+
+tests:
+  # ---- ArmorRestoreVerificationStale ----------------------------------------
+  # Stale: no verification registers for ~13.7h. Quiet while inside the 12h
+  # window, firing 10m (`for`) after it is crossed.
+  - interval: 1m
+    input_series:
+      - series: 'armor_last_verified_restore_timestamp{bucket="iad-ci"}'
+        values: '0+0x820'
+    alert_rule_test:
+      - eval_time: 700m
+        alertname: ArmorRestoreVerificationStale
+        exp_alerts: []
+      - eval_time: 731m
+        alertname: ArmorRestoreVerificationStale
+        exp_alerts:
+          - exp_labels:
+              alertname: ArmorRestoreVerificationStale
+              severity: critical
+              component: restore-verifier
+              bucket: iad-ci
+            exp_annotations:
+              summary: "ARMOR restore verification is stale for bucket iad-ci"
+              description: "No verification attempt has registered for bucket iad-ci in over 12h — the restore-verifier may be down or unable to reach B2."
+
+  # Fresh: the timestamp advancing one minute per minute (a verified restore
+  # every minute) never crosses the window, however long the series runs.
+  - interval: 1m
+    input_series:
+      - series: 'armor_last_verified_restore_timestamp{bucket="iad-ci"}'
+        values: '0+60x820'
+    alert_rule_test:
+      - eval_time: 731m
+        alertname: ArmorRestoreVerificationStale
+        exp_alerts: []
+
+  # ---- ArmorMultipartCanaryUnhealthy: the health transition ------------------
+  # Healthy for 31m, unhealthy for 31m, healthy again. Firing requires the
+  # full `for: 10m` hold; recovery resolves the alert immediately (the
+  # eval_time: 75m case proves the transition back, not just the trip).
+  - interval: 1m
+    input_series:
+      - series: 'armor_multipart_canary_healthy{instance="armor:9001"}'
+        values: '1+0x30 0+0x30 1+0x40'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: ArmorMultipartCanaryUnhealthy
+        exp_alerts: []
+      - eval_time: 40m
+        alertname: ArmorMultipartCanaryUnhealthy
+        exp_alerts: []          # 9 of the 10 `for` minutes elapsed — pending, not firing
+      - eval_time: 41m
+        alertname: ArmorMultipartCanaryUnhealthy
+        exp_alerts:
+          - exp_labels:
+              alertname: ArmorMultipartCanaryUnhealthy
+              severity: critical
+              component: armor-canary
+              instance: armor:9001
+            exp_annotations:
+              summary: "ARMOR multipart canary is unhealthy"
+              description: "The multipart integrity canary reports multipart_healthy=false for this ARMOR instance. The small-object canary may still be healthy."
+              runbook: "Inspect /armor/canary and ARMOR logs for the multipart upload, read, HMAC, or plaintext-SHA failure. Remediate declaratively and verify recovery; do not bypass the canary."
+      - eval_time: 75m
+        alertname: ArmorMultipartCanaryUnhealthy
+        exp_alerts: []          # recovered at 62m — the alert resolves
+
+  # ---- ArmorRestoreVerificationLowObjectRatio --------------------------------
+  - interval: 1m
+    input_series:
+      - series: 'armor_verified_object_ratio{bucket="iad-ci"}'
+        values: '0.9+0x30'
+    alert_rule_test:
+      - eval_time: 6m
+        alertname: ArmorRestoreVerificationLowObjectRatio
+        exp_alerts:
+          - exp_labels:
+              alertname: ArmorRestoreVerificationLowObjectRatio
+              severity: critical
+              component: restore-verifier
+              bucket: iad-ci
+            exp_annotations:
+              summary: "ARMOR verified-object ratio is low for bucket iad-ci"
+              description: "Only 90% of the latest restore-verifier sample passed for bucket iad-ci (threshold 95%). Confirm the sample and failure counter; a zero-object discovery result is inconclusive per ADR-014."
+              runbook: "Inspect /status, the discovery result, and the failure counter before remediation. Per ADR-004 §5, escalate the distinct object failures once; do not repeatedly re-file or retry from the alert."
+
+  # Healthy ratio never fires.
+  - interval: 1m
+    input_series:
+      - series: 'armor_verified_object_ratio{bucket="iad-ci"}'
+        values: '0.97+0x30'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: ArmorRestoreVerificationLowObjectRatio
+        exp_alerts: []
+
+  # ---- ArmorRestoreVerificationFailures + DualPathDivergence -----------------
+  # A sustained failure stream (one failure per second) trips both the rate
+  # alert and the increase-based divergence alert; the `eval_time: 62m`
+  # position makes the 1h windows fully covered, so the expected rate value
+  # is exactly 1/s.
+  - interval: 1m
+    input_series:
+      - series: 'armor_restore_verification_failures_total{bucket="iad-ci"}'
+        values: '0+60x70'
+    alert_rule_test:
+      - eval_time: 62m
+        alertname: ArmorRestoreVerificationFailures
+        exp_alerts:
+          - exp_labels:
+              alertname: ArmorRestoreVerificationFailures
+              severity: critical
+              component: restore-verifier
+              bucket: iad-ci
+            exp_annotations:
+              summary: "ARMOR restore verification failures for bucket iad-ci"
+              description: "New restore-verification failures are occurring for bucket iad-ci at 1 object(s)/second — backups may not be restorable."
+              runbook: "Inspect the restore-verifier /status endpoint and its logs for object, path, and provenance evidence. Per ADR-004 §5, escalate one bead per distinct active failure; do not add retry loops."
+      - eval_time: 62m
+        alertname: ArmorRestoreVerificationDualPathDivergence
+        exp_alerts:
+          - exp_labels:
+              alertname: ArmorRestoreVerificationDualPathDivergence
+              severity: critical
+              component: restore-verifier
+              bucket: iad-ci
+            exp_annotations:
+              summary: "ARMOR dual-path restore verification failed for bucket iad-ci"
+              description: "A periodic ModeDual restore-verifier check failed for bucket iad-ci. This signal includes ARMOR/direct-ciphertext divergence; inspect /status for Path=direct and both path digests."
+              runbook: "Compare the ARMOR and direct path evidence in /status and the verifier logs, then follow ADR-004 §5's one-bead-per-distinct-failure escalation. Do not treat this alert as authorization for an unbounded retry loop."
+
+  # A quiet counter (failures registered but the rate is zero) fires neither.
+  - interval: 1m
+    input_series:
+      - series: 'armor_restore_verification_failures_total{bucket="iad-ci"}'
+        values: '3+0x70'
+    alert_rule_test:
+      - eval_time: 62m
+        alertname: ArmorRestoreVerificationFailures
+        exp_alerts: []
+      - eval_time: 62m
+        alertname: ArmorRestoreVerificationDualPathDivergence
+        exp_alerts: []

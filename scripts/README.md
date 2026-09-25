@@ -277,6 +277,37 @@ journalctl --user -u armor-starvation-watch.service -n 20
 
 ## Testing & Validation
 
+### alerting-rule-unittest.sh
+
+Offline semantics test for the shipped alert set (ADR-002 / ADR-004 §6): extracts the
+contract-pinned rule group from `internal/metrics/testdata/restore-verifier-monitoring.yaml`
+and runs it through `promtool test rules` (in the pinned `prom/prometheus` image, via
+docker) against `scripts/alerting-rules-unittest.yaml`. Proves in seconds that
+freshness failures fire past the 12h window, multipart-health transitions trip at
+10m and resolve on recovery, and the failure-rate/ratio/divergence alerts match their
+contracted rendering — without waiting on the live stack or breaking a real canary.
+
+```bash
+./scripts/alerting-rule-unittest.sh          # SUCCESS or a per-scenario diff
+PROMTOOL_IMAGE=prom/prometheus:v3.6.0 ./scripts/alerting-rule-unittest.sh
+```
+
+### alerting-smoke-test.sh
+
+Live end-to-end verification of the activated alerting stack on iad-ci: collection
+(VictoriaMetrics scraping the armor server `:9001` admin mux and the restore-verifier
+`:9002` listener, series fresh), evaluation (vmalert carrying the five shipped rules,
+expressions matching the contract, no eval errors), consistency (staleness and
+multipart alerts active exactly when their expression says so — both directions), and
+delivery (Alertmanager ready, ntfy receiver present; the rendered config embeds the
+delivery token and is never printed). Routes through the stack's tailnet-only
+hostnames, so it must run from inside the tailnet.
+
+```bash
+./scripts/alerting-smoke-test.sh
+VM_BASE=... VMALERT_BASE=... AM_BASE=... ./scripts/alerting-smoke-test.sh
+```
+
 ### test-armor-endpoints.sh
 
 Tests all ARMOR endpoints for expected responses and status codes.
