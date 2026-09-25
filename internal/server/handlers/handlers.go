@@ -347,6 +347,36 @@ func (h *Handlers) HandleRoot(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// userMetadata returns client-supplied metadata while keeping ARMOR's
+// reserved metadata namespace private to the proxy.
+func userMetadata(r *http.Request) map[string]string {
+	metadata := make(map[string]string)
+	for key, values := range r.Header {
+		lowerKey := strings.ToLower(key)
+		if !strings.HasPrefix(lowerKey, "x-amz-meta-") ||
+			strings.HasPrefix(lowerKey, "x-amz-meta-armor-") || len(values) == 0 {
+			continue
+		}
+		metadata[lowerKey] = strings.Join(values, ",")
+	}
+	return metadata
+}
+
+func mergeUserMetadata(metadata map[string]string, r *http.Request) {
+	for key, value := range userMetadata(r) {
+		metadata[key] = value
+	}
+}
+
+func writeUserMetadataHeaders(w http.ResponseWriter, metadata map[string]string) {
+	for key, value := range metadata {
+		lowerKey := strings.ToLower(key)
+		if strings.HasPrefix(lowerKey, "x-amz-meta-") && !strings.HasPrefix(lowerKey, "x-amz-meta-armor-") {
+			w.Header().Set(lowerKey, value)
+		}
+	}
+}
+
 // PutObject handles S3 PutObject with encryption.
 // For small files (<10MB), it buffers in memory.
 // For larger files, it uses streaming encryption via temp files to avoid
@@ -571,6 +601,7 @@ func (h *Handlers) PutObject(w http.ResponseWriter, r *http.Request, bucket, key
 		Compressed:      compressed,
 		CompressionType: backend.CompressionType(compressionType),
 	}).ToMetadata()
+	mergeUserMetadata(meta, r)
 
 	// Upload to B2 with prefix applied
 	prefixedKey := h.applyPrefix(key)
@@ -885,6 +916,7 @@ func (h *Handlers) putObjectStreaming(ctx context.Context, w http.ResponseWriter
 		ETag:          etag,
 		KeyID:         keyID,
 	}).ToMetadata()
+	mergeUserMetadata(meta, r)
 
 	// Upload to B2 with prefix applied using streaming reader
 	prefixedKey := h.applyPrefix(key)
@@ -2259,11 +2291,17 @@ func parseRangeHeader(header string, totalSize int64) (start, end int64, err err
 // HeadObject handles S3 HeadObject.
 func (h *Handlers) HeadObject(w http.ResponseWriter, r *http.Request, bucket, key string) {
 	ctx := r.Context()
+	prefixedKey := h.applyPrefix(key)
 
 	// Fast path: serve from the in-memory manifest index when available,
 	// avoiding a B2 HeadObject round-trip entirely.
 	if h.manifest != nil {
 		if entry, ok := h.manifest.Lookup(bucket, key); ok {
+			if _, manifestMetadata, err := h.readManifest(ctx, bucket, key); err == nil {
+				writeUserMetadataHeaders(w, manifestMetadata)
+			} else if info, err := h.backend.Head(ctx, bucket, prefixedKey); err == nil {
+				writeUserMetadataHeaders(w, info.Metadata)
+			}
 			if status := checkConditionalRequest(r, entry.ETag, entry.LastModified); status != 0 {
 				if status == http.StatusNotModified {
 					w.Header().Set("ETag", fmt.Sprintf(`"%s"`, entry.ETag))
@@ -2285,7 +2323,6 @@ func (h *Handlers) HeadObject(w http.ResponseWriter, r *http.Request, bucket, ke
 	}
 
 	// Manifest miss or disabled: fall back to a B2 HeadObject call.
-	prefixedKey := h.applyPrefix(key)
 	info, err := h.backend.Head(ctx, bucket, prefixedKey)
 	if err != nil {
 		h.writeError(w, r, "NoSuchKey", "Object not found", 404)
@@ -2329,6 +2366,7 @@ func (h *Handlers) HeadObject(w http.ResponseWriter, r *http.Request, bucket, ke
 	w.Header().Set("ETag", fmt.Sprintf(`"%s"`, etag))
 	w.Header().Set("Accept-Ranges", "bytes")
 	w.Header().Set("Last-Modified", info.LastModified.UTC().Format(http.TimeFormat))
+	writeUserMetadataHeaders(w, info.Metadata)
 
 	w.WriteHeader(http.StatusOK)
 }
@@ -3162,6 +3200,7 @@ func (h *Handlers) CreateMultipartUpload(w http.ResponseWriter, r *http.Request,
 			Created:        time.Now(),
 			ContentType:    contentType,
 			KeyID:          keyID,
+			Metadata:       userMetadata(r),
 			FormatVersion:  3,
 		}
 		if err := manager.SaveMetadataV3(ctx, metadata); err != nil {
@@ -3183,6 +3222,7 @@ func (h *Handlers) CreateMultipartUpload(w http.ResponseWriter, r *http.Request,
 			Created:        time.Now(),
 			ContentType:    contentType,
 			KeyID:          keyID,
+			Metadata:       userMetadata(r),
 			PartHMACs:      make(map[int]string),
 			PartSizes:      make(map[int]int64),
 			FormatVersion:  2,
@@ -3287,6 +3327,7 @@ func (h *Handlers) UploadPart(w http.ResponseWriter, r *http.Request, bucket, ke
 			BlockSize:         metadata.BlockSize,
 			ContentType:       metadata.ContentType,
 			KeyID:             metadata.KeyID,
+			Metadata:          metadata.Metadata,
 			PartSize:          metadata.PartSize,
 			NonUniformParts:   metadata.NonUniformParts,
 			Poisoned:          metadata.Poisoned,
@@ -3812,6 +3853,7 @@ func (h *Handlers) CompleteMultipartUpload(w http.ResponseWriter, r *http.Reques
 			BlockSize:         metadata.BlockSize,
 			ContentType:       metadata.ContentType,
 			KeyID:             metadata.KeyID,
+			Metadata:          metadata.Metadata,
 			PartSize:          metadata.PartSize,
 			NonUniformParts:   metadata.NonUniformParts,
 			Poisoned:          metadata.Poisoned,
@@ -4202,6 +4244,9 @@ func (h *Handlers) CompleteMultipartUpload(w http.ResponseWriter, r *http.Reques
 		ETag:           etag,
 		KeyID:          state.KeyID,
 	}).ToMetadata()
+	for key, value := range state.Metadata {
+		meta[key] = value
+	}
 
 	// Add multipart flag to indicate HMAC table is external
 	meta["x-amz-meta-armor-multipart"] = "true"

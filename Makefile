@@ -9,6 +9,7 @@ VERSION ?= $(shell cat VERSION)
 # runs toolchain-check to warn when it differs. There are deliberately no
 # machine-specific toolchain paths here.
 GO ?= go
+PYTHON ?= python3
 TOOLCHAIN := $(shell awk '$$1 == "toolchain" { print $$2; exit }' go.mod)
 CGO_ENABLED ?= 0
 GOOS ?= $(shell $(GO) env GOOS)
@@ -30,7 +31,7 @@ BINARIES := $(notdir $(wildcard $(CMDDIR)/*))
 # Docker build arguments
 DOCKER_BUILD := docker build --build-arg VERSION=$(VERSION)
 
-.PHONY: all build toolchain-check test test-integration lint docker compat test-docker-demo dod release clean help
+.PHONY: all build toolchain-check test test-integration lint docker compat compat-boto3 test-docker-demo dod release clean help
 
 all: build test lint
 
@@ -80,10 +81,21 @@ docker: Dockerfile Dockerfile.test
 	$(DOCKER_BUILD) -t ronaldraygun/armor-test:$(VERSION) -f Dockerfile.test .
 	@echo "Docker images built successfully"
 
-## compat: Run AWS CLI / rclone compatibility tests
+## compat: Run AWS CLI / rclone compatibility tests (and boto3 when endpoint mode is set)
 compat:
 	@echo "Running AWS CLI / rclone compatibility tests..."
 	CGO_ENABLED=$(CGO_ENABLED) $(GO) test -v $(TESTDIR)/aws-cli-compatibility/...
+	@if [ -n "$${ARMOR_COMPAT_ENDPOINT:-}" ]; then \
+		$(MAKE) compat-boto3; \
+	else \
+		echo "Skipping built-image boto3 leg: set ARMOR_COMPAT_ENDPOINT and ARMOR_COMPAT_* credentials to enable it."; \
+	fi
+
+## compat-boto3: Run boto3 against a running built ARMOR image in endpoint mode
+compat-boto3:
+	@test -n "$${ARMOR_COMPAT_ENDPOINT:-}" || { echo "ARMOR_COMPAT_ENDPOINT is required" >&2; exit 2; }
+	@echo "Running boto3 compatibility test against $${ARMOR_COMPAT_ENDPOINT}..."
+	$(PYTHON) $(TESTDIR)/test_s3_basic_operations.py
 
 ## test-docker-demo: Run the README Docker demo smoke test (requires Docker)
 test-docker-demo:

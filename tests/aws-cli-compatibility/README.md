@@ -6,7 +6,7 @@ verifies that the real `aws` CLI (`s3 cp` / `ls` / `rm` / `sync`, plus
 objects through ARMOR.
 
 This is the plan's third pillar of multipart/transfer coverage alongside the
-boto3-driven `tests/test_s3_basic_operations.py` and the Go-level
+production-image boto3 test in `tests/test_s3_basic_operations.py` and the Go-level
 `internal/server/handlers/handlers_test.go` / `internal/dashboard/*_test.go`
 suites.
 
@@ -59,6 +59,21 @@ curl https://rclone.org/install.sh | sudo bash   # see https://rclone.org/instal
 
 go test -race ./tests/aws-cli-compatibility/
 ```
+
+The built-image boto3 leg runs in endpoint mode, using botocore's real SigV4
+signer and transfer manager rather than a hand-written request signer:
+
+```bash
+ARMOR_COMPAT_ENDPOINT=http://127.0.0.1:9000 \
+ARMOR_COMPAT_ACCESS_KEY=armor \
+ARMOR_COMPAT_SECRET_KEY=armor-demo-secret \
+ARMOR_BUCKET=demo-bucket \
+python3 tests/test_s3_basic_operations.py
+```
+
+`make compat` runs this leg automatically when `ARMOR_COMPAT_ENDPOINT` is set.
+The image compatibility gate starts the freshly built image, exports these
+variables, and runs the boto3 test with the AWS CLI and rclone tests.
 
 The `TestShortFinalPart_*` multipart integration tests
 (`short_final_part_test.go`) are gated behind the `awscli_integration` build

@@ -43,16 +43,17 @@ func IsPlaceholderPlaintextSHA(s string) bool {
 // resolved beneath <ARMOR_PREFIX>.armor/ when a prefix is in force (ADR-001
 // "Internal Namespaces"; ADR-003 sidecar addendum).
 type MultipartState struct {
-	UploadID       string    `json:"upload_id"`
-	Bucket         string    `json:"bucket"`
-	Key            string    `json:"key"`
-	IV             []byte    `json:"iv"`
-	WrappedDEK     []byte    `json:"wrapped_dek"`
-	MEKFingerprint string    `json:"mek_fingerprint,omitempty"` // 16-char hex fingerprint of MEK used (v2 format)
-	BlockSize      int       `json:"block_size"`
-	Created        time.Time `json:"created"`
-	ContentType    string    `json:"content_type"`
-	KeyID          string    `json:"key_id"` // Key identifier for multi-key support
+	UploadID       string            `json:"upload_id"`
+	Bucket         string            `json:"bucket"`
+	Key            string            `json:"key"`
+	IV             []byte            `json:"iv"`
+	WrappedDEK     []byte            `json:"wrapped_dek"`
+	MEKFingerprint string            `json:"mek_fingerprint,omitempty"` // 16-char hex fingerprint of MEK used (v2 format)
+	BlockSize      int               `json:"block_size"`
+	Created        time.Time         `json:"created"`
+	ContentType    string            `json:"content_type"`
+	KeyID          string            `json:"key_id"`             // Key identifier for multi-key support
+	Metadata       map[string]string `json:"metadata,omitempty"` // Client-supplied x-amz-meta-* headers
 
 	// Per-part HMACs (part number -> HMACs for each block in that part)
 	// Stored as base64-encoded concatenation of all block HMACs
@@ -115,17 +116,18 @@ type MultipartState struct {
 // for format version 3. This contains only the upload-level cryptographic material and
 // configuration, not per-part data (which lives in part-<n>.json files).
 type MultipartMetadataV3 struct {
-	UploadID       string    `json:"upload_id"`
-	Bucket         string    `json:"bucket"`
-	Key            string    `json:"key"`
-	IV             []byte    `json:"iv"`
-	WrappedDEK     []byte    `json:"wrapped_dek"`
-	MEKFingerprint string    `json:"mek_fingerprint,omitempty"` // 16-char hex fingerprint of MEK used (v2 format)
-	BlockSize      int       `json:"block_size"`
-	Created        time.Time `json:"created"`
-	ContentType    string    `json:"content_type"`
-	KeyID          string    `json:"key_id"`         // Key identifier for multi-key support
-	FormatVersion  int       `json:"format_version"` // Always 3 for this structure
+	UploadID       string            `json:"upload_id"`
+	Bucket         string            `json:"bucket"`
+	Key            string            `json:"key"`
+	IV             []byte            `json:"iv"`
+	WrappedDEK     []byte            `json:"wrapped_dek"`
+	MEKFingerprint string            `json:"mek_fingerprint,omitempty"` // 16-char hex fingerprint of MEK used (v2 format)
+	BlockSize      int               `json:"block_size"`
+	Created        time.Time         `json:"created"`
+	ContentType    string            `json:"content_type"`
+	KeyID          string            `json:"key_id"`             // Key identifier for multi-key support
+	Metadata       map[string]string `json:"metadata,omitempty"` // Client-supplied x-amz-meta-* headers
+	FormatVersion  int               `json:"format_version"`     // Always 3 for this structure
 
 	// PartSize is the uniform part size P pinned from part NUMBER 1 (ADR-015).
 	// This field is set when part 1 arrives and is used to validate subsequent
