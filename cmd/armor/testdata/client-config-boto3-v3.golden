@@ -1,0 +1,35 @@
+# Boto3 configuration for ARMOR
+# Python code example
+
+import boto3
+import os
+
+# ARMOR endpoint configuration
+endpoint_url = "http://localhost:9000"
+
+# Credentials (set these environment variables)
+# Using named credential: backup-writer
+# Get these from your ARMOR deployment:
+access_key = os.environ.get('AWS_ACCESS_KEY_ID')
+secret_key = os.environ.get('AWS_SECRET_ACCESS_KEY')
+
+# Create S3 client with path-style addressing
+s3 = boto3.client('s3',
+    endpoint_url=endpoint_url,
+    aws_access_key_id=access_key,
+    aws_secret_access_key=secret_key,
+    region_name='us-east-1',  # Required but unused by ARMOR
+    config=boto3.session.Config(s3={'addressing_style': 'path'})
+)
+
+# Example usage
+# bucket = "my-bucket"
+# response = s3.list_objects_v2(Bucket=bucket)
+# for obj in response.get('Contents', []):
+#     print(obj['Key'])
+
+# Multipart (write format v3, ARMOR default): no part-order or part-size
+# contract -- any part sizes, any order, any concurrency. Only B2's own
+# rule applies: non-final parts must be at least 5 MiB.
+# boto3's TransferConfig defaults work unmodified: parts upload concurrently out-of-order, and the SDK retries 5xx (which covers v2's SlowDown deferral).
+# Tested compatibility matrix: docs/multipart-client-compatibility.md

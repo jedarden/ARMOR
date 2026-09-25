@@ -1,0 +1,27 @@
+# DuckDB configuration for ARMOR
+# SQL commands for httpfs extension
+
+INSTALL httpfs;
+LOAD httpfs;
+
+# Set S3 endpoint and region
+SET s3_endpoint = 'http://localhost:9000';
+SET region = 'us-east-1';  -- Required but unused by ARMOR
+
+# Configure credentials
+-- Set these to your ARMOR_AUTH_ACCESS_KEY_ID and ARMOR_AUTH_SECRET_KEY
+SET s3_access_key_id = 'YOUR_ACCESS_KEY_ID';
+SET s3_secret_access_key = 'YOUR_SECRET_ACCESS_KEY';
+
+-- Enable path-style addressing (required for B2/ARMOR)
+SET s3_use_ssl = true;
+SET s3_url_style = 'path';  -- or 'virtual' for path-style
+
+-- Example: Read a Parquet file
+-- SELECT * FROM read_parquet('s3://parquet-bucket/path/to/file.parquet');
+
+-- Multipart (write format v3, ARMOR default): no part-order or part-size
+-- contract -- any part sizes, any order, any concurrency. Only B2's own
+-- rule applies: non-final parts must be at least 5 MiB.
+-- DuckDB/httpfs is a reader (GET / Range / HEAD) and is unaffected by the multipart upload contract on either format.
+-- Tested compatibility matrix: docs/multipart-client-compatibility.md

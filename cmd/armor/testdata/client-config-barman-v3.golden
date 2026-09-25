@@ -1,0 +1,23 @@
+# Barman Cloud configuration for ARMOR
+# For PostgreSQL backup via barman-cloud-backup / barman-cloud-wal-archive
+
+# Environment variables for Barman Cloud
+export AWS_ENDPOINT_URL=http://localhost:9000
+export AWS_REGION=us-east-1  # Required but unused by ARMOR
+
+# Credentials
+# Set these from your ARMOR_AUTH_ACCESS_KEY_ID and ARMOR_AUTH_SECRET_KEY
+export AWS_ACCESS_KEY_ID=YOUR_ACCESS_KEY_ID
+export AWS_SECRET_ACCESS_KEY=YOUR_SECRET_ACCESS_KEY
+
+# Barman cloud commands
+# barman-cloud-backup list <server> <bucket>
+# barman-cloud-backup backup <server> <bucket> <postgres_data_dir>
+# barman-cloud-wal-archive --endpoint-url $AWS_ENDPOINT_URL <bucket> <server>
+# barman-cloud-wal-restore --endpoint-url $AWS_ENDPOINT_URL <bucket> <server> <wal_file> <dest_dir>
+
+# Multipart (write format v3, ARMOR default): no part-order or part-size
+# contract -- any part sizes, any order, any concurrency. Only B2's own
+# rule applies: non-final parts must be at least 5 MiB.
+# barman's tar-aligned parts (chunk_size + N*512) are accepted: ADR-011 non-uniform mode on v2; no contract on v3.
+# Tested compatibility matrix: docs/multipart-client-compatibility.md

@@ -1,0 +1,28 @@
+# Litestream configuration for ARMOR
+# Add to litestream.yml or use as environment variables
+
+# Litestream environment variables
+LITESTREAM_ENDPOINT=http://armor.example.com:9000
+LITESTREAM_REGION=us-east-1  # Required but unused by ARMOR
+
+# Credentials
+# Set these from your ARMOR_AUTH_ACCESS_KEY_ID and ARMOR_AUTH_SECRET_KEY
+LITESTREAM_ACCESS_KEY_ID=YOUR_ACCESS_KEY_ID
+LITESTREAM_SECRET_ACCESS_KEY=YOUR_SECRET_ACCESS_KEY
+
+# Or in litestream.yml:
+dbs:
+  - path: /path/to/db.sqlite
+    replicas:
+      - type: s3
+        endpoint: http://armor.example.com:9000
+        bucket: YOUR_BUCKET
+        region: us-east-1
+        access-key-id: YOUR_ACCESS_KEY_ID
+        secret-access-key: YOUR_SECRET_ACCESS_KEY
+
+# Multipart (write format v3, ARMOR default): no part-order or part-size
+# contract -- any part sizes, any order, any concurrency. Only B2's own
+# rule applies: non-final parts must be at least 5 MiB.
+# litestream's multipart snapshots work unmodified on both formats; no serial knob exists or is needed.
+# Tested compatibility matrix: docs/multipart-client-compatibility.md
