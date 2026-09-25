@@ -92,7 +92,7 @@ This means:
 - `VERIFIER_CHECK_INTERVAL`: Verification check interval (default: `6h`)
 - `VERIFIER_SAMPLE_SIZE`: Historical sample size (default: `10`)
 - `VERIFIER_HTTP_LISTEN`: HTTP listen address (default: `:9002`)
-- `VERIFIER_DR_DRILL_INTERVAL`: Direct-only DR drill interval (default: disabled)
+- `VERIFIER_DR_DRILL_INTERVAL`: Direct-only DR drill interval (default: disabled). See [Scheduled DR drills](#scheduled-dr-drills-production-cadence) for the production cadence, scheduling semantics, and the safe-pause procedure.
 - `VERIFIER_RUN_TIMEOUT`: Per-run deadline for verification and DR-drill runs (default: `2h`). A run that exceeds it — a discovery walk wedged in a slow bucket region, or a stalled restore — fails visibly (failed-enumeration ledger and gauges, a log line naming the deadline) instead of silently blocking the loop. Discovery also logs progress roughly every 30s, so a long enumeration is observable rather than presenting as a hung verifier.
 
 ## HTTP Endpoints
@@ -105,6 +105,88 @@ This means:
 - `GET /readyz`: Readiness check
 - `GET /metrics`: Prometheus metrics
 
+## Scheduled DR drills (production cadence)
+
+`VERIFIER_DR_DRILL_INTERVAL` > 0 starts a second scheduler leg: the direct-only
+DR drill (`ModeDRDrill` — MEK unwrap → raw B2 fetch → ADR-003-aware decrypt →
+checksum → artifact assertion, the "ARMOR server is gone" recovery from
+[ADR-004](adr/004-continuous-restore-verification.md)) runs for every
+configured bucket on its own ticker, independent of `VERIFIER_CHECK_INTERVAL`.
+
+**Production cadence:** all four restore-verifier Deployments set
+`VERIFIER_DR_DRILL_INTERVAL: "24h"` (declarative-config commit `1550e3e8`,
+2026-08-28): `iad-ci/armor`, `iad-kalshi/armor`,
+`ord-devimprint/devimprint`, and `rs-manager/armor` (`restore-verifier-acb`).
+Live pods confirm scheduled drills execute and report — e.g. iad-ci
+2026-09-24 and rs-manager 2026-09-25 both logged a full drill with every
+sampled object recovered direct-only.
+
+### Scheduling semantics
+
+- **First drill one full interval after pod start**, deliberately not chained
+  behind the startup dual-path run (armor-851dca86). The schedule is
+  interval-from-start, not wall-clock-anchored: a pod restart resets it, and a
+  crash-looping pod never accumulates backlog.
+- **At most one run at a time.** Dual runs and drills share one scheduler
+  loop; a tick that lands while a run executes is dropped, so runs never chain
+  back-to-back — the next run starts on the following tick.
+- **A drill reuses the most recent dual-path enumeration** instead of
+  re-walking the bucket (on a cold start it enumerates once itself).
+- **Each drill run is bounded by `VERIFIER_RUN_TIMEOUT`** like a dual run. A
+  run that hits the deadline records a failed enumeration: the drill-restore-age
+  gauge advances and the drill failure counter increments, so the failure is
+  visible rather than silent.
+
+### How results are reported
+
+- `GET /status` and `GET /bucket?bucket=X` carry the `drill_*` state fields
+  (`drill_last_verification`, `drill_last_success`, `drill_total_objects`,
+  `drill_verified_objects`, `drill_failed_objects`) — deliberately separate
+  from the dual-path fields: a drill that succeeds while the ARMOR read path is
+  down records progress without claiming dual-path health, and a dual run never
+  advances the `drill_*` fields.
+- Prometheus gauges, per bucket: `armor_drill_last_verified_timestamp`,
+  `armor_drill_last_success_timestamp`, `armor_drill_verified_object_ratio`,
+  `armor_drill_failures_total` (full series contract:
+  [docs/observability-contract.md](observability-contract.md)).
+- Log lines name each phase: `Starting DR-drill (direct-only) verification
+  run`, `DR-drilling bucket (direct-only): <bucket>`,
+  `Bucket <bucket> DR-drill complete: N/N recovered direct-only`.
+- Escalation stays dual-path-owned: a drill failure never files a bead — the
+  next dual run re-finds the failure and files there. Drill failures surface
+  through the gauges and logs only.
+- Scheduler-level proof: `TestStartScheduledDrillExecutesAndReports` (a
+  started verifier must drill on its own ticker, recover direct-only, publish
+  the gauges, and leave the dual-path ledger untouched) and
+  `TestStartWithoutDrillIntervalLeavesDrillPaused` (unset interval = paused)
+  in `internal/restoreverifier/drill_schedule_test.go`.
+
+### Pausing for maintenance
+
+Drills are read-only (B2 range reads plus local decryption — they never write
+to the bucket), so pausing is about read traffic and honest signals, never
+data safety.
+
+**To pause:** set `VERIFIER_DR_DRILL_INTERVAL` to `"0"` (or remove the env
+entry) in the deployment's manifest in `declarative-config` and let ArgoCD
+sync — the env change rolls the pod. Do not `kubectl patch`. Paused means:
+
+- no scheduled drill fires (pinned by
+  `TestStartWithoutDrillIntervalLeavesDrillPaused`);
+- the scheduler loop and dual-path verification continue unchanged;
+- nothing queues up — no drill debt accumulates; the first drill after
+  resuming is simply one interval after the new value takes effect;
+- on-demand drills still work: `POST /trigger?mode=dr-drill` is unaffected,
+  so a post-maintenance recovery proof is always available.
+
+**When to pause:** B2 maintenance that could fail raw object reads (application-key
+rotation, lifecycle changes) so the drill failure counters record real
+corruption rather than an environmental outage, and capacity-sensitive windows
+(a drill downloads its full sample through the direct path). For a B2-only
+window, leave the dual path running — its ARMOR read path goes through
+Cloudflare and may still be healthy; if B2 is fully down both paths fail,
+which is the honest signal.
+
 ## Metrics
 
 The restore-verifier exposes Prometheus metrics:
@@ -113,6 +195,15 @@ The restore-verifier exposes Prometheus metrics:
 - `armor_restore_verification_duration_seconds`: Verification run duration
 - `armor_restore_verification_failures_total`: Total verification failures
 - `armor_restore_path_comparison_total`: Dual-path comparison results
+- `armor_drill_last_verified_timestamp`: Last direct-only DR-drill attempt, per bucket
+- `armor_drill_last_success_timestamp`: Last drill in which direct-only recovery was proven (0 = never), per bucket
+- `armor_drill_verified_object_ratio`: Latest drill run's recovered/total ratio, per bucket
+- `armor_drill_failures_total`: Cumulative drill failure count, per bucket
+
+The per-bucket restorability gauges backing the ADR-004 alerts
+(`armor_last_verified_restore_timestamp`, `armor_verified_object_ratio`,
+`armor_restore_verification_failures_total`) and the full series contract are
+pinned in [docs/observability-contract.md](observability-contract.md).
 
 ## Operational Notes
 
