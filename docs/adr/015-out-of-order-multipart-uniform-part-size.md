@@ -1,6 +1,6 @@
 # ADR-015: Out-of-order multipart parts via a uniform-part-size contract
 
-**Status:** Implemented (design decided 2026-07-19; shipped on main 2026-07-19; amended 2026-08-07 for the single-part alignment exemption — bf-5tol4d core uniform-part-size contract, bf-4oi87m part-1 pinning + `503 SlowDown` deferral of earlier arrivals; amends ADR-003 §4)
+**Status:** Implemented (design decided 2026-07-19; shipped on main 2026-07-19; amended 2026-08-07 for the single-part alignment exemption — bf-5tol4d core uniform-part-size contract, bf-4oi87m part-1 pinning + `503 SlowDown` deferral of earlier arrivals; amends ADR-003 §4). **Scope (2026-09 reconciliation): these rules govern the legacy format v2 write path (`ARMOR_FORMAT_VERSION=2`).** The default format v3 ([ADR-016](016-multipart-metadata-finalization.md)) encrypts every part in its own counter namespace and imposes **no** part-order or part-size contract at all. The client-facing statement of both contracts — with the executable test matrix — is [docs/multipart-client-compatibility.md](../multipart-client-compatibility.md)
 **Date:** 2026-07-19
 
 ## Context
@@ -18,7 +18,7 @@ Support out-of-order and concurrent part uploads by fixing the CTR geometry up f
 3. **The final part is the only part allowed to differ:** a part with size < `P` is accepted (its offset still needs only `P` and `N`) and presumed final. At `CompleteMultipartUpload`, validate the contract: every part except the highest-numbered one must have size exactly `P`. Any violation → hard reject (`InvalidPart`/`InvalidPartSize`), never storage.
 4. **Optimistic-`P` failure mode stays loud.** If the very first arriving part happens to be the short final part, `P` gets pinned too small and a later, larger part contradicts it. On the first contradiction (a part with size > `P`, or a second distinct size among non-final parts) ARMOR rejects the offending `UploadPart` and poisons the upload id so `CompleteMultipartUpload` fails with a clear message telling the client to retry the upload. With real clients this ordering is vanishingly rare (uploaders start parts roughly in order; concurrency reorders completions, not initiations by much) — and when it happens the result is a failed upload, never a corrupt object. This preserves ADR-002/ADR-003's invariant: any pattern ARMOR cannot encrypt correctly must fail loudly.
 5. **Retries stay idempotent:** re-uploading part `N` re-encrypts at the same offset (same `N`, same `P`). Same-size re-uploads simply overwrite; a retry with a different size hits rule 4.
-6. **Everything downstream is unchanged:** the headerless object layout, the `x-amz-meta-armor-multipart` marker, and the sidecar HMAC table with absolute block indices (ADR-003 §1–3) all work identically — per-part HMAC entries were already indexed absolutely.
+6. **Everything downstream is unchanged:** the headerless object layout, the `x-amz-meta-armor-multipart` marker, and the sidecar HMAC table with absolute block indices (ADR-003 §1–3) all work identically — per-part HMAC entries were already indexed absolutely. (One later refinement: [ADR-016](016-multipart-metadata-finalization.md), 2026-08-31, replaced the metadata-replace finalization with an atomic `<key>.armor-manifest` manifest object, which also closed ADR-003's bf-1v2ehf placeholder-SHA gap. The read contract is unchanged.)
 
 ## Alternatives considered
 
@@ -55,6 +55,8 @@ Alignment exists for exactly one purpose: to keep the `(N−1)×P/blockSize` off
 A non-aligned regular part — one that another part *is* placed after — is still rejected exactly as before.
 
 Acceptance: a single-part multipart upload of 11,917,312 bytes must round-trip byte-identically, including a range read inside the partial trailing block (`TestMultipartLonePartByteVerification`).
+
+*(Reconciliation note, 2026-09: this amendment's "single-part-only" consequence — rules 1–2 above, which rejected and poisoned any part >1 after a non-aligned part 1 — was itself superseded days later by [ADR-011](011-barman-stays-on-armor-non-uniform-multipart.md). A non-aligned part 1 now switches the upload to ADR-011 non-uniform mode — cumulative per-part offsets with boundary-block HMAC backfill — instead of forbidding further parts, and in that mode a part >1 of any size is accepted (deferred with retryable `503 SlowDown` until its predecessors arrive, since offsets are cumulative). `TestMultipartSuspectPatterns/U8_second_part_after_non_aligned_part1_accepted_under_adr011` pins this. On format v3 the whole question is moot: no part-order or part-size contract at all.)*
 
 ## Valid Upload Patterns (Examples)
 
@@ -147,6 +149,8 @@ Part 2: 16,777,216 bytes  (16 MiB)                 ✗ rejected, upload poisoned
 ```
 
 Reason: Part 2's offset would be `(2-1) × 11,917,312 / 65536 = 181.8` blocks (NOT on boundary), corrupting encryption.
+
+*(Superseded by [ADR-011](011-barman-stays-on-armor-non-uniform-multipart.md) — see the reconciliation note under the 2026-08-07 amendment: a non-aligned part 1 now switches the upload to non-uniform mode and part 2 is accepted. This example is historical.)*
 
 ## Edge Cases
 

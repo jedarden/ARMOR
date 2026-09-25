@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -302,6 +303,157 @@ func TestMultipartClientCompat_Serial(t *testing.T) {
 
 			completeMultipart(t, h, bucket, key, uploadID, etags)
 			compatVerifyRoundTrip(t, h, bucket, key, want)
+		})
+	}
+}
+
+// TestMultipartClientCompat_Readers is the matrix's "DuckDB / pyiceberg /
+// readers" row: readers never write, so the contract they depend on is that a
+// completed multipart object is plain S3 to READ on either write format —
+// full GET byte-identical, a bounded Range straddling a part boundary, the
+// suffix Range (parquet footer) pattern, and HEAD reporting the plaintext
+// length rather than the ciphertext length.
+func TestMultipartClientCompat_Readers(t *testing.T) {
+	for _, fv := range formatVersions {
+		t.Run(fmt.Sprintf("format_v%d", fv), func(t *testing.T) {
+			_, _, h := compatMatrixSetup(t, fv)
+			bucket, key := "test-bucket", fmt.Sprintf("readers-v%d.bin", fv)
+
+			const fullParts = 3
+			const fullSize = 5 * 1024 * 1024 // block-aligned, ≥ B2's 5 MiB minimum
+			finalSize := 1024*1024 + 12345   // short final part (< P, unaligned)
+
+			parts := make([][]byte, fullParts+1)
+			var want []byte
+			for p := 1; p <= fullParts+1; p++ {
+				size := fullSize
+				if p == fullParts+1 {
+					size = finalSize
+				}
+				parts[p-1] = compatPart(t, p, size)
+				want = append(want, parts[p-1]...)
+			}
+
+			uploadID := initiateMultipart(t, h, bucket, key)
+			etags := make([]string, fullParts+1)
+			for p := 1; p <= fullParts+1; p++ {
+				etags[p-1] = uploadPart(t, h, bucket, key, uploadID, p, parts[p-1])
+			}
+			completeMultipart(t, h, bucket, key, uploadID, etags)
+
+			// Full GET: byte-for-byte.
+			compatVerifyRoundTrip(t, h, bucket, key, want)
+
+			// Bounded Range straddling the part-1/part-2 boundary — the
+			// read path must splice the two parts' independent ciphertexts
+			// into one continuous plaintext range.
+			lo, hi := fullSize-100, fullSize+99
+			req := httptest.NewRequest(http.MethodGet, "/"+bucket+"/"+key, nil)
+			req.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", lo, hi))
+			w := httptest.NewRecorder()
+			h.HandleRoot(w, req)
+			if w.Code != http.StatusPartialContent {
+				t.Fatalf("range GET failed: status %d: %s", w.Code, w.Body.String())
+			}
+			if !bytes.Equal(w.Body.Bytes(), want[lo:hi+1]) {
+				t.Fatalf("range GET across the part-1/part-2 boundary mismatch (bytes=%d-%d)", lo, hi)
+			}
+
+			// Suffix Range — the parquet footer access pattern (matrix R3/R4).
+			req = httptest.NewRequest(http.MethodGet, "/"+bucket+"/"+key, nil)
+			req.Header.Set("Range", "bytes=-1000")
+			w = httptest.NewRecorder()
+			h.HandleRoot(w, req)
+			if w.Code != http.StatusPartialContent {
+				t.Fatalf("suffix range GET failed: status %d: %s", w.Code, w.Body.String())
+			}
+			if !bytes.Equal(w.Body.Bytes(), want[len(want)-1000:]) {
+				t.Fatal("suffix range GET (parquet footer pattern) content mismatch")
+			}
+
+			// HEAD: plaintext length, not ciphertext length.
+			req = httptest.NewRequest(http.MethodHead, "/"+bucket+"/"+key, nil)
+			w = httptest.NewRecorder()
+			h.HandleRoot(w, req)
+			if w.Code != http.StatusOK {
+				t.Fatalf("HEAD failed: status %d", w.Code)
+			}
+			if cl := w.Header().Get("Content-Length"); cl != strconv.Itoa(len(want)) {
+				t.Fatalf("HEAD Content-Length = %s, want %d", cl, len(want))
+			}
+		})
+	}
+}
+
+// TestMultipartContract_MinPartSizeBackstop pins the ONE multipart rule that
+// remains on the default v3 write format (and the last gate on v2): B2's
+// ≥ 5 MiB non-final-part minimum, backstopped by ARMOR at
+// CompleteMultipartUpload against part 1's size — the README's compatibility
+// claim scopes itself to exactly this rule, so it needs an executable row.
+// A multi-part upload whose uniform part size is below the minimum is
+// rejected 400 InvalidPartSize before anything is assembled, and no object is
+// stored (ADR-002's loud-fail invariant). A lone part is exempt, matching B2.
+func TestMultipartContract_MinPartSizeBackstop(t *testing.T) {
+	for _, fv := range formatVersions {
+		t.Run(fmt.Sprintf("format_v%d", fv), func(t *testing.T) {
+			_, rb, h := compatMatrixSetup(t, fv)
+			bucket, key := "test-bucket", fmt.Sprintf("min-part-backstop-v%d.bin", fv)
+
+			const smallSize = 4 * 1024 * 1024 // block-aligned, but < B2's 5 MiB minimum
+			p1 := compatPart(t, 1, smallSize)
+			p2 := compatPart(t, 2, smallSize)
+
+			uploadID := initiateMultipart(t, h, bucket, key)
+
+			// Neither format rejects the parts themselves: ARMOR's gate for
+			// the minimum is at Complete (against part 1's size), so a client
+			// sees the failure exactly where B2's own rule would surface it.
+			etags := make([]string, 2)
+			etags[0] = uploadPart(t, h, bucket, key, uploadID, 1, p1)
+			etags[1] = uploadPart(t, h, bucket, key, uploadID, 2, p2)
+
+			// Complete is rejected: the uniform part size is below the minimum.
+			var xmlBody bytes.Buffer
+			xmlBody.WriteString("<CompleteMultipartUpload>")
+			for i, etag := range etags {
+				fmt.Fprintf(&xmlBody, "<Part><PartNumber>%d</PartNumber><ETag>%s</ETag></Part>", i+1, etag)
+			}
+			xmlBody.WriteString("</CompleteMultipartUpload>")
+			req := httptest.NewRequest(http.MethodPost,
+				fmt.Sprintf("/%s/%s?uploadId=%s", bucket, key, uploadID), &xmlBody)
+			w := httptest.NewRecorder()
+			h.HandleRoot(w, req)
+			if w.Code != http.StatusBadRequest {
+				t.Fatalf("complete below the 5 MiB non-final-part minimum must be 400, got %d: %s", w.Code, w.Body.String())
+			}
+			if !bytes.Contains(w.Body.Bytes(), []byte("InvalidPartSize")) {
+				t.Errorf("rejection must be InvalidPartSize, got: %s", w.Body.String())
+			}
+
+			// The loud-fail invariant: no violating object was ever stored.
+			getReq := httptest.NewRequest(http.MethodGet, "/"+bucket+"/"+key, nil)
+			getW := httptest.NewRecorder()
+			h.HandleRoot(getW, getReq)
+			if getW.Code != http.StatusNotFound {
+				t.Fatalf("GET after the rejected complete must be 404 (nothing stored), got %d: %s", getW.Code, getW.Body.String())
+			}
+			if n := rb.objectPutCount(bucket, key); n != 0 {
+				t.Fatalf("the object key was Put %d time(s) — a below-minimum upload must never store an object", n)
+			}
+		})
+
+		// B2 exempts a lone part from the 5 MiB minimum (a single part is by
+		// definition the final part); ARMOR's backstop matches with its
+		// len(parts) > 1 gate. Pins the boundary of the rule above.
+		t.Run(fmt.Sprintf("format_v%d/single_part_below_minimum_completes", fv), func(t *testing.T) {
+			_, _, h := compatMatrixSetup(t, fv)
+			bucket, key := "test-bucket", fmt.Sprintf("min-part-single-v%d.bin", fv)
+
+			part := compatPart(t, 1, 3*1024*1024) // < 5 MiB, block-aligned
+			uploadID := initiateMultipart(t, h, bucket, key)
+			etag := uploadPart(t, h, bucket, key, uploadID, 1, part)
+			completeMultipart(t, h, bucket, key, uploadID, []string{etag})
+			compatVerifyRoundTrip(t, h, bucket, key, part)
 		})
 	}
 }

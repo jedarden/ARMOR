@@ -72,7 +72,9 @@ needed on either format.
 
 ### What a client can still get wrong (both formats)
 
-- **Sub-5 MiB non-final parts** — B2's own rule; the upload fails upstream.
+- **Sub-5 MiB non-final parts** — B2's own rule; the upload fails upstream,
+  and ARMOR backstops it at `CompleteMultipartUpload` against part 1's size
+  on both formats. A lone part is exempt, matching B2.
 - **Retrying a part with a *different* size** (v2) — poisons the upload;
   abort and restart with the same part sizing.
 - **Never sending part 1** (v2) — completion fails with `InvalidPart` naming
@@ -212,6 +214,8 @@ go test -short ./tests/aws-cli-compatibility/
 | v3 no-contract semantics | `TestMultipartV3ConcurrentOutOfOrder`, `TestMultipartV3NoSlowDown`, `TestMultipartV3DistinctPartsReachBackendConcurrently`, `TestMultipartV3IndependentPartCounter` |
 | Real CLI binaries (not in CI image) | `TestAWSCLI_*`, `TestRclone_*` in `tests/aws-cli-compatibility/` — skip cleanly when `aws`/`rclone` are absent; the `TestVerify_*` SDK twins run always |
 | barman non-uniform parts, v2 | `TestMultipartSuspectPatterns/U8_non_block_aligned_regular_part_accepted_under_adr011` (round-trip verified) |
+| Readers: GET / Range / HEAD, both formats | `TestMultipartClientCompat_Readers/{format_v3,format_v2}` — full GET, a bounded Range straddling the part-1/part-2 boundary, the suffix-Range footer pattern, and HEAD plaintext length, byte-verified on each format |
+| 5 MiB non-final minimum (the one remaining rule), both formats | `TestMultipartContract_MinPartSizeBackstop/{format_v3,format_v2}` — a two-part upload below the minimum is rejected `InvalidPartSize` (400) at `CompleteMultipartUpload` and stores no object; `/single_part_below_minimum_completes` pins the B2-matching lone-part exemption on each format |
 | v2 contract violations poison loudly | `TestMultipartADR015Acceptance/second_short_part_poisons_no_object` in `multipart_routing_test.go` — a genuine contract contradiction (two short parts) is 400'd, the upload id is poisoned so `CompleteMultipartUpload` fails, and no object is stored |
 
 ## Related

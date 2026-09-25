@@ -332,8 +332,13 @@ configured; every gated call is audit-logged.
 
 The `decrypt` subcommand recovers encrypted objects without a running ARMOR
 server — it needs the MEK and either B2 access or a local copy of the object,
-and self-verifies every block it decrypts (recovered multipart output carries a
-placeholder plaintext SHA-256, so it will not match `sha256sum`, by design).
+and self-verifies every block it decrypts. Multipart objects carry no envelope
+header, so recovery is verified by the per-block HMAC table rather than a
+whole-object digest: multipart objects completed on current versions also
+declare the true plaintext SHA-256 in their manifest metadata (which `armor
+verify` enforces), while multipart objects completed before that fix carry
+only an empty-string placeholder — treat them as declaring no digest and rely
+on the per-block HMAC verification.
 Full runbook: [docs/disaster-recovery.md](docs/disaster-recovery.md).
 
 The `verify` subcommand audits objects offline the same way: it unwraps
