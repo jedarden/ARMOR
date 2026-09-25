@@ -2,7 +2,34 @@
 
 ## Status
 
-**Accepted** - Implemented, pending deployment
+**Accepted (2024-08-19). The V2 write mandate is historical — envelope v3 is
+the current write format.**
+
+Everything in this ADR about the V1 vulnerability and the V2 counter-stride
+fix remains accurate as a record. Its deployment-time rule — "Version 2 is
+mandatory for all new objects" — described the state when V2 was the newest
+format and does **not** describe current behavior: new objects are written
+as **Version 3** envelopes by default (`ARMOR_FORMAT_VERSION` defaults to
+`3`), and V2 is now a legacy format that stays readable and remains
+selectable as an escape hatch (`ARMOR_FORMAT_VERSION=2`). See
+[Current format state](#current-format-state) below and the
+[Envelope V3 Format](../format/envelope-v3.md) specification.
+
+## Current format state
+
+The version boundaries as of 2026-09:
+
+| Version | Status | Counter derivation | Reads | Writes |
+|---|---|---|---|---|
+| V1 (`0x01`) | **Unsafe legacy** — keystream reuse between adjacent blocks (this ADR); excluded from migration by default, must be passed explicitly (`include=v1,v2`) | legacy `IV[0:12] ‖ uint32(blockIndex)` | yes, legacy decrypt path | never |
+| V2 (`0x02`) | **Safe legacy** — sound counter stride; superseded as the write format | stride by `blockSize/16` | yes | only via `ARMOR_FORMAT_VERSION=2` |
+| V3 (`0x03`) | **Current** — default write format; per-part counters and per-(part,block) HMAC (see [Envelope V3 Format](../format/envelope-v3.md)) | `IV[0:8] ‖ uint16(part) ‖ uint32(block) ‖ uint16(aesBlock)` | yes | default for new objects |
+
+The zero-knowledge property the README claims holds for objects written or
+migrated to V2/V3; V1 objects must be migrated
+(`armor migrate --target v3`, runbook:
+[Format Migration Runbook](../runbooks/format-migration.md)) before the
+claim applies to them.
 
 ## Context
 
@@ -52,6 +79,13 @@ The vulnerable `makeCounter` pattern was duplicated in:
 
 ## Decision
 
+> **Historical framing (2024-08-19):** this section decided the V2 format.
+> V2's counter derivation is unchanged and still what every V2 object uses;
+> what has moved is the write target — new objects now default to V3
+> ([Envelope V3 Format](../format/envelope-v3.md)), which keeps V2's
+> disjoint-counter property and adds per-part counters and per-(part,block)
+> HMACs.
+
 ### Version 2 Envelope Format
 
 Introduce **Version 2** envelopes with fixed counter derivation:
@@ -69,9 +103,13 @@ This ensures:
 
 ### Backward Compatibility
 
+Historical rule at V2 introduction:
+
 - **Version 1 objects continue to decrypt with legacy derivation**
 - Version 1 encryption remains available for testing only
-- Version 2 is **mandatory for all new objects**
+- Version 2 was **mandatory for all new objects** at the time — this is no
+  longer the write rule; new objects default to V3 (see
+  [Current format state](#current-format-state))
 - Version field in `ARMORMetadata` determines derivation at decrypt time
 
 ### API Changes
@@ -81,7 +119,7 @@ This ensures:
 // Old (V1, vulnerable) - kept for backward compatibility
 enc, err := crypto.NewEncryptor(dek, iv, blockSize)
 
-// New (V2, fixed) - use for all new objects
+// New at the time (V2, fixed) — historical; new objects now write V3
 enc, err := crypto.NewEncryptorV2(dek, iv, blockSize)
 
 // Explicit version selection
@@ -102,20 +140,32 @@ dec, err := crypto.NewDecryptorWithVersion(dek, iv, blockSize, header.Version)
 const (
     Version1 = 0x01  // Legacy (vulnerable)
     Version2 = 0x02  // Fixed (2024-08-19)
+    Version3 = 0x03  // Multipart-safe; the current default write format
 )
 ```
 
-Header validation updated to accept both versions.
+Header validation updated to accept both versions (and, since V3, all three).
 
 ## Migration Strategy
+
+> **Historical.** The phases below were written when V2 was the migration
+> target. The live migration path today is `armor migrate --target v3`
+> (runbook: [Format Migration Runbook](../runbooks/format-migration.md)),
+> which migrates V1 and V2 objects to V3. The legacy boundary the runbook
+> enforces: **V1 is the unsafe legacy** (broken zero-knowledge property, must
+> be migrated with `include=v1,v2` — it is excluded by default), while **V2
+> is safe legacy** (sound counter derivation; readable indefinitely and
+> selectable via `ARMOR_FORMAT_VERSION=2`, but no longer the write default).
 
 ### Phase 1: Deployment (Immediate)
 1. Deploy this change to production
 2. Service automatically creates Version 2 envelopes for all new PUTs
+   (historical: new PUTs now create Version 3 envelopes by default)
 3. Existing Version 1 objects remain readable (legacy decryption path)
 
 ### Phase 2: Object Migration (Required)
 **All existing Version 1 objects MUST be re-encrypted to Version 2:**
+(superseded — the target is now V3, via `armor migrate --target v3`)
 
 ```bash
 # Migration tool (to be implemented)
@@ -179,6 +229,10 @@ AES-GCM provides authentication without separate HMAC table.
 - **Major format change** (not just counter derivation)
 - Would require V3 envelope format
 - Can be evaluated separately
+
+> Outcome: a V3 envelope format did arrive (for multipart safety, not GCM —
+> V3 is still AES-CTR with per-(part,block) counters plus explicit
+> per-(part,block) HMACs), and GCM itself was never adopted.
 
 ## Implementation
 

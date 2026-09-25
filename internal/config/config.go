@@ -202,7 +202,8 @@ type Config struct {
 	AllowNoCredentials bool
 
 	// FormatWriteVersion controls which ARMOR manifest format version to write.
-	// Valid values: 2 (default) or 3 (future). Invalid values are rejected at startup.
+	// Valid values: 3 (current, the default) or 2 (legacy escape hatch).
+	// Invalid values are rejected at startup.
 	FormatWriteVersion int
 }
 

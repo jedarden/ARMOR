@@ -30,7 +30,9 @@ const (
 
 	// Version2 is the fixed envelope format version.
 	// Version2 strides the CTR counter by blockSize/16 to prevent keystream reuse.
-	// All new objects should use Version2.
+	// Historical write target (ADR-005); Version3 is the current default for new
+	// objects. Version2 stays readable everywhere and remains selectable via
+	// ARMOR_FORMAT_VERSION=2.
 	Version2 = 0x02
 
 	// Version3 is the multipart-safe envelope format version.
@@ -249,7 +251,9 @@ func NewEnvelopeHeaderWithVersion(iv []byte, plaintextSize int64, blockSize int,
 }
 
 // NewEnvelopeHeader creates a new envelope header.
-// Defaults to Version2 for security.
+// It always writes Version2 — the legacy format (ADR-005). Callers that
+// follow the configured write format should use NewEnvelopeHeaderWithVersion
+// with crypto.Version3 (or their resolved format version) instead.
 func NewEnvelopeHeader(iv []byte, plaintextSize int64, blockSize int, plaintextSHA [32]byte) (*EnvelopeHeader, error) {
 	return NewEnvelopeHeaderWithVersion(iv, plaintextSize, blockSize, plaintextSHA, Version2)
 }

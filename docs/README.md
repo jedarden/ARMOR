@@ -42,7 +42,7 @@ This index organizes all durable documentation by audience. Every file under `do
 | [ADR-002](adr/002-multipart-corruption-detection-gaps.md) | Close multipart corruption detection gaps | Accepted |
 | [ADR-003](adr/003-multipart-object-layout-and-read-path.md) | Multipart object layout and read-path dispatch | Accepted (§4 superseded by ADR-015) |
 | [ADR-004](adr/004-continuous-restore-verification.md) | Continuous dual-path restore verification | Accepted |
-| [ADR-005](adr/005-ctr-counter-stride-fix.md) | AES-CTR Counter Stride Fix (Version 2) | Accepted |
+| [ADR-005](adr/005-ctr-counter-stride-fix.md) | AES-CTR Counter Stride Fix (Version 2) | Accepted (V2 write mandate superseded by envelope v3) |
 | [ADR-006](adr/006-dual-backend-replication.md) | Dual-backend async replication for provider-outage resilience | Accepted |
 | [ADR-007](adr/007-zstd-compression.md) | zstd Compression for Single-PUT Objects | Accepted |
 | [ADR-008](adr/008-multipart-part-size-error-clarity.md) | Server-side observability for part-size rejections | Proposed |
