@@ -296,8 +296,11 @@ PROMTOOL_IMAGE=prom/prometheus:v3.6.0 ./scripts/alerting-rule-unittest.sh
 
 Live end-to-end verification of the activated alerting stack on iad-ci: collection
 (VictoriaMetrics scraping the armor server `:9001` admin mux and the restore-verifier
-`:9002` listener, series fresh), evaluation (vmalert carrying the five shipped rules,
-expressions matching the contract, no eval errors), consistency (staleness and
+`:9002` listener, numeric `armor_*` series fresh — the contract's string-valued
+`*_last_check_time` / `*_last_check_error` gauges are dropped at ingest as
+non-numeric and are deliberately not asserted), evaluation (vmalert carrying the
+five shipped rules, expressions matching the contract, no eval errors), consistency
+(staleness and
 multipart alerts active exactly when their expression says so — both directions), and
 delivery (Alertmanager ready, ntfy receiver present; the rendered config embeds the
 delivery token and is never printed). Routes through the stack's tailnet-only

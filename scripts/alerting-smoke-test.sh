@@ -143,9 +143,15 @@ check_fresh_series 'armor_last_verified_restore_timestamp' 'restore-verifier'
 check_fresh_series 'armor_verified_object_ratio'           'restore-verifier'
 check_fresh_series 'armor_restore_verification_failures_total' 'restore-verifier'
 # Canary gauges from the ARMOR server (the ArmorMultipartCanaryUnhealthy input).
+# The *_last_check_time members of the canary family are deliberately NOT
+# asserted: the contract's string-valued gauge caveat (docs/observability-
+# contract.md, "Canary metric series") makes them RFC3339 strings on the wire,
+# so a Prometheus-compatible store drops them at ingest as non-numeric — they
+# are diagnostic strings by design, and their absence from the store is the
+# CORRECT state. The numeric counters prove collection instead.
 check_fresh_series 'armor_multipart_canary_healthy'         'armor canary'
-check_fresh_series 'armor_canary_last_check_time'           'armor canary'
-check_fresh_series 'armor_multipart_canary_last_check_time' 'armor canary'
+check_fresh_series 'armor_canary_checks_total'              'armor canary'
+check_fresh_series 'armor_multipart_canary_checks_total'    'armor canary'
 
 # Cardinality guard: this job sits on a 20Gi-capped store. A series explosion
 # here is the loud failure the armor_* keep-list is supposed to produce, not
@@ -177,6 +183,17 @@ want = {
         "armor_multipart_canary_healthy == 0", "10m"),
 }
 def collapse(s): return " ".join(s.split())
+def dur_seconds(d):
+    # The vmalert rules API reports duration in plain SECONDS (600), while
+    # the shipped contract fixtures write Prometheus duration strings
+    # ("10m"). Normalize both before comparing so the pin is about the
+    # value, not the API unit convention.
+    d = str(d).strip()
+    if d.endswith("ms"): return float(d[:-2]) / 1000.0
+    if d.endswith("s"):  return float(d[:-1])
+    if d.endswith("m"):  return float(d[:-1]) * 60
+    if d.endswith("h"):  return float(d[:-1]) * 3600
+    return float(d)
 max_eval_age = int(os.environ.get("MAX_RULE_EVAL_AGE_SECONDS", "300"))
 try:
     groups = json.load(sys.stdin)["data"]["groups"]
@@ -196,9 +213,12 @@ for name, (expr, dur) in want.items():
     gexpr = collapse(r.get("query", ""))
     if gexpr != expr:
         problems.append(f"{name}: expr drifted from the shipped contract:\n  got  {gexpr}\n  want {expr}")
-    gdur = r.get("duration", "")
-    if gdur != dur:
-        problems.append(f"{name}: for={gdur!r}, want {dur!r}")
+    try:
+        got_s, want_s = dur_seconds(r.get("duration", "")), dur_seconds(dur)
+    except (TypeError, ValueError):
+        got_s = want_s = None
+    if got_s is None or got_s != want_s:
+        problems.append(f"{name}: for={r.get('duration')!r}, want {dur!r}")
     gerr = r.get("lastError", "")
     if gerr:
         problems.append(f"{name}: lastError={gerr!r} — rule failing to evaluate")
