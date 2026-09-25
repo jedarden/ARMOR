@@ -4,11 +4,15 @@ This directory contains operational, testing, and monitoring scripts for ARMOR d
 
 ## definition-of-done.sh
 
-Local verification gate. `scripts/definition-of-done.sh --fast` runs `go build ./...`, `go vet ./...`, and the Python scripts test suite (`tests/test_drift_check.py`); without `--fast` it additionally runs `go test ./... -short`. Exits non-zero if any leg fails.
+Local verification gate. `scripts/definition-of-done.sh --fast` runs the toolchain parity gate (`scripts/toolchain-parity.sh`), `go build ./...`, `go vet ./...`, and the Python scripts test suite (`tests/test_drift_check.py`, `tests/test_toolchain_parity.py`); without `--fast` it additionally runs `go test ./... -short`. Exits non-zero if any leg fails.
 
 ## release-gate.sh
 
-The test gate CI and the `Dockerfile` run before building an image: crypto, backend, restore-verifier, canary, config, `cmd/armor` and the server handlers, plus an integration-suite compile. `ARMOR_RELEASE_RACE=1` adds `-race` to the packages that support it (CI sets it).
+The test gate CI and the `Dockerfile` run before building an image: the toolchain parity check, crypto, backend, restore-verifier, canary, config, `cmd/armor` and the server handlers, plus an integration-suite compile. `ARMOR_RELEASE_RACE=1` adds `-race` to the packages that support it (CI sets it).
+
+## toolchain-parity.sh
+
+go.mod ↔ Dockerfile toolchain parity gate. Parses go.mod's `toolchain` directive (the single source of the Go version) and every `golang:<tag>` base image in `Dockerfile` and `Dockerfile.test`, and exits 1 on any drift — a different version, an untagged (implicit `:latest`) or digest-pinned golang base, or a floating minor tag — and 2 on a structural break (no directive, a missing Dockerfile, a Dockerfile with no golang base). Warn-only `make toolchain-check` remains for the local `go`, where a newer version is fine. Wired into the definition of done, the release gate (so the Dockerfile builder stage gates itself), and `make docker`. Tests: `python3 -m pytest tests/test_toolchain_parity.py -q`.
 
 ## cut-release.sh
 

@@ -1,13 +1,15 @@
 # ARMOR Makefile
-# Targets: build, toolchain-check, test, test-integration, lint, docker, compat, test-docker-demo, dod, release, clean, help
+# Targets: build, toolchain-check, toolchain-parity, test, test-integration, lint, docker, compat, test-docker-demo, dod, release, clean, help
 
 VERSION ?= $(shell cat VERSION)
 
 # Go toolchain: go.mod's `toolchain` directive is the single source of the
 # version (the Dockerfiles pin golang:<that version>-alpine to match). Builds
 # here use whatever `go` is on PATH — a newer go is fine, and `make build`
-# runs toolchain-check to warn when it differs. There are deliberately no
-# machine-specific toolchain paths here.
+# runs toolchain-check to warn when it differs. Dockerfile parity with the
+# directive is not a warning: `make docker` and `make toolchain-parity` run
+# scripts/toolchain-parity.sh, which fails on drift. There are deliberately
+# no machine-specific toolchain paths here.
 GO ?= go
 PYTHON ?= python3
 TOOLCHAIN := $(shell awk '$$1 == "toolchain" { print $$2; exit }' go.mod)
@@ -31,7 +33,7 @@ BINARIES := $(notdir $(wildcard $(CMDDIR)/*))
 # Docker build arguments
 DOCKER_BUILD := docker build --build-arg VERSION=$(VERSION)
 
-.PHONY: all build toolchain-check test test-integration lint docker compat compat-boto3 test-docker-demo dod release clean help
+.PHONY: all build toolchain-check toolchain-parity test test-integration lint docker compat compat-boto3 test-docker-demo dod release clean help
 
 all: build test lint
 
@@ -44,6 +46,10 @@ toolchain-check:
 	else \
 		echo "WARNING: local $$($(GO) env GOVERSION) differs from go.mod toolchain $(TOOLCHAIN); building with the local toolchain (the directive only raises the floor)"; \
 	fi
+
+## toolchain-parity: Fail when a Dockerfile golang: pin differs from go.mod's toolchain directive
+toolchain-parity:
+	scripts/toolchain-parity.sh
 
 ## build: Build every cmd/ binary into bin/ with the version injected
 build: toolchain-check
@@ -73,7 +79,7 @@ lint:
 	golangci-lint run --config .golangci.yml
 
 ## docker: Build the server and test images, tagged with VERSION only (no floating tags)
-docker: Dockerfile Dockerfile.test
+docker: toolchain-parity Dockerfile Dockerfile.test
 	@echo "Building Docker images..."
 	@echo "  Building ronaldraygun/armor:$(VERSION)..."
 	$(DOCKER_BUILD) -t ronaldraygun/armor:$(VERSION) -f Dockerfile .

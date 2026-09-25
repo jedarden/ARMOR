@@ -48,9 +48,11 @@ make help                            # the rest of the targets
 - **go.mod is the single source of the Go toolchain version** (its `toolchain`
   directive). `Dockerfile` and `Dockerfile.test` pin `golang:<that
   version>-alpine` and must be bumped in the same change; CI builds with
-  `GOTOOLCHAIN=local` on images at least that new. A local `go` newer than the
-  directive is fine — `make build` runs `toolchain-check`, which warns (never
-  fails) on a mismatch.
+  `GOTOOLCHAIN=local` on images at least that new. The pin is enforced by
+  `scripts/toolchain-parity.sh`, which fails on drift and runs in the
+  definition of done, the release gate, and `make docker`. A local `go`
+  newer than the directive is fine — `make build` runs `toolchain-check`,
+  which warns (never fails) on a mismatch.
 - The definition of done for any code change is `scripts/definition-of-done.sh`
   green. CI (`armor-build` in iad-ci) additionally runs golangci-lint, the race
   release gate, an integration-suite compile, the Docker builds, a registry
@@ -61,9 +63,10 @@ make help                            # the rest of the targets
   broken), and when an `ARMOR_*` variable read by `internal/config` is absent
   from `README.md`. Add the doc to the index and the variable to the README
   configuration table in the same change.
-- Python: `tests/test_drift_check.py` (run by the definition of done) and
-  `tests/test_publish_release.py`, both via `python3 -m pytest` (the `pytest`
-  shim has a stale shebang on NixOS hosts).
+- Python: `tests/test_drift_check.py` and `tests/test_toolchain_parity.py`
+  (both run by the definition of done) and `tests/test_publish_release.py`,
+  via `python3 -m pytest` (the `pytest` shim has a stale shebang on NixOS
+  hosts).
 - Never commit build output (`bin/`, `*.test`) or caches; `.gitignore` covers
   them.
 

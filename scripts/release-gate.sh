@@ -11,6 +11,12 @@ if [ "${ARMOR_RELEASE_RACE:-0}" = "1" ]; then
 	race_flag="-race"
 fi
 
+# Toolchain parity (armor-255e8f31): the builder base images must pin go.mod's
+# `toolchain` directive — drift here means the image compiles with a different
+# Go than the repository declares. Cheapest gate, so it runs first; also in
+# the definition of done, `make docker`, and its own pytest suite.
+./scripts/toolchain-parity.sh
+
 go vet ./...
 
 go test ${race_flag} -count=1 ./internal/crypto \

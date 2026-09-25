@@ -5,12 +5,13 @@
 #   scripts/definition-of-done.sh --fast   # build + vet + the fast test suites
 #   scripts/definition-of-done.sh          # --fast plus the full short Go suite
 #
-# --fast runs everything deterministic and quick: the Go build and vet and
-# the Python scripts test suite (tests/test_drift_check.py). The default mode
-# adds `go test ./... -short`. CI (iad-ci armor-build) runs the containerized
-# build/lint legs; this script is the local gate. The pytest entry point is
-# `python3 -m pytest` rather than the `pytest` shim, whose shebang is stale on
-# NixOS hosts.
+# --fast runs everything deterministic and quick: the toolchain parity gate
+# (scripts/toolchain-parity.sh), the Go build and vet, and the Python scripts
+# test suite (tests/test_drift_check.py, tests/test_toolchain_parity.py). The
+# default mode adds `go test ./... -short`. CI (iad-ci armor-build) runs the
+# containerized build/lint legs; this script is the local gate. The pytest
+# entry point is `python3 -m pytest` rather than the `pytest` shim, whose
+# shebang is stale on NixOS hosts.
 set -uo pipefail
 
 cd "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -39,9 +40,10 @@ fi
 
 echo "== ARMOR definition of done ($([ "$fast" = 1 ] && echo fast || echo full)) =="
 
+run ./scripts/toolchain-parity.sh
 run "$GO" build "${go_build_flags[@]}" ./...
 run "$GO" vet "${go_build_flags[@]}" ./...
-run "$PY" -m pytest tests/test_drift_check.py -q
+run "$PY" -m pytest tests/test_drift_check.py tests/test_toolchain_parity.py -q
 
 if [ "$fast" = 0 ]; then
   run "$GO" test ./... -short
