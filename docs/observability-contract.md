@@ -382,7 +382,16 @@ distinct active failure, never a retry loop.
 ## Escalation and deduplication (ADR-004 §5)
 
 Escalation is off by default (`VERIFIER_ESCALATION=false`); enabling it
-requires a bead CLI (`br`) reachable in the verifier's image.
+requires the canonical bead CLI (bead-rs `bead`) reachable in the verifier's
+image and a writable beads workspace (bead-rs discovers the workspace from
+the filer's working directory — `--escalation-workspace`, default
+`<escalation-state dir>/beads-workspace` on the same volume as the dedupe
+state). Both prerequisites are validated at startup
+(`restoreverifier.BeadRSFiler.ValidateStartup`: a PATH lookup plus
+`bead --version`, a writability probe, `bead init` provisioning of a fresh
+workspace, and a `bead list` end-to-end read); a failed validation logs the
+exact remediation and runs with filing disabled rather than degrading the
+verification loop itself.
 
 **Failure escalation.** For every non-passing object verification the
 Escalator files at most one bead, identified by the dedupe key:
@@ -419,14 +428,22 @@ filed. (The 2026-07 NEEDLE retry-storms are the anti-pattern.) A filer call
 is itself bounded (`--escalation-exec-timeout`, default 10s) so a hung CLI
 cannot stall the run.
 
+**Store-level idempotence.** Every filing also carries a `--unique-ref`
+(`restore-verifier:<sha256>` of the dedupe identity; staleness refs anchor to
+the bucket's freshness-window index instead), which the bead CLI binds
+atomically: a repeat create prints `EXISTING <id>` instead of filing a second
+bead. Even a lost `VERIFIER_ESCALATION_STATE` file therefore cannot produce
+two beads for the same distinct failure — the persisted dedupe set remains
+the first line of defense, the ref the second.
+
 **Bead payload.** Every escalation bead carries: object key, bucket,
 deployment (`ARMOR_DEPLOYMENT`), provenance/writer version where available
 (envelope version from object metadata; writer ID once chain lookup is
 wired), and both-path evidence — expected/ARMOR/direct SHA-256, both path
 latencies, and the error string (truncated at 4096 chars). Titles are
 capped to the beads schema's 500-char limit with the failure class and path
-kept intact. Beads are filed as type `bug`, priority 1 (High), with an
-optional `--escalation-label`.
+kept intact. Beads are filed via `bead create` as issue-type `bug`, priority
+1 (critical in bead-rs semantics), with an optional `--escalation-label`.
 
 The dedupe and staleness-window behavior is unit-tested in
 `internal/restoreverifier/escalation_test.go`; this document defers to it as

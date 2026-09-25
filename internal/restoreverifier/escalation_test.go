@@ -1,8 +1,8 @@
 package restoreverifier
 
 // escalation_test.go exercises ADR-004 §5 storm-proof escalation logic against a
-// fake BeadFiler. The bf/br CLI is never invoked here (only a dedicated test
-// shells out to a throwaway script in TestBFCLIFiler), so these tests prove the
+// fake BeadFiler. The bead CLI is never invoked against a live beads store (only
+// dedicated tests shell out to a throwaway script), so these tests prove the
 // dedupe and staleness-window invariants quickly and hermetically.
 
 import (
@@ -485,44 +485,60 @@ func TestVerifier_EscalateResultWiring(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// BFCLIFiler: arg construction against a fake "br" script (no live beads store)
+// BeadRSFiler: arg construction against a fake bead script (no live beads store)
 // ---------------------------------------------------------------------------
 
-// fakeBRScript writes a throwaway br-compatible shell script that records its
-// argv to RV_FAKE_ARGS, then succeeds, fails, or hangs based on RV_FAKE_MODE.
-// This exercises BFCLIFiler's exec + arg construction without touching the real
-// bf CLI or the live beads store.
-func fakeBRScript(t *testing.T) string {
+// fakeBeadScript writes a throwaway bead-rs-compatible shell script that
+// records its argv (and its cwd) to RV_FAKE_ARGS, then behaves per RV_FAKE_MODE
+// (ok | fail | timeout | existing | existing_closed | listfail). It answers the
+// subcommands ValidateStartup issues (--version, init, list) as well as create,
+// which exercises the filer's exec + arg construction + output parsing without
+// touching the real bead CLI or the live beads store.
+func fakeBeadScript(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
-	path := filepath.Join(dir, "fake-br.sh")
+	path := filepath.Join(dir, "fake-bead.sh")
 	body := "#!/bin/sh\n" +
-		"# Fake br for BFCLIFiler tests. Records argv and emulates ok/fail/timeout.\n" +
+		"# Fake bead-rs CLI for BeadRSFiler tests.\n" +
 		"if [ -n \"$RV_FAKE_ARGS\" ]; then\n" +
 		"  for a in \"$@\"; do printf '%s\\n' \"$a\" >> \"$RV_FAKE_ARGS\"; done\n" +
+		"  printf 'CWD:%s\\n' \"$(pwd)\" >> \"$RV_FAKE_ARGS\"\n" +
 		"fi\n" +
 		"case \"${RV_FAKE_MODE:-ok}\" in\n" +
 		"  fail)    printf 'rejected: bad bead' >&2; exit 1 ;;\n" +
 		"  timeout) sleep 5 ;;\n" +
 		"esac\n" +
-		"printf 'bf-fake-42\\n'\n"
+		"case \"$1\" in\n" +
+		"  --version) printf 'bead 0.2.6 fake\\n' ;;\n" +
+		"  init) mkdir -p .beads && printf '{\"backend\":\"bead-rs\"}\\n' > .beads/config.json ;;\n" +
+		"  list)\n" +
+		"    if [ \"${RV_FAKE_MODE:-ok}\" = \"listfail\" ]; then printf 'no workspace here' >&2; exit 3; fi\n" +
+		"    printf 'no beads\\n' ;;\n" +
+		"  create)\n" +
+		"    case \"${RV_FAKE_MODE:-ok}\" in\n" +
+		"      existing)        printf 'EXISTING bead-fake-42\\n' ;;\n" +
+		"      existing_closed) printf 'EXISTING_CLOSED bead-fake-42\\n' ;;\n" +
+		"      *)               printf 'bead-fake-42\\n' ;;\n" +
+		"    esac ;;\n" +
+		"esac\n"
 	if err := os.WriteFile(path, []byte(body), 0o755); err != nil {
-		t.Fatalf("write fake-br script: %v", err)
+		t.Fatalf("write fake-bead script: %v", err)
 	}
 	return path
 }
 
-func TestBFCLIFiler_BuildsCorrectArgs(t *testing.T) {
-	script := fakeBRScript(t)
+func TestBeadRSFiler_BuildsCorrectArgs(t *testing.T) {
+	script := fakeBeadScript(t)
 	argsFile := filepath.Join(t.TempDir(), "args.txt")
 	t.Setenv("RV_FAKE_ARGS", argsFile)
 	t.Setenv("RV_FAKE_MODE", "ok")
 
-	filer := &BFCLIFiler{
-		Binary:    script,
-		Workspace: "/var/lib/restore-verifier/.beads",
-		Label:     "restore-verifier",
-		Priority:  1,
+	filer := &BeadRSFiler{
+		Binary:             script,
+		Workspace:          t.TempDir(),
+		Label:              "restore-verifier",
+		Priority:           1,
+		UniqueRefNamespace: "rv-escalation",
 	}
 	id, err := filer.File(context.Background(), BeadPayload{
 		Kind:         BeadFailure,
@@ -534,8 +550,8 @@ func TestBFCLIFiler_BuildsCorrectArgs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("File returned unexpected error: %v", err)
 	}
-	if id != "bf-fake-42" {
-		t.Fatalf("File id = %q, want bf-fake-42", id)
+	if id != "bead-fake-42" {
+		t.Fatalf("File id = %q, want bead-fake-42", id)
 	}
 
 	args, err := os.ReadFile(argsFile)
@@ -543,49 +559,98 @@ func TestBFCLIFiler_BuildsCorrectArgs(t *testing.T) {
 		t.Fatalf("read recorded args: %v", err)
 	}
 	s := string(args)
-	// The fixed argv layout: create --title <t> --type bug --priority 1
-	// --description <body> -w <workspace> --label restore-verifier
+	// The fixed argv layout: create --title <t> --issue-type bug --priority 1
+	// --description <body> --unique-ref rv-escalation:<key> --label
+	// restore-verifier. There is deliberately no -w: bead-rs resolves the
+	// workspace from cmd.Dir (there is no -w flag in bead-rs).
 	for _, want := range []string{
 		"create\n",
 		"--title\n",
-		"--type\nbug\n",
+		"--issue-type\nbug\n",
 		"--priority\n1\n",
 		"--description\n",
-		"-w\n/var/lib/restore-verifier/.beads\n",
+		"--unique-ref\nrv-escalation:",
 		"--label\nrestore-verifier\n",
+		"CWD:" + filer.Workspace + "\n",
 	} {
 		if !strings.Contains(s, want) {
-			t.Errorf("bf argv missing %q\n--- recorded argv ---\n%s", want, s)
+			t.Errorf("bead argv missing %q\n--- recorded argv ---\n%s", want, s)
+		}
+	}
+	// No stray -w/--type from the retired bf shape.
+	for _, banned := range []string{"-w\n", "--type\n"} {
+		if strings.Contains(s, banned) {
+			t.Errorf("bead argv carries retired bf flag %q\n--- recorded argv ---\n%s", banned, s)
 		}
 	}
 	// The body (passed as --description) must carry the evidence.
 	if !strings.Contains(s, "Restore verification failure") || !strings.Contains(s, "backups/obj-1") {
-		t.Errorf("bf argv did not carry the bead body/evidence\n--- recorded argv ---\n%s", s)
+		t.Errorf("bead argv did not carry the bead body/evidence\n--- recorded argv ---\n%s", s)
+	}
+	// The unique-ref KEY must be the payload's stable dedupe identity.
+	ref := filer.UniqueRefNamespace + ":" + (BeadPayload{
+		Kind:         BeadFailure,
+		Bucket:       "bkt",
+		ObjectKey:    "backups/obj-1",
+		Path:         PathARMOR,
+		FailureClass: FailureRestoreError,
+	}).UniqueRefKey()
+	if !strings.Contains(s, ref+"\n") {
+		t.Errorf("bead argv unique-ref %q not found\n--- recorded argv ---\n%s", ref, s)
 	}
 }
 
-func TestBFCLIFiler_PropagatesFailureAndTimeout(t *testing.T) {
-	script := fakeBRScript(t)
+func TestBeadRSFiler_ExistingRefsAreNotErrors(t *testing.T) {
+	// A repeated --unique-ref is a success, not a failure: the escalation
+	// exists exactly once, which is the invariant, so File must return the
+	// existing id (letting the Escalator record the dedupe key) with nil
+	// error. EXISTING_CLOSED additionally means an operator acknowledged the
+	// bead; re-filing for the same distinct failure would defeat the
+	// one-bead-per-distinct-failure rule.
+	for mode, want := range map[string]string{
+		"existing":        "bead-fake-42",
+		"existing_closed": "bead-fake-42",
+	} {
+		t.Run(mode, func(t *testing.T) {
+			script := fakeBeadScript(t)
+			t.Setenv("RV_FAKE_MODE", mode)
+			filer := &BeadRSFiler{Binary: script, UniqueRefNamespace: "rv-escalation"}
+			id, err := filer.File(context.Background(), BeadPayload{
+				Kind: BeadFailure, Bucket: "b", ObjectKey: "o",
+				Path: PathARMOR, FailureClass: FailureRestoreError,
+			})
+			if err != nil {
+				t.Fatalf("EXISTING result must not be an error, got: %v", err)
+			}
+			if id != want {
+				t.Fatalf("File id = %q, want %q", id, want)
+			}
+		})
+	}
+}
+
+func TestBeadRSFiler_PropagatesFailureAndTimeout(t *testing.T) {
+	script := fakeBeadScript(t)
 	t.Setenv("RV_FAKE_ARGS", filepath.Join(t.TempDir(), "args.txt"))
 
 	t.Run("nonzero_exit_returns_error", func(t *testing.T) {
 		t.Setenv("RV_FAKE_MODE", "fail")
-		filer := &BFCLIFiler{Binary: script, ExecTimeout: 5 * time.Second}
+		filer := &BeadRSFiler{Binary: script, ExecTimeout: 5 * time.Second}
 		_, err := filer.File(context.Background(), BeadPayload{
 			Kind: BeadFailure, Bucket: "b", ObjectKey: "o",
 			Path: PathARMOR, FailureClass: FailureRestoreError,
 		})
 		if err == nil {
-			t.Fatal("expected an error when the bf CLI exits non-zero")
+			t.Fatal("expected an error when the bead CLI exits non-zero")
 		}
-		if !strings.Contains(err.Error(), "br create failed") {
+		if !strings.Contains(err.Error(), "bead create failed") {
 			t.Fatalf("error must wrap the CLI failure, got: %v", err)
 		}
 	})
 
 	t.Run("timeout_bounds_a_single_call", func(t *testing.T) {
 		t.Setenv("RV_FAKE_MODE", "timeout")
-		filer := &BFCLIFiler{Binary: script, ExecTimeout: 100 * time.Millisecond}
+		filer := &BeadRSFiler{Binary: script, ExecTimeout: 100 * time.Millisecond}
 		start := time.Now()
 		_, err := filer.File(context.Background(), BeadPayload{
 			Kind: BeadFailure, Bucket: "b", ObjectKey: "o",
@@ -593,13 +658,174 @@ func TestBFCLIFiler_PropagatesFailureAndTimeout(t *testing.T) {
 		})
 		elapsed := time.Since(start)
 		if err == nil {
-			t.Fatal("expected a timeout error when the bf CLI hangs")
+			t.Fatal("expected a timeout error when the bead CLI hangs")
 		}
 		if !strings.Contains(err.Error(), "timed out") {
 			t.Fatalf("error must mention the timeout, got: %v", err)
 		}
 		if elapsed > 3*time.Second {
 			t.Fatalf("ExecTimeout did not bound the call: elapsed %v", elapsed)
+		}
+	})
+}
+
+// ---------------------------------------------------------------------------
+// UniqueRefKey: the stable store-level dedupe identity
+// ---------------------------------------------------------------------------
+
+func TestBeadPayload_UniqueRefKey(t *testing.T) {
+	base := BeadPayload{Kind: BeadFailure, Bucket: "bkt", ObjectKey: "k", Path: PathARMOR, FailureClass: FailureChecksumError}
+
+	// Identical dedupe identity -> identical key, across calls (restart-stable).
+	if base.UniqueRefKey() != base.UniqueRefKey() {
+		t.Fatal("UniqueRefKey must be deterministic for the same payload")
+	}
+	// Each dedupe-key component distinguishes referrers: a different failure
+	// mode, path, object, or bucket is a different thing to fix -> different ref.
+	for name, mutated := range map[string]BeadPayload{
+		"class":  {Kind: BeadFailure, Bucket: "bkt", ObjectKey: "k", Path: PathARMOR, FailureClass: FailureConflict},
+		"path":   {Kind: BeadFailure, Bucket: "bkt", ObjectKey: "k", Path: PathDirect, FailureClass: FailureChecksumError},
+		"key":    {Kind: BeadFailure, Bucket: "bkt", ObjectKey: "k2", Path: PathARMOR, FailureClass: FailureChecksumError},
+		"bucket": {Kind: BeadFailure, Bucket: "other", ObjectKey: "k", Path: PathARMOR, FailureClass: FailureChecksumError},
+	} {
+		if mutated.UniqueRefKey() == base.UniqueRefKey() {
+			t.Errorf("%s variation must produce a different unique-ref key", name)
+		}
+	}
+}
+
+func TestBeadPayload_UniqueRefKey_StalenessWindowAnchored(t *testing.T) {
+	window := 24 * time.Hour
+	start := time.Date(2026, 9, 25, 0, 0, 0, 0, time.UTC)
+	inWindow := BeadPayload{Kind: BeadStaleness, Bucket: "bkt", FreshnessWindow: window,
+		Detected: start.Add(3*time.Hour + 17*time.Minute)}
+	sameWindowLater := BeadPayload{Kind: BeadStaleness, Bucket: "bkt", FreshnessWindow: window,
+		Detected: start.Add(20 * time.Hour)}
+	nextWindow := BeadPayload{Kind: BeadStaleness, Bucket: "bkt", FreshnessWindow: window,
+		Detected: start.Add(24 * time.Hour)}
+	otherBucket := BeadPayload{Kind: BeadStaleness, Bucket: "other", FreshnessWindow: window,
+		Detected: start.Add(3 * time.Hour)}
+
+	// Two re-detections inside one window must map to the same ref: with the
+	// dedupe-state file lost, the store's EXISTING answer is what prevents a
+	// second staleness bead for the same window.
+	if inWindow.UniqueRefKey() != sameWindowLater.UniqueRefKey() {
+		t.Fatal("staleness refs inside one freshness window must collide (store-level dedupe)")
+	}
+	if inWindow.UniqueRefKey() == nextWindow.UniqueRefKey() {
+		t.Fatal("a new window must file fresh (new ref)")
+	}
+	if inWindow.UniqueRefKey() == otherBucket.UniqueRefKey() {
+		t.Fatal("staleness refs must be per-bucket")
+	}
+}
+
+// TestEscalator_StoreLevelIdempotenceAfterStateLoss is the restart-recovery
+// acceptance case: the persisted dedupe set is what normally prevents
+// re-filing across restarts, but a lost/unmounted state volume must also be
+// safe. A fresh Escalator (no state) re-attempts the filing — bounded, once —
+// and the payload it files carries the SAME --unique-ref the original filer
+// used, so bead-rs answers EXISTING instead of creating a duplicate. One bead
+// per distinct failure survives state loss.
+func TestEscalator_StoreLevelIdempotenceAfterStateLoss(t *testing.T) {
+	ctx := context.Background()
+	result := vr("backups/db.sqlite", StatusChecksumError, PathARMOR)
+
+	first := &recordingFiler{}
+	e1 := NewEscalator(EscalatorConfig{Filer: first, Deployment: "d", StatePath: filepath.Join(t.TempDir(), "state.json")})
+	fileFailure(t, e1, ctx, result, Provenance{})
+	// Second tick with intact state: deduped in-process, no filing at all.
+	dedupFailure(t, e1, ctx, result, Provenance{})
+
+	// State lost: a brand-new Escalator with no state file knows nothing.
+	second := &recordingFiler{}
+	e2 := NewEscalator(EscalatorConfig{Filer: second, Deployment: "d"}) // no StatePath
+	if got := second.count(); got != 0 {
+		t.Fatalf("fresh escalator must start with zero filings, got %d", got)
+	}
+	fileFailure(t, e2, ctx, result, Provenance{}) // the one bounded re-attempt
+
+	if second.count() != 1 || first.count() != 1 {
+		t.Fatalf("want 1 filing per escalator instance, got %d and %d", first.count(), second.count())
+	}
+	ref1 := first.filed[0].UniqueRefKey()
+	ref2 := second.filed[0].UniqueRefKey()
+	if ref1 != ref2 {
+		t.Fatalf("store-level dedupe broken: refs differ across state loss (%q vs %q)", ref1, ref2)
+	}
+	// The real filer turns that shared ref into --unique-ref, so the second
+	// create is answered EXISTING and no duplicate bead appears.
+}
+
+// ---------------------------------------------------------------------------
+// ValidateStartup: fail-fast validation of the CLI + workspace a deployment
+// must provide
+// ---------------------------------------------------------------------------
+
+func TestBeadRSFiler_ValidateStartup(t *testing.T) {
+	script := fakeBeadScript(t)
+
+	t.Run("happy path provisions a fresh workspace", func(t *testing.T) {
+		ws := filepath.Join(t.TempDir(), "beads-workspace") // does not exist yet
+		filer := &BeadRSFiler{Binary: script, Workspace: ws}
+		if err := filer.ValidateStartup(context.Background()); err != nil {
+			t.Fatalf("ValidateStartup failed: %v", err)
+		}
+		// The fake `init` materialized a recognizable workspace in the (now
+		// existing) directory, proving the directory was created before the
+		// CLI ran in it.
+		if _, err := os.Stat(filepath.Join(ws, ".beads", "config.json")); err != nil {
+			t.Fatalf("fresh workspace was not provisioned by ValidateStartup: %v", err)
+		}
+	})
+
+	t.Run("existing workspace is reused, not reinitialized", func(t *testing.T) {
+		ws := t.TempDir()
+		if err := os.MkdirAll(filepath.Join(ws, ".beads"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(ws, ".beads", "config.json"), []byte(`{"backend":"bead-rs"}`), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		argsFile := filepath.Join(t.TempDir(), "args.txt")
+		t.Setenv("RV_FAKE_ARGS", argsFile)
+		filer := &BeadRSFiler{Binary: script, Workspace: ws}
+		if err := filer.ValidateStartup(context.Background()); err != nil {
+			t.Fatalf("ValidateStartup failed on an existing workspace: %v", err)
+		}
+		args, _ := os.ReadFile(argsFile)
+		if strings.Contains(string(args), "init\n") {
+			t.Fatalf("bead init must not run against an existing bead-rs workspace\n--- argv ---\n%s", args)
+		}
+	})
+
+	t.Run("missing binary fails", func(t *testing.T) {
+		filer := &BeadRSFiler{Binary: filepath.Join(t.TempDir(), "no-such-bead")}
+		err := filer.ValidateStartup(context.Background())
+		if err == nil || !strings.Contains(err.Error(), "not found") {
+			t.Fatalf("expected a not-found error, got: %v", err)
+		}
+	})
+
+	t.Run("unrunnable binary fails", func(t *testing.T) {
+		// A real file that exists but is not executable as a bead CLI.
+		notCLI := filepath.Join(t.TempDir(), "not-bead")
+		if err := os.WriteFile(notCLI, []byte("this is not a bead binary\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		filer := &BeadRSFiler{Binary: notCLI}
+		err := filer.ValidateStartup(context.Background())
+		if err == nil || !strings.Contains(err.Error(), "not runnable") {
+			t.Fatalf("expected a not-runnable error, got: %v", err)
+		}
+	})
+
+	t.Run("unusable workspace fails", func(t *testing.T) {
+		t.Setenv("RV_FAKE_MODE", "listfail")
+		filer := &BeadRSFiler{Binary: script, Workspace: filepath.Join(t.TempDir(), "ws")}
+		err := filer.ValidateStartup(context.Background())
+		if err == nil || !strings.Contains(err.Error(), "not a usable bead-rs workspace") {
+			t.Fatalf("expected a workspace error, got: %v", err)
 		}
 	})
 }

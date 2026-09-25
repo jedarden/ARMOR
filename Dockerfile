@@ -39,6 +39,19 @@ RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w -X github.com/jedarden/arm
 # Build the armor-fleet binary
 RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w -X github.com/jedarden/armor/internal/version.Version=${VERSION}" -o /armor-fleet ./cmd/armor-fleet
 
+# Canonical bead-rs CLI for the restore-verifier image (ADR-004 §5 escalation).
+# Pinned release binary from the public jedarden/bead-rs mirror, checksum-
+# verified at build time — a mismatch fails the build. Kept in its own stage so
+# the checksum/download layer caches independently of code changes. The release
+# asset is x86_64 (the only architecture kaniko builds for this repo).
+FROM golang:1.25.14-alpine AS bead-cli
+ARG BEAD_VERSION=v0.2.6
+ARG BEAD_CLI_SHA256=15324894af38a8ffce8ad54da47ac067c7fd198779a7744f967bcf56a9aa3aee
+RUN wget -q -O /usr/local/bin/bead \
+      "https://github.com/jedarden/bead-rs/releases/download/${BEAD_VERSION}/bead-x86_64-unknown-linux-gnu" \
+    && echo "${BEAD_CLI_SHA256}  /usr/local/bin/bead" | sha256sum -c - \
+    && chmod 0755 /usr/local/bin/bead
+
 # Runtime stage for restore-verifier.
 # Built only with an explicit --target restore-verifier-runtime; it must NOT
 # be the last stage — an untargeted build produces the final stage, and the
@@ -46,11 +59,21 @@ RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w -X github.com/jedarden/arm
 # 0.1.1833–0.1.1870 shipped /restore-verifier as the entrypoint because this
 # stage sat last; deployed pods crash-looped with restore-verifier's
 # credential error.)
-FROM scratch AS restore-verifier-runtime
+#
+# Base is debian:bookworm-slim, not scratch: escalation (VERIFIER_ESCALATION)
+# shells out to the canonical bead-rs CLI copied in above, and that release
+# binary is glibc-dynamic (libgcc_s/libm/libc) — it cannot run on scratch, and
+# alpine's musl would need gcompat. A real base also leaves a shell for
+# operator triage (`bead list` inside the pod's escalation workspace).
+FROM debian:bookworm-slim AS restore-verifier-runtime
 
 # Copy CA certificates and timezone data
 COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
 COPY --from=builder /usr/share/zoneinfo /usr/share/zoneinfo
+
+# Canonical bead-rs CLI: escalation filings (--unique-ref deduped creates)
+# and startup validation (`bead --version` / `bead init` / `bead list`).
+COPY --from=bead-cli /usr/local/bin/bead /usr/local/bin/bead
 
 # Copy the binary
 COPY --from=builder /restore-verifier /restore-verifier

@@ -32,6 +32,19 @@ Backups stored through ARMOR are continuously proven restorable by a dedicated *
 
 ## Current state (2026-07-18)
 
-Implemented: harness with dual-path verification, SHA comparison, per-bucket state, status/trigger endpoints, metrics hooks. Not implemented: the three artifact-class assertions are stubs (`return nil`); no deployment manifests in declarative-config; no PrometheusRule/Grafana; no bead-filing escalation; no scheduled `armor decrypt`-only DR drill. Tracked in plan.md Phase 6 beads.
+Implemented: harness with dual-path verification, SHA comparison, per-bucket state, status/trigger endpoints, metrics hooks. Not implemented (as of this snapshot): the three artifact-class assertions are stubs (`return nil`); no deployment manifests in declarative-config; no PrometheusRule/Grafana; no bead-filing escalation; no scheduled `armor decrypt`-only DR drill. Tracked in plan.md Phase 6 beads — every item in this list has since landed; see plan.md Phase 6 for the current record.
+
+**Escalation enablement (2026-09-25, armor-babc0b2b):** the bead-filing
+escalation of §5 is deployed on `iad-ci/armor` — the restore-verifier image
+ships the canonical bead-rs CLI (pinned `bead` release binary, checksum-pinned
+at build; the runtime stage moved `scratch` → `debian:bookworm-slim` because
+the release binary is glibc-dynamic), a PVC (`sata`) backs the persisted
+dedupe state and the beads workspace, startup validation (CLI runnable,
+volume writable, workspace provisioned/opened) logs `ESCALATION FILING
+DISABLED —` with the remediation instead of crash-looping the verifier, and
+every filing carries a `--unique-ref` so the bead store itself rejects
+duplicates (a lost state file cannot file twice). The other three
+restore-verifier Deployments keep escalation off until each gets the volume
++ env. See the [restore-verifier deployment guide](../restore-verifier-deployment-guide.md).
 
 **Known defect in the direct path (verified 2026-07-18; fixed 2026-07-19, bf-5jc1j8):** `armor decrypt` could not read multipart objects at all — it failed with `invalid ARMOR magic` because it implemented the never-shipped reserved-byte envelope design (expected a 64-byte header at offset 0 and, for local files, a local sidecar path) instead of the shipped ADR-003 layout (headerless ciphertext, `x-amz-meta-armor-multipart` marker, sidecar object in B2). The "ARMOR server is gone" recovery path therefore did not exist for exactly the object class that matters most (large backups) — the failure mode the dual-path tripwire is designed to catch, which fired on its first real use. **Fixed:** `decryptB2` now dispatches on the `x-amz-meta-armor-multipart` marker (mirroring the server's GET path and the restore-verifier's direct path): for multipart objects it reads headerless ciphertext from offset 0, loads the JSON HMAC sidecar via `MultipartStateManager.LoadHMACTable`, and verifies with absolute block indices; single-PUT objects keep the envelope-header path. Local-file mode accepts a JSON sidecar alongside the headerless ciphertext (`-sidecar`) plus the object IV (`-iv`). Covered by round-trip and corruption tests against a real headerless + sidecar fixture. The placeholder whole-object SHA (ADR-003 gap bf-1v2ehf) means multipart objects still have no header SHA to verify — per-block HMAC verification is the integrity guarantee.

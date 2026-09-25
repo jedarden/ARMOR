@@ -39,6 +39,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -93,16 +94,18 @@ var (
 
 	// Escalation configuration (ADR-004 §5: one bead per distinct failure +
 	// one staleness bead per freshness window; storm-proof). Defaults to
-	// disabled so the running fleet is unchanged until a deployment can host
-	// the bf CLI; enable once `br` is available in the image.
-	escalationEnabled = flag.Bool("escalation", parseBool(os.Getenv("VERIFIER_ESCALATION"), false), "File one bead per distinct verification failure + staleness (requires bf/br CLI)")
+	// disabled so the running fleet is unchanged until a deployment opts in;
+	// the restore-verifier image ships the canonical bead-rs CLI and a
+	// writable /var/lib/restore-verifier volume backs state + workspace.
+	escalationEnabled = flag.Bool("escalation", parseBool(os.Getenv("VERIFIER_ESCALATION"), false), "File one bead per distinct verification failure + staleness (requires the bead-rs CLI)")
 	escalDeployment   = flag.String("escalation-deployment", os.Getenv("ARMOR_DEPLOYMENT"), "Deployment name recorded in escalation bead bodies")
 	escalFreshness    = flag.Duration("escalation-freshness-window", parseDuration(os.Getenv("VERIFIER_FRESHNESS_WINDOW"), 24*time.Hour), "Staleness window: escalate once per window when no verified restore occurs")
 	escalStatePath    = flag.String("escalation-state", getenvDefault("VERIFIER_ESCALATION_STATE", "/var/lib/restore-verifier/escalation-state.json"), "Path to the persisted dedupe-state file (mount a volume here for restart-survival)")
-	escalWorkspace    = flag.String("escalation-workspace", os.Getenv("VERIFIER_ESCALATION_WORKSPACE"), "bf workspace (-w) for filed beads (empty = cwd .beads/)")
+	escalWorkspace    = flag.String("escalation-workspace", os.Getenv("VERIFIER_ESCALATION_WORKSPACE"), "Beads workspace ROOT the bead CLI runs in (empty = <escalation-state dir>/beads-workspace, created and initialized at startup)")
 	escalLabel        = flag.String("escalation-label", os.Getenv("VERIFIER_ESCALATION_LABEL"), "Label applied to every escalation bead (optional)")
-	escalBinary       = flag.String("escalation-bf-binary", getenvDefault("VERIFIER_ESCALATION_BF_BINARY", "br"), "Path to the bf/br CLI used to file escalation beads")
-	escalExecTimeout  = flag.Duration("escalation-exec-timeout", parseDuration(os.Getenv("VERIFIER_ESCALATION_EXEC_TIMEOUT"), 10*time.Second), "Per-call timeout for a single bf create")
+	escalBinary       = flag.String("escalation-bead-binary", getenvDefault("VERIFIER_ESCALATION_BEAD_BINARY", "bead"), "Path to the canonical bead-rs CLI used to file escalation beads")
+	escalRefNamespace = flag.String("escalation-unique-ref-namespace", getenvDefault("VERIFIER_ESCALATION_UNIQUE_REF_NAMESPACE", "restore-verifier"), "bead --unique-ref namespace making filings idempotent at the bead store (empty disables unique refs)")
+	escalExecTimeout  = flag.Duration("escalation-exec-timeout", parseDuration(os.Getenv("VERIFIER_ESCALATION_EXEC_TIMEOUT"), 10*time.Second), "Per-call timeout for a single bead create")
 
 	// Bucket configuration (can be specified multiple times)
 	bucketFlag bucketFlags
@@ -305,17 +308,36 @@ func main() {
 		log.Printf("Excluding tenant prefixes from sampling: %v", cfg.ExcludePrefixes)
 	}
 
-	// Escalation (ADR-004 §5). Disabled by default — the running fleet has no
-	// bf/br CLI in-image, so filing is inert (noop filer) until a deployment
-	// opts in. When enabled, the BFCLIFiler shells out to `br create`; the
-	// Escalator itself is storm-proof regardless (persisted dedupe set, one bead
-	// per distinct failure, one staleness bead per window, no retry loops).
+	// Escalation (ADR-004 §5). Disabled by default — a deployment opts in by
+	// setting VERIFIER_ESCALATION=true. When enabled, the BeadRSFiler shells
+	// out to the canonical bead-rs CLI; the Escalator is storm-proof at two
+	// layers (persisted dedupe set, one bead per distinct failure, one
+	// staleness bead per window, no retry loops; plus a --unique-ref that
+	// makes the store itself reject duplicates).
+	//
+	// Startup validation is loud but not fatal: a deployment whose CLI or
+	// workspace volume is broken logs the exact remediation and runs with
+	// filing disabled rather than losing the verification loop itself (a
+	// crash-looping verifier proves nothing). The validation failure names
+	// the fix, so a broken rollout is visible in the first `kubectl logs`.
 	if *escalationEnabled {
-		filer := &restoreverifier.BFCLIFiler{
-			Binary:      *escalBinary,
-			Workspace:   *escalWorkspace,
-			Label:       *escalLabel,
-			ExecTimeout: *escalExecTimeout,
+		workspace := *escalWorkspace
+		if workspace == "" {
+			// Derive the workspace from the state volume so a deployment only
+			// has to mount one writable directory.
+			workspace = filepath.Join(filepath.Dir(*escalStatePath), "beads-workspace")
+		}
+		filer := &restoreverifier.BeadRSFiler{
+			Binary:             *escalBinary,
+			Workspace:          workspace,
+			Label:              *escalLabel,
+			Priority:           1, // bead-rs: critical — restore unavailability demands attention
+			UniqueRefNamespace: *escalRefNamespace,
+			ExecTimeout:        *escalExecTimeout,
+		}
+		if err := filer.ValidateStartup(context.Background()); err != nil {
+			log.Printf("ESCALATION FILING DISABLED — startup validation failed: %v", err)
+			log.Printf("Escalation remains configured on; the verifier runs without bead filing until the prerequisite above is fixed.")
 		}
 		cfg.Escalator = restoreverifier.NewEscalator(restoreverifier.EscalatorConfig{
 			Filer:           filer,
@@ -323,8 +345,8 @@ func main() {
 			FreshnessWindow: *escalFreshness,
 			StatePath:       *escalStatePath,
 		})
-		log.Printf("Escalation enabled: deployment=%q freshness=%s state=%s (storm-proof: one bead per distinct failure)",
-			orDefault(*escalDeployment, "(unset)"), *escalFreshness, *escalStatePath)
+		log.Printf("Escalation enabled: deployment=%q freshness=%s state=%s workspace=%s binary=%s unique-ref-ns=%q (storm-proof: one bead per distinct failure)",
+			orDefault(*escalDeployment, "(unset)"), *escalFreshness, *escalStatePath, workspace, *escalBinary, *escalRefNamespace)
 	} else {
 		log.Printf("Escalation disabled (VERIFIER_ESCALATION=false); failures surface via metrics only")
 	}

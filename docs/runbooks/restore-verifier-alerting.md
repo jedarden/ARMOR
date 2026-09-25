@@ -149,9 +149,11 @@ config edit into a silently stale one.
    cannot tell you which stage failed.
 4. Escalate per ADR-004 §5: one bead per distinct active failure, never a
    retry loop. The verifier's built-in escalation (bead filing) is a
-   deployment-level feature that is currently off everywhere — see ADR-004's
-   "Enabling escalation" recipe; until it is provisioned, the alert is the
-   only paging signal and the human files the bead.
+   deployment-level feature — enabled on `iad-ci/armor` (2026-09-25,
+   armor-babc0b2b), off on the other deployments (enablement recipe:
+   [restore-verifier deployment guide, "Failure/staleness
+   escalation"](../restore-verifier-deployment-guide.md)); where it is off,
+   the alert is the only paging signal and the human files the bead.
 5. If a page seems wrong, run `scripts/alerting-smoke-test.sh` first: it
    separates "pipeline broken" from "reality is bad" in one pass.
 

@@ -12,16 +12,22 @@ package restoreverifier
 //     bead across scheduler ticks (or process restarts). Escalation is one bead
 //     per distinct failure, never per tick.
 //   - Staleness escalates once per freshness window, never per tick.
-//   - The filer never retries. A failed `bf create` records nothing, so the
+//   - The filer never retries. A failed `bead create` records nothing, so the
 //     next tick may make one further attempt — bounded by the schedule cadence,
 //     never an unbounded loop. No counter/attempt beads are ever filed.
+//   - Filings carry a --unique-ref derived from the dedupe key, so creation is
+//     idempotent at the bead-store level too (bead-rs returns EXISTING /
+//     EXISTING_CLOSED instead of a duplicate): even a lost dedupe-state file
+//     cannot produce a second bead for the same distinct failure.
 //
 // The bead-filer is an interface so unit tests exercise the dedupe and
-// staleness-window logic against a fake without invoking the bf CLI or touching
-// the live beads store.
+// staleness-window logic against a fake without invoking the bead CLI or
+// touching the live beads store.
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -226,7 +232,7 @@ func (p BeadPayload) Body() string {
 
 // BeadFiler files an escalation bead. The interface lets unit tests exercise
 // the Escalator's dedupe/staleness logic against a fake without invoking the
-// bf CLI or touching the live beads store.
+// bead CLI or touching the live beads store.
 //
 // File must be idempotent from the caller's perspective only in that the
 // Escalator guarantees it is called at most once per active dedupe key; the
@@ -503,33 +509,52 @@ func (e *Escalator) persistLocked() {
 	}
 }
 
-// BFCLIFiler files escalation beads by shelling out to the bf CLI (the `br`
-// binary, i.e. bead-forge). It performs no dedupe and never retries — one exec
-// per call, bounded by execTimeout.
-type BFCLIFiler struct {
-	// Binary is the path to the br CLI. Defaults to "br" (resolved via PATH).
+// BeadRSFiler files escalation beads by shelling out to the canonical bead-rs
+// CLI (`bead` — bf/bead-forge was retired as the canonical CLI on 2026-08-14).
+// It performs no dedupe itself and never retries — one exec per call, bounded
+// by ExecTimeout.
+//
+// When UniqueRefNamespace is set, every create carries a --unique-ref derived
+// from the payload's dedupe identity, making filing idempotent at the
+// bead-store level: bead-rs answers a repeated ref with `EXISTING <id>` (or
+// `EXISTING_CLOSED <id>`) instead of a duplicate. Even a lost dedupe-state
+// file therefore cannot produce a second bead for the same distinct failure.
+type BeadRSFiler struct {
+	// Binary is the path to the bead CLI. Defaults to "bead" (resolved via
+	// PATH; the restore-verifier image ships it at /usr/local/bin/bead).
 	Binary string
-	// Workspace is the -w flag value (beads workspace dir). Empty uses the
-	// CLI's default (cwd .beads/).
+	// Workspace is the beads workspace ROOT directory the CLI runs in —
+	// bead-rs discovers the workspace by walking up from cwd to a .beads/
+	// containing config.json (it has no -w flag). Empty uses the process cwd.
+	// The directory is created and provisioned with `bead init` by
+	// ValidateStartup when missing.
 	Workspace string
-	// BeadType is the --type value. Defaults to "bug" (verification failures
-	// and staleness are defects requiring attention).
+	// BeadType is the --issue-type value. Defaults to "bug" (verification
+	// failures and staleness are defects requiring attention).
 	BeadType string
 	// Label is an optional --label applied to every escalation bead.
 	Label string
-	// Priority is the --priority value (0=Critical..4=Backlog). Defaults to 1
-	// (High) — restore unavailability is high-severity.
+	// Priority is the --priority value in bead-rs semantics (0=urgent,
+	// 1=critical, 2=high, 3=normal, 4=backlog). Zero means urgent, so callers
+	// that care set this explicitly (main.go uses 1 = critical — restore
+	// unavailability demands attention but is not page-the-operator urgent).
 	Priority int
-	// ExecTimeout bounds a single bf create call so a hung CLI cannot stall
+	// UniqueRefNamespace is the NAMESPACE half of --unique-ref
+	// (NAMESPACE:KEY). Empty disables unique refs (filings then rely solely on
+	// the Escalator's persisted dedupe set).
+	UniqueRefNamespace string
+	// ExecTimeout bounds a single bead create call so a hung CLI cannot stall
 	// escalation. Defaults to 10s.
 	ExecTimeout time.Duration
 }
 
-// File runs `br create` and returns the printed bead ID.
-func (f *BFCLIFiler) File(ctx context.Context, p BeadPayload) (string, error) {
+// File runs `bead create` and returns the printed bead ID. A repeated
+// --unique-ref is not an error: `EXISTING <id>` and `EXISTING_CLOSED <id>`
+// both yield the existing id so the caller records the dedupe key as covered.
+func (f *BeadRSFiler) File(ctx context.Context, p BeadPayload) (string, error) {
 	binary := f.Binary
 	if binary == "" {
-		binary = "br"
+		binary = "bead"
 	}
 	beadType := f.BeadType
 	if beadType == "" {
@@ -545,22 +570,28 @@ func (f *BFCLIFiler) File(ctx context.Context, p BeadPayload) (string, error) {
 	args := []string{
 		"create",
 		"--title", p.Title(),
-		"--type", beadType,
+		"--issue-type", beadType,
 		"--priority", fmt.Sprintf("%d", clampPriority(f.Priority)),
 		"--description", p.Body(),
 	}
-	if f.Workspace != "" {
-		args = append(args, "-w", f.Workspace)
+	if ns := f.UniqueRefNamespace; ns != "" {
+		args = append(args, "--unique-ref", ns+":"+p.UniqueRefKey())
 	}
 	if f.Label != "" {
 		args = append(args, "--label", f.Label)
 	}
 
 	cmd := exec.CommandContext(callCtx, binary, args...)
+	// bead-rs resolves the workspace by walking up from cwd (there is no -w
+	// flag), so aiming cmd.Dir at the workspace root is how a non-cwd
+	// workspace is selected.
+	if f.Workspace != "" {
+		cmd.Dir = f.Workspace
+	}
 	// WaitDelay makes Output() give up promptly once the context deadline fires.
 	// CommandContext alone sends SIGKILL only to the immediate process; a child
-	// that inherits the stdout pipe (e.g. a shell wrapper, or a hung bf child)
-	// can keep Output blocked on that pipe indefinitely. WaitDeadline starts the
+	// that inherits the stdout pipe (e.g. a shell wrapper, or a hung bead child)
+	// can keep Output blocked on that pipe indefinitely. WaitDelay starts the
 	// moment the process is killed and forces pipe closure, so a single call is
 	// truly bounded by ~ExecTimeout + WaitDelay — the storm-proof "never hangs"
 	// guarantee.
@@ -572,11 +603,138 @@ func (f *BFCLIFiler) File(ctx context.Context, p BeadPayload) (string, error) {
 			stderr = string(ee.Stderr)
 		}
 		if callCtx.Err() == context.DeadlineExceeded {
-			return "", fmt.Errorf("br create timed out after %s: %s", timeout, stderr)
+			return "", fmt.Errorf("bead create timed out after %s: %s", timeout, stderr)
 		}
-		return "", fmt.Errorf("br create failed: %w: %s", err, stderr)
+		return "", fmt.Errorf("bead create failed: %w: %s", err, stderr)
 	}
-	return strings.TrimSpace(string(out)), nil
+	id := strings.TrimSpace(string(out))
+	// Idempotent-reference hits print "<PREFIX> <id>"; a fresh create prints
+	// just the id. Both are successes — the escalation exists exactly once,
+	// which is the invariant, so record the key and move on. EXISTING_CLOSED
+	// additionally means an operator already acknowledged (closed) the bead;
+	// we still do not re-file for the same distinct failure.
+	if existing, ok := strings.CutPrefix(id, "EXISTING_CLOSED "); ok {
+		fmt.Fprintf(os.Stderr, "restore-verifier: escalation bead %s already exists (closed) — not re-filing\n", existing)
+		return existing, nil
+	}
+	if existing, ok := strings.CutPrefix(id, "EXISTING "); ok {
+		fmt.Fprintf(os.Stderr, "restore-verifier: escalation bead %s already exists — deduped at the bead store\n", existing)
+		return existing, nil
+	}
+	return id, nil
+}
+
+// UniqueRefKey is the stable KEY half of the --unique-ref for this payload:
+// identical for identical dedupe identities, different otherwise. Failure
+// escalations hash the full dedupe key (bucket + object key + path + failure
+// class); staleness escalations anchor to the bucket and the freshness window
+// the detection fell in, so a re-detection inside the same window maps to the
+// same ref while the next window files fresh. The hash is stable across
+// processes and restarts — it depends only on the payload, never on time or
+// map iteration.
+func (p BeadPayload) UniqueRefKey() string {
+	if p.Kind == BeadStaleness {
+		window := p.FreshnessWindow
+		if window <= 0 {
+			window = time.Hour // keep the key total even for malformed payloads
+		}
+		epoch := p.Detected.Truncate(window).Unix()
+		return fmt.Sprintf("staleness-%s-%d", p.Bucket, epoch)
+	}
+	sum := sha256.Sum256([]byte(dedupeKey{
+		Bucket:       p.Bucket,
+		ObjectKey:    p.ObjectKey,
+		Path:         p.Path,
+		FailureClass: p.FailureClass,
+	}.String()))
+	return hex.EncodeToString(sum[:16])
+}
+
+// ValidateStartup verifies the two things a deployment must provide before
+// escalation can actually file: the canonical bead CLI, and a usable beads
+// workspace. It is meant to be called once at process start so an opted-in
+// deployment fails fast (crash-looping visibly) instead of running inert with
+// escalation silently unable to file:
+//
+//  1. the binary exists and executes (`bead --version` runs) — catches both a
+//     missing CLI and an image that shipped a binary unusable in this runtime;
+//  2. the workspace directory exists (created when missing), is writable
+//     (probe temp-file), and is a bead-rs workspace — a fresh directory is
+//     provisioned with `bead init`;
+//  3. `bead list` opens the workspace end to end.
+func (f *BeadRSFiler) ValidateStartup(ctx context.Context) error {
+	binary := f.Binary
+	if binary == "" {
+		binary = "bead"
+	}
+	timeout := f.ExecTimeout
+	if timeout <= 0 {
+		timeout = 10 * time.Second
+	}
+	callCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	if _, err := exec.LookPath(binary); err != nil {
+		return fmt.Errorf("escalation bead CLI %q not found: %w (the restore-verifier image must ship the bead-rs CLI)", binary, err)
+	}
+
+	// Every child runs with Dir set to the workspace, so the directory must
+	// exist before the first exec — a fresh volume starts without it.
+	if f.Workspace != "" {
+		if err := os.MkdirAll(f.Workspace, 0o755); err != nil {
+			return fmt.Errorf("escalation workspace %s cannot be created: %w", f.Workspace, err)
+		}
+		if err := ProbeWritableDir(f.Workspace); err != nil {
+			return fmt.Errorf("escalation workspace %s is not writable: %w (mount a writable volume here)", f.Workspace, err)
+		}
+	}
+
+	version := exec.CommandContext(callCtx, binary, "--version")
+	version.Dir = f.Workspace
+	if out, err := version.Output(); err != nil {
+		return fmt.Errorf("escalation bead CLI %q is present but not runnable: %w: %s", binary, err, strings.TrimSpace(string(out)))
+	}
+
+	if f.Workspace != "" {
+		// Provision a fresh volume: bead-rs recognizes a workspace by
+		// .beads/config.json; anything else (including nothing, or a stray
+		// non-bead-rs .beads) fails discovery, so let `bead init` make it real.
+		if _, err := os.Stat(filepath.Join(f.Workspace, ".beads", "config.json")); os.IsNotExist(err) {
+			init := exec.CommandContext(callCtx, binary, "init")
+			init.Dir = f.Workspace
+			if out, err := init.CombinedOutput(); err != nil {
+				return fmt.Errorf("escalation workspace %s provisioning failed (bead init): %w: %s", f.Workspace, err, strings.TrimSpace(string(out)))
+			}
+		}
+		list := exec.CommandContext(callCtx, binary, "list", "--limit", "1")
+		list.Dir = f.Workspace
+		if out, err := list.CombinedOutput(); err != nil {
+			return fmt.Errorf("escalation workspace %s is not a usable bead-rs workspace (bead list): %w: %s", f.Workspace, err, strings.TrimSpace(string(out)))
+		}
+	}
+	return nil
+}
+
+// ProbeWritableDir verifies dir accepts file creation by writing and removing
+// a throwaway probe file — the cheapest true test of "a writable volume is
+// mounted here" (read-only mounts, missing directories, and read-only
+// filesystems all fail it).
+func ProbeWritableDir(dir string) error {
+	probe, err := os.CreateTemp(dir, ".writable-probe-*")
+	if err != nil {
+		return err
+	}
+	name := probe.Name()
+	if _, err := probe.Write([]byte("ok")); err != nil {
+		probe.Close()
+		os.Remove(name)
+		return err
+	}
+	if err := probe.Close(); err != nil {
+		os.Remove(name)
+		return err
+	}
+	return os.Remove(name)
 }
 
 // clampPriority maps any int into the beads schema's allowed range [0,4].

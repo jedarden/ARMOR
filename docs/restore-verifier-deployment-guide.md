@@ -94,6 +94,9 @@ This means:
 - `VERIFIER_HTTP_LISTEN`: HTTP listen address (default: `:9002`)
 - `VERIFIER_DR_DRILL_INTERVAL`: Direct-only DR drill interval (default: disabled). See [Scheduled DR drills](#scheduled-dr-drills-production-cadence) for the production cadence, scheduling semantics, and the safe-pause procedure.
 - `VERIFIER_RUN_TIMEOUT`: Per-run deadline for verification and DR-drill runs (default: `2h`). A run that exceeds it — a discovery walk wedged in a slow bucket region, or a stalled restore — fails visibly (failed-enumeration ledger and gauges, a log line naming the deadline) instead of silently blocking the loop. Discovery also logs progress roughly every 30s, so a long enumeration is observable rather than presenting as a hung verifier.
+- `VERIFIER_ESCALATION`: `true` enables failure/staleness bead filing (default: disabled). Requires the in-image bead CLI and a writable volume at `/var/lib/restore-verifier` — see [Failure/staleness escalation](#failurestaleness-escalation-bead-filing) for the prerequisites, startup validation, and enablement recipe.
+- `VERIFIER_FRESHNESS_WINDOW`: Staleness escalation window (default: `24h`) — at most one staleness bead per bucket per window.
+- `ARMOR_DEPLOYMENT`: Deployment identity recorded in escalation bead bodies (e.g. `iad-ci/armor`).
 
 ## HTTP Endpoints
 
@@ -190,6 +193,77 @@ corruption rather than an environmental outage, and capacity-sensitive windows
 window, leave the dual path running — its ARMOR read path goes through
 Cloudflare and may still be healthy; if B2 is fully down both paths fail,
 which is the honest signal.
+
+## Failure/staleness escalation (bead filing)
+
+With `VERIFIER_ESCALATION=true` the verifier files exactly one bead per
+distinct active verification failure and one staleness bead per bucket per
+freshness window ([ADR-004 §5](adr/004-continuous-restore-verification.md),
+[observability contract](observability-contract.md)). Filing is storm-proof
+at two layers: a persisted dedupe set (`VERIFIER_ESCALATION_STATE`) and a
+`--unique-ref` the bead store binds atomically, so even a lost state file
+cannot produce a duplicate bead.
+
+### Prerequisites (validated at startup)
+
+1. **The canonical bead-rs CLI in the image.** The `restore-verifier-runtime`
+   image stage ships `bead` at `/usr/local/bin/bead` (pinned release binary,
+   checksum-verified at build time). The image base is `debian:bookworm-slim`
+   for this reason — the bead release binary is glibc-dynamic and cannot run
+   on the old `scratch` stage.
+2. **A writable volume mounted at `/var/lib/restore-verifier`** holding both
+   the dedupe state file and the beads workspace
+   (`<state dir>/beads-workspace` by default). Persist it with a PVC so the
+   dedupe set and the filed beads survive pod restarts; use storage class
+   `sata` on Rackspace/OpenStack clusters.
+
+At startup with escalation enabled the verifier validates both: it looks up
+the CLI, runs `bead --version`, probes the workspace directory writable,
+provisions a fresh workspace with `bead init` when missing, and opens it
+with `bead list`. A failed validation logs `ESCALATION FILING DISABLED —`
+with the exact remediation and the verifier keeps verifying (a crash-looping
+verifier proves nothing); it files nothing until the prerequisite is fixed.
+
+### Enabling on a deployment
+
+```yaml
+env:
+  - name: VERIFIER_ESCALATION
+    value: "true"
+  - name: ARMOR_DEPLOYMENT
+    value: "iad-ci/armor"        # recorded in every bead body
+volumes:
+  - name: escalation
+    persistentVolumeClaim:
+      claimName: restore-verifier-escalation
+volumeMounts:
+  - name: escalation
+    mountPath: /var/lib/restore-verifier
+```
+
+Optional knobs (all env-driven): `VERIFIER_ESCALATION_WORKSPACE` (default
+`/var/lib/restore-verifier/beads-workspace`, created and initialized at
+startup), `VERIFIER_ESCALATION_BEAD_BINARY` (default `bead`),
+`VERIFIER_ESCALATION_UNIQUE_REF_NAMESPACE` (default `restore-verifier`),
+`VERIFIER_ESCALATION_LABEL`, `VERIFIER_FRESHNESS_WINDOW` (staleness window,
+default `24h`), `VERIFIER_ESCALATION_STATE`, `VERIFIER_ESCALATION_EXEC_TIMEOUT`
+(default `10s`).
+
+**Fleet status:** enabled on `iad-ci/armor` (2026-09-25, armor-babc0b2b).
+The other three restore-verifier Deployments keep escalation off until each
+gets the volume + env; filing there is inert (`VERIFIER_ESCALATION` unset).
+
+### Reading the escalation workspace
+
+Filed beads land in the pod's workspace SQLite store (with the checkpoint
+published alongside it under `beads-workspace/.beads/checkpoint/`). To
+triage from the pod, run the CLI from the workspace directory — bead-rs
+discovers the workspace by walking up from the current directory:
+
+```bash
+kubectl exec -n armor deploy/restore-verifier -- \
+  sh -c 'cd /var/lib/restore-verifier/beads-workspace && bead list --limit 20'
+```
 
 ## Metrics
 
