@@ -104,7 +104,7 @@ need a HEAD per object. It is stored under `.armor/manifest/` in the bucket.
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
 | `ARMOR_MANIFEST_ENABLED` | No | `true` | `false` or `0` disables the index |
-| `ARMOR_MANIFEST_PREFIX` | No | `.armor/manifest` | Location of the index, relative to `ARMOR_PREFIX`. Must stay inside the tenant namespace (no absolute paths, no `../`) |
+| `ARMOR_MANIFEST_PREFIX` | No | `.armor/manifest` | Location of the index, relative to `ARMOR_PREFIX`. Must stay inside the tenant namespace (no absolute paths, no `../`); an escaping value is refused at startup rather than rewritten. An empty value is treated the same as unset |
 | `ARMOR_MANIFEST_COMPACTION_INTERVAL` | No | `3600` | Seconds between automatic compactions |
 | `ARMOR_MANIFEST_COMPACTION_THRESHOLD` | No | `1000` | Delta entry count that triggers an early compaction |
 | `ARMOR_MANIFEST_LOAD_TIMEOUT` | No | `480` | Seconds allowed for the startup manifest load; `0` is unbounded. Keep it under the pod's startupProbe budget: on timeout the server starts with an empty index instead of crash-looping |
