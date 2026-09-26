@@ -654,6 +654,12 @@ scrapes `/metrics` in the cluster (see the Phase 6 caveat in `docs/plan/plan.md`
 
 ## Canary Metrics
 
+The string diagnostics remain in `/armor/canary` and verifier status
+responses, but are intentionally omitted from Prometheus exposition. A
+Prometheus parser rejects a whole target scrape when a quoted string is emitted
+under a numeric `gauge` family; alert rules consume only numeric counters and
+health gauges.
+
 ### `armor_canary_checks_total`
 
 **Type:** Counter  

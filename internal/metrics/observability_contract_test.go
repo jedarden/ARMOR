@@ -59,17 +59,11 @@ func labeledValue(t *testing.T, dump, series, labelMatch string) (string, bool) 
 var canaryFamily = map[string]string{
 	"armor_canary_checks_total":                      "counter",
 	"armor_canary_check_failures_total":              "counter",
-	"armor_canary_last_check_time":                   "gauge",
-	"armor_canary_last_check_error":                  "gauge",
 	"armor_multipart_canary_checks_total":            "counter",
 	"armor_multipart_canary_check_failures_total":    "counter",
-	"armor_multipart_canary_last_check_time":         "gauge",
-	"armor_multipart_canary_last_check_error":        "gauge",
 	"armor_multipart_canary_healthy":                 "gauge",
 	"armor_secondary_canary_checks_total":            "counter",
 	"armor_secondary_canary_check_failures_total":    "counter",
-	"armor_secondary_canary_last_check_time":         "gauge",
-	"armor_secondary_canary_last_check_error":        "gauge",
 	"armor_secondary_canary_healthy":                 "gauge",
 	"armor_multipart_canary_upload_duration_seconds": "histogram",
 }
@@ -119,21 +113,17 @@ func TestCanaryMetricFamilyContract(t *testing.T) {
 		t.Error("armor_canary_healthy must not be exported; small-object canary health is carried by /armor/canary and /readyz")
 	}
 
-	// String-valued gauges export as the value wrapped in JSON quoting, then
-	// quoted again — expvar.String.String() already JSON-quotes and the
-	// exporter applies %q on top. Pin that exact (double-quoted) rendering:
-	// alert rules and dashboards must not expect a bare RFC3339 token.
-	//
-	// SetCanaryLastCheck(time.Unix(1700000000, 0)) renders 2023-11-14T22:13:20Z.
-	for _, want := range []string{
-		`armor_canary_last_check_time "\"2023-11-14T22:13:20Z\""`,
-		`armor_multipart_canary_last_check_time "\"2023-11-14T22:13:20Z\""`,
-		`armor_secondary_canary_last_check_time "\"2023-11-14T22:13:20Z\""`,
-		`armor_canary_last_check_error "\"synthetic contract failure\""`,
-		`armor_multipart_canary_last_check_error "\"\""`,
+	// String-valued diagnostics stay available through the status endpoints,
+	// but must not appear as invalid numeric Prometheus samples. One malformed
+	// sample makes Prometheus reject the whole target scrape.
+	for _, name := range []string{
+		"armor_canary_last_check_time", "armor_canary_last_check_error",
+		"armor_multipart_canary_last_check_time", "armor_multipart_canary_last_check_error",
+		"armor_secondary_canary_last_check_time", "armor_secondary_canary_last_check_error",
+		"armor_key_rotation_start_time",
 	} {
-		if !strings.Contains(dump, want+"\n") {
-			t.Errorf("string gauge line %q not exported verbatim; the string-metric quoting contract changed", want)
+		if strings.Contains(dump, name) {
+			t.Errorf("string diagnostic %s must not be emitted in Prometheus exposition", name)
 		}
 	}
 }

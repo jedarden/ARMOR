@@ -787,13 +787,19 @@ func (m *Metrics) PrometheusFormat() string {
 
 	// Helper to write a metric
 	writeMetric := func(name, help, metricType string, value expvar.Var) {
+		// Prometheus exposition samples are numeric. String-valued expvars are
+		// useful to the JSON status endpoints, but rendering their JSON-quoted
+		// contents as gauge samples makes Prometheus reject the entire scrape
+		// (VictoriaMetrics merely drops those samples). Keep diagnostics on the
+		// status surfaces and leave them out of the numeric exposition format.
+		if _, ok := value.(*expvar.String); ok {
+			return
+		}
 		fmt.Fprintf(&sb, "# HELP armor_%s %s\n", name, help)
 		fmt.Fprintf(&sb, "# TYPE armor_%s %s\n", name, metricType)
 		switch v := value.(type) {
 		case *expvar.Int:
 			fmt.Fprintf(&sb, "armor_%s %s\n", name, v.String())
-		case *expvar.String:
-			fmt.Fprintf(&sb, "armor_%s %q\n", name, v.String())
 		}
 	}
 

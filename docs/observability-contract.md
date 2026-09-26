@@ -143,38 +143,29 @@ falls back to the manifest writer's flush recency.
 
 Emitted by `internal/metrics.Metrics.PrometheusFormat` on the ARMOR admin
 `/metrics` endpoint. All names are prefixed `armor_`. The canary family is
-exactly the fourteen series below (plus the multipart histogram) — the
+exactly the nine numeric series below (plus the multipart histogram) — the
 contract test in `internal/metrics` pins this set:
 
 | Series | Type | Labels | Value contract |
 |---|---|---|---|
 | `armor_canary_checks_total` | counter | — | Incremented at the start of every small-object check cycle |
 | `armor_canary_check_failures_total` | counter | — | Incremented once per check cycle that exhausted its retries |
-| `armor_canary_last_check_time` | gauge | — | RFC3339 **string** of the last check start (a string value, not a timestamp number — see the string-valued gauge caveat below) |
-| `armor_canary_last_check_error` | gauge | — | Last failure's error string; `""` after a passing check |
 | `armor_multipart_canary_checks_total` | counter | — | As above, multipart family |
 | `armor_multipart_canary_check_failures_total` | counter | — | As above, multipart family |
-| `armor_multipart_canary_last_check_time` | gauge | — | RFC3339 string |
-| `armor_multipart_canary_last_check_error` | gauge | — | Error string or `""` |
 | `armor_multipart_canary_healthy` | gauge | — | `1` after a passing multipart check, `0` after a failed one; `0` also before the first completed check |
 | `armor_secondary_canary_checks_total` | counter | — | Secondary-backend family (ADR-006) |
 | `armor_secondary_canary_check_failures_total` | counter | — | Secondary-backend family |
-| `armor_secondary_canary_last_check_time` | gauge | — | RFC3339 string |
-| `armor_secondary_canary_last_check_error` | gauge | — | Error string or `""` |
 | `armor_secondary_canary_healthy` | gauge | — | `1`/`0`; stays `0` when no secondary backend is configured |
 | `armor_multipart_canary_upload_duration_seconds` | histogram | `operation` (`upload`\|`verify`), `status` (`success`\|`failure`) | `_sum`, `_count`, and `_last` per label pair; a label pair's series appear only once it has at least one observation |
 
-**String-valued gauge caveat.** Every `*_last_check_time` and
-`*_last_check_error` gauge carries a *string* value (RFC3339 timestamp or
-error text), and the exporter renders it with an extra layer of JSON
-quoting: `expvar.String.String()` already JSON-quotes and the exporter
-applies `%q` on top. On the wire a timestamp reads
-`armor_canary_last_check_time "\"2023-11-14T22:13:20Z\""` — a Prometheus
-parser sees the value as `"2023-11-14T22:13:20Z"` **including the literal
-quote characters**. Nothing alert-side may treat these as numeric or
-timestamp-typed samples; they are diagnostic strings. (Fixing the double
-quoting is an exporter change, not a documentation change, and would be a
-breaking edit to this contract.)
+**String diagnostic caveat.** The `/armor/canary` and verifier status surfaces
+retain the RFC3339/error-string diagnostics, but `PrometheusFormat` omits
+their `expvar.String` fields. Prometheus exposition samples must be numeric;
+emitting a quoted string under a `gauge` family makes Prometheus reject the
+entire target scrape. VictoriaMetrics previously dropped those samples while
+keeping the rest of the scrape, which hid this compatibility issue. Alerting
+uses the numeric counters and health gauges above; operators should read the
+status endpoints for the diagnostic strings.
 
 There is **no** `armor_canary_healthy` series. Small-object canary health is
 carried by `/armor/canary`'s `status` field and by `/readyz`; only the
