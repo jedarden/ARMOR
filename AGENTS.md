@@ -8,8 +8,11 @@ still apply and nothing here overrides them.
 ## What ARMOR is
 
 An S3-compatible proxy (Go) that encrypts objects before storing them in
-Backblaze B2 and serves reads through Cloudflare for zero-egress cost. Any S3
-client works unmodified. Full product documentation starts at
+Backblaze B2 and serves reads through Cloudflare for zero-egress cost.
+Standard S3 clients work unmodified within the tested contract (auth, reads,
+range reads, listing, overwrite, delete, single-PUT and multipart writes),
+pinned by the conformance suite in `tests/aws-cli-compatibility/` — see
+README.md. Full product documentation starts at
 [README.md](README.md); design and operations docs are indexed in
 [docs/README.md](docs/README.md) (that index is enforced by a test, see below).
 

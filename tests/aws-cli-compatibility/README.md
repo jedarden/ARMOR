@@ -34,6 +34,7 @@ object is checked byte-for-byte (SHA-256) against the original.
 | `litestream_compat_test.go` + `testdata/litestream.yml` | `litestream replicate` followed by `litestream restore` and SQLite content verification | Full mode; endpoint mode makes missing Litestream fatal |
 | `barman_compat_test.go` + `testdata/barman-cloud.env` | `barman-cloud-backup` with 5MB tar chunks, then `barman-cloud-restore` into a fresh PostgreSQL cluster | Full mode; endpoint mode makes missing Barman/PostgreSQL tools fatal |
 | `zz_verify_sdk_test.go` | `TestVerify_*` — drives the identical request paths via `aws-sdk-go-v2` (multipart, out-of-order completion, concurrent transfers) | **Always**, including CI's `-short` gate — it needs no external binaries |
+| `protocol_conformance_test.go` | `TestVerify_Authentication` / `_RangeReads` / `_List` / `_Overwrite` / `_Delete` — pins the wire behaviors behind README's compatibility claim: SigV4 accept plus wrong-secret / unknown-key / unsigned rejections with standard error codes, block-boundary byte-range reads, prefix listing with HEAD agreement, wholesale overwrite, idempotent delete | **Always**, including CI's `-short` gate — no external binaries |
 
 The `TestVerify_*` smoke tests are the suite's teeth on machines without the
 CLIs: they exercise the same in-process server and handlers the CLI tests use,
