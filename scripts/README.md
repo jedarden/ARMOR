@@ -4,19 +4,23 @@ This directory contains operational, testing, and monitoring scripts for ARMOR d
 
 ## definition-of-done.sh
 
-Local verification gate. `scripts/definition-of-done.sh --fast` runs the toolchain parity gate (`scripts/toolchain-parity.sh`), `go build ./...`, `go vet ./...`, and the Python scripts test suite (`tests/test_drift_check.py`, `tests/test_toolchain_parity.py`); without `--fast` it additionally runs `go test ./... -short`. Exits non-zero if any leg fails.
+Local verification gate. `scripts/definition-of-done.sh --fast` runs the toolchain parity gate (`scripts/toolchain-parity.sh`), the compose.yaml ↔ VERSION parity gate (`scripts/compose-version-parity.sh`), `go build ./...`, `go vet ./...`, and the Python scripts test suite (`tests/test_drift_check.py`, `tests/test_toolchain_parity.py`, `tests/test_compose_version_parity.py`); without `--fast` it additionally runs `go test ./... -short`. Exits non-zero if any leg fails.
 
 ## release-gate.sh
 
-The test gate CI and the `Dockerfile` run before building an image: the toolchain parity check, crypto, backend, restore-verifier, canary, config, `cmd/armor` and the server handlers, plus an integration-suite compile. `ARMOR_RELEASE_RACE=1` adds `-race` to the packages that support it (CI sets it).
+The test gate CI and the `Dockerfile` run before building an image: the toolchain parity check, the compose.yaml ↔ VERSION parity check, crypto, backend, restore-verifier, canary, config, `cmd/armor` and the server handlers, plus an integration-suite compile. `ARMOR_RELEASE_RACE=1` adds `-race` to the packages that support it (CI sets it).
 
 ## toolchain-parity.sh
 
 go.mod ↔ Dockerfile toolchain parity gate. Parses go.mod's `toolchain` directive (the single source of the Go version) and every `golang:<tag>` base image in `Dockerfile` and `Dockerfile.test`, and exits 1 on any drift — a different version, an untagged (implicit `:latest`) or digest-pinned golang base, or a floating minor tag — and 2 on a structural break (no directive, a missing Dockerfile, a Dockerfile with no golang base). Warn-only `make toolchain-check` remains for the local `go`, where a newer version is fine. Wired into the definition of done, the release gate (so the Dockerfile builder stage gates itself), and `make docker`. Tests: `python3 -m pytest tests/test_toolchain_parity.py -q`.
 
+## compose-version-parity.sh
+
+compose.yaml ↔ VERSION image-pin parity gate. Every `${ARMOR_VERSION:-...}` default in the tracked `compose.yaml` (demo and production profiles) must equal the repository's `VERSION` file, which is the tag the README Quick Start points readers at. `cut-release.sh` rewrites the defaults in the release commit; this gate exits 1 on any other drift — a default pinning a different, floating or non-semver value — and 2 on a structural break (missing or non-semver `VERSION`, missing `compose.yaml`, no default left to check). Wired into the definition of done, the release gate (so no image is built from a tree whose compose pin lags `VERSION`), and `make docker`. Tests: `python3 -m pytest tests/test_compose_version_parity.py -q`.
+
 ## cut-release.sh
 
-Cuts a release commit. `scripts/cut-release.sh <MAJOR.MINOR.PATCH>` (or `make release V=...`) writes `VERSION`, prepends a `CHANGELOG.md` entry generated from the commit subjects since the previous `v*` tag (bead-checkpoint and release commits excluded), commits `release: armor <version>` with exactly those two files, and pushes to `origin main`. CI does everything after that (images, tag, Forgejo and GitHub releases); see [docs/release-process.md](../docs/release-process.md).
+Cuts a release commit. `scripts/cut-release.sh <MAJOR.MINOR.PATCH>` (or `make release V=...`) writes `VERSION`, rewrites every `compose.yaml` `${ARMOR_VERSION:-...}` default to the new version, prepends a `CHANGELOG.md` entry generated from the commit subjects since the previous `v*` tag (bead-checkpoint and release commits excluded), commits `release: armor <version>` with exactly those three files, and pushes to `origin main`. CI does everything after that (images, tag, Forgejo and GitHub releases); see [docs/release-process.md](../docs/release-process.md).
 
 **Options:** `--dry-run` prints the entry and changes nothing; `--no-push` commits without pushing.
 

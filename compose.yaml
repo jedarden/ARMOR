@@ -4,14 +4,14 @@
 #   docker compose --profile production up -d   # real backend; copy .env.example to .env first
 #
 # The image tag is pinned through ARMOR_VERSION. The default below is the
-# repository's VERSION-file value at the time this file was last bumped, and
-# it must be bumped in the same change as VERSION (cut-release.sh does not
-# touch this file) — tests/docker-demo-smoke fails the drift otherwise. Set
+# repository's VERSION-file value: cut-release.sh bumps it in the release
+# commit, and scripts/compose-version-parity.sh fails any drift from VERSION
+# (tests/docker-demo-smoke re-checks it with a daemon). Set
 # ARMOR_VERSION in the environment (or in .env) to use any other published
 # tag. There is no floating :latest tag to fall back to.
 services:
   armor-demo:
-    image: ghcr.io/jedarden/armor:${ARMOR_VERSION:-0.1.1973}
+    image: ghcr.io/jedarden/armor:${ARMOR_VERSION:-0.1.1975}
     profiles: [demo]
     command:
       - demo
@@ -24,7 +24,7 @@ services:
       - "9001:9001"
 
   armor-production:
-    image: ghcr.io/jedarden/armor:${ARMOR_VERSION:-0.1.1973}
+    image: ghcr.io/jedarden/armor:${ARMOR_VERSION:-0.1.1975}
     profiles: [production]
     # Configuration reaches the container from the shell environment and from
     # a root .env (compose interpolates the ${...} references below from the

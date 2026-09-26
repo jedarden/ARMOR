@@ -1504,7 +1504,8 @@ armor-4a03c2f6, armor-b00ee40c, armor-c01708aa):
   carries no SemVer meaning; `CHANGELOG.md` says what changed. Cutting 1.0.0
   is a deliberate future decision, not a side effect.
 - **One release commit, written by `scripts/cut-release.sh`** (`VERSION` +
-  `CHANGELOG.md`, message `release: armor <version>`). CI never bumps
+  the `compose.yaml` `ARMOR_VERSION` defaults + `CHANGELOG.md`, message
+  `release: armor <version>`). CI never bumps
   `VERSION`; nobody creates a `v*` tag by hand.
 - **CI publishes the release** (`publish-release` step running
   `scripts/publish_release.py`): annotated tag at the released revision via

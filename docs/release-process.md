@@ -19,7 +19,7 @@ fleet, and how a correctness fix is proven to have reached every deployment.
 
 | Artifact | Where | Made by |
 |---|---|---|
-| `VERSION` (`0.1.<counter>`) and a `CHANGELOG.md` entry | this repo, one commit `release: armor <version>` | `scripts/cut-release.sh` |
+| `VERSION` (`0.1.<counter>`), the `compose.yaml` `ARMOR_VERSION` defaults and a `CHANGELOG.md` entry | this repo, one commit `release: armor <version>` | `scripts/cut-release.sh` |
 | `ronaldraygun/armor:<version>` (server), `ronaldraygun/armor-restore-verifier:<version>`, `ronaldraygun/armor-fleet:<version>` | Docker Hub (private namespace) | CI |
 | `ghcr.io/jedarden/armor:<version>` (server) | GHCR (public, anonymous-pull mirror; the only public image — `armor-restore-verifier` and `armor-fleet` stay private by operator decision, 2026-09-19) | CI |
 | Annotated git tag `v<version>` at the release commit | Forgejo, mirrored to GitHub | CI |
@@ -57,8 +57,14 @@ The script
 
 - refuses a version that is not `MAJOR.MINOR.PATCH` or not newer than `VERSION`,
 - refuses to run off `main` or with anything already staged (the release commit
-  must contain nothing but `VERSION` and `CHANGELOG.md`; other agents' unstaged
+  must contain nothing but `VERSION`, the `compose.yaml` `ARMOR_VERSION`
+  defaults and `CHANGELOG.md`; other agents' unstaged
   edits in the shared checkout are left alone),
+- rewrites every `${ARMOR_VERSION:-...}` default in `compose.yaml` to the new
+  version, so the tracked demo and production compositions ship pinned to this
+  release (`scripts/compose-version-parity.sh` — in the definition of done,
+  the release gate and `make docker` — fails any drift left anywhere else, and
+  `tests/docker-demo-smoke` re-checks it with a daemon),
 - prepends a `## <version> (<date>)` entry to `CHANGELOG.md` listing every
   non-merge commit subject since the previous `v*` tag, minus bead-checkpoint
   and release commits (edit the entry afterwards if a subject needs rewording,

@@ -6,7 +6,7 @@ This index organizes all durable documentation by audience. Every file under `do
 
 **For operators running and maintaining ARMOR in production.**
 
-- **[Release Process](release-process.md)** — Cutting a release (`scripts/cut-release.sh`: VERSION + CHANGELOG), what CI builds, tags and publishes, fleet rollout through declarative-config, and the correctness-fix propagation checklist
+- **[Release Process](release-process.md)** — Cutting a release (`scripts/cut-release.sh`: VERSION + compose.yaml pin + CHANGELOG), what CI builds, tags and publishes, fleet rollout through declarative-config, and the correctness-fix propagation checklist
 - **[Key Rotation Runbook](key-rotation-runbook.md)** — Step-by-step MEK rotation procedure with rollback guidance
 - **[Format Migration Runbook](runbooks/format-migration.md)** — Per-bucket V1/V2 → V3 migration: safety gates, dry-run inventory, the live run, progress monitoring, failure triage, zero-legacy verification, the per-bucket evidence record, and the test matrix that pins the behavior
 - **[Unified Bucket Tenant Onboarding](runbooks/unified-bucket-tenant-onboarding.md)** — Adding a tenant to the shared ADR-001 bucket, prefix-scoped keys, per-tenant MEK, and the data move

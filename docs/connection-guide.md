@@ -280,8 +280,10 @@ never commit the result. The required minimum comes from the [Configuration
 Reference](configuration.md), which documents every variable ARMOR reads.
 
 Both profiles pin the image tag through `ARMOR_VERSION`, which defaults to
-the repository [`VERSION`](../VERSION) value at the time `compose.yaml` was
-last bumped; set `ARMOR_VERSION` to that value or to any published tag before
+the repository [`VERSION`](../VERSION) value — `scripts/cut-release.sh`
+bumps the defaults in the release commit and
+`scripts/compose-version-parity.sh` fails any drift; set `ARMOR_VERSION` to
+that value or to any published tag before
 starting either profile.
 
 Start and stop the demo profile:

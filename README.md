@@ -352,7 +352,9 @@ when any object is CORRUPTED or ends in ERROR — safe to gate scripts on.
 
 - Versions are `0.1.<counter>`; the counter only increases and carries no
   SemVer meaning. What changed is in [`CHANGELOG.md`](CHANGELOG.md). A release
-  is one commit, `release: armor <version>`, produced by `scripts/cut-release.sh`;
+  is one commit, `release: armor <version>`, produced by `scripts/cut-release.sh`
+  (it bumps `VERSION`, the `compose.yaml` `ARMOR_VERSION` defaults and
+  `CHANGELOG.md` together);
   CI builds and publishes the images, verifies each tag exists in the registry,
   runs the compatibility suite, then creates the `v<version>` git tag and the
   Forgejo and GitHub releases. Nothing is tagged by hand.
@@ -371,7 +373,7 @@ when any object is CORRUPTED or ends in ERROR — safe to gate scripts on.
 | `config/drift-config.json` | Fleet drift-check configuration |
 | `Dockerfile`, `Dockerfile.test`, `compose.yaml`, `.env.example` | The published image (final stage stays the armor server), the test image, and the Compose demo + production profiles |
 | `AGENTS.md` | Guide for contributors and agents: layout, gates, beads, commits, releases |
-| `VERSION`, `CHANGELOG.md` | The release counter and its notes; only `scripts/cut-release.sh` changes them |
+| `VERSION`, `CHANGELOG.md`, `compose.yaml` | The release counter, its notes, and the Compose image pin; only `scripts/cut-release.sh` changes them |
 | `Makefile` | Build, test and release targets (`make help`) |
 
 Deployment manifests do **not** live here. They live in

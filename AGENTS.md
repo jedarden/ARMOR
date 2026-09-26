@@ -25,7 +25,7 @@ client works unmodified. Full product documentation starts at
 | `docs/` | ADRs, runbooks, notes, plan. `docs/plan/plan.md` is the architecture and phase record |
 | `config/drift-config.json` | Fleet drift-check configuration |
 | `Dockerfile`, `Dockerfile.test` | The published image (multi-stage; the final stage MUST stay the armor server) and the test image |
-| `VERSION`, `CHANGELOG.md` | The release counter and its notes; only `scripts/cut-release.sh` changes them |
+| `VERSION`, `CHANGELOG.md`, `compose.yaml` | The release counter, its notes, and the Compose image pin; only `scripts/cut-release.sh` changes them |
 | `.beads/` | bead-rs work tracking. Never hand-edit |
 
 Deployment manifests do **not** live here. They live in
@@ -105,8 +105,11 @@ The short form:
 
 1. `scripts/definition-of-done.sh` is green on `main`.
 2. `scripts/cut-release.sh <version>` (or `make release V=<version>`) writes
-   `VERSION` and a `CHANGELOG.md` entry generated from the commits since the
-   previous tag, commits `release: armor <version>`, and pushes.
+   `VERSION`, bumps the `compose.yaml` `ARMOR_VERSION` defaults to match, and
+   writes a `CHANGELOG.md` entry generated from the commits since the
+   previous tag — one `release: armor <version>` commit, which it pushes.
+   `scripts/compose-version-parity.sh` (definition of done, release gate,
+   `make docker`) fails any tree where the defaults lag `VERSION`.
 3. CI does everything else: builds and publishes `ronaldraygun/armor`,
    `ronaldraygun/armor-restore-verifier`, `ronaldraygun/armor-fleet` and the
    public mirror `ghcr.io/jedarden/armor` (the server image is the only

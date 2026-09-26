@@ -1,5 +1,5 @@
 # ARMOR Makefile
-# Targets: build, toolchain-check, toolchain-parity, test, test-integration, lint, docker, compat, test-docker-demo, dod, release, clean, help
+# Targets: build, toolchain-check, toolchain-parity, compose-version-parity, test, test-integration, lint, docker, compat, test-docker-demo, dod, release, clean, help
 
 VERSION ?= $(shell cat VERSION)
 
@@ -33,7 +33,7 @@ BINARIES := $(notdir $(wildcard $(CMDDIR)/*))
 # Docker build arguments
 DOCKER_BUILD := docker build --build-arg VERSION=$(VERSION)
 
-.PHONY: all build toolchain-check toolchain-parity test test-integration lint docker compat compat-boto3 test-docker-demo dod release clean help
+.PHONY: all build toolchain-check toolchain-parity compose-version-parity test test-integration lint docker compat compat-boto3 test-docker-demo dod release clean help
 
 all: build test lint
 
@@ -50,6 +50,10 @@ toolchain-check:
 ## toolchain-parity: Fail when a Dockerfile golang: pin differs from go.mod's toolchain directive
 toolchain-parity:
 	scripts/toolchain-parity.sh
+
+## compose-version-parity: Fail when a compose.yaml ARMOR_VERSION default differs from the VERSION file
+compose-version-parity:
+	scripts/compose-version-parity.sh
 
 ## build: Build every cmd/ binary into bin/ with the version injected
 build: toolchain-check
@@ -79,7 +83,7 @@ lint:
 	golangci-lint run --config .golangci.yml
 
 ## docker: Build the server and test images, tagged with VERSION only (no floating tags)
-docker: toolchain-parity Dockerfile Dockerfile.test
+docker: toolchain-parity compose-version-parity Dockerfile Dockerfile.test
 	@echo "Building Docker images..."
 	@echo "  Building ronaldraygun/armor:$(VERSION)..."
 	$(DOCKER_BUILD) -t ronaldraygun/armor:$(VERSION) -f Dockerfile .
@@ -112,7 +116,7 @@ test-docker-demo:
 dod:
 	scripts/definition-of-done.sh --fast
 
-## release: Cut a release commit (VERSION bump + CHANGELOG entry). Usage: make release V=0.1.1970
+## release: Cut a release commit (VERSION + compose.yaml bump + CHANGELOG entry). Usage: make release V=0.1.1970
 release:
 	@test -n "$(V)" || { echo "usage: make release V=<MAJOR.MINOR.PATCH>"; exit 2; }
 	scripts/cut-release.sh $(V)

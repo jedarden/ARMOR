@@ -17,6 +17,12 @@ fi
 # the definition of done, `make docker`, and its own pytest suite.
 ./scripts/toolchain-parity.sh
 
+# compose.yaml ↔ VERSION parity (armor-3c849ea3): the tracked compose file
+# pins its demo and production image defaults to the VERSION file, and
+# cut-release.sh bumps them in the release commit. Gate it here so no image
+# is ever built from a tree whose compose pin lags VERSION.
+./scripts/compose-version-parity.sh
+
 go vet ./...
 
 go test ${race_flag} -count=1 ./internal/crypto \
