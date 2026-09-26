@@ -9,10 +9,10 @@ package server
 // The leak below is demonstrated on stored bytes the way a B2-side attacker
 // would exploit it: no key material, no decryptor — just the envelope the
 // backend persists. The post-migration leg of the boundary (a migrated object
-// must recover nothing) is written and skipped: FormatMigrator currently
-// re-encrypts with crypto.Encryptor.Encrypt(), whose makeCounter has no v3
-// branch, so migrated "v3" envelopes still carry the v1 keystream reuse. That
-// defect and the unskip are tracked in bead armor-511015d0.
+// must recover nothing) is pinned green by
+// TestMigratedV3ObjectRecoversNothingFromCiphertext: the migrator's v3 output
+// goes through crypto.Encryptor.EncryptV3 with the trailer block table, the
+// same layout and counter derivation the production PUT path emits.
 
 import (
 	"bytes"
@@ -225,19 +225,13 @@ func TestV2StorageDoesNotLeakAdjacentBlockXOR(t *testing.T) {
 // recover nothing, no stored byte or metadata value may contain the secret,
 // and the migrated object must still decrypt to the original plaintext.
 //
-// SKIPPED, not green: FormatMigrator.encryptAsSingle/uploadAsMultipart encrypt
-// through crypto.Encryptor.Encrypt(), whose makeCounter has no Version3
-// branch — migrated objects are badged v3 but still carry the v1 keystream
-// reuse, so this pin fails at HEAD. The fix and this unskip are tracked in
-// bead armor-511015d0; the pin assumes uncompressed blocks, so the ciphertext
-// region spans exactly PlaintextSize bytes from the end of the header.
+// The pin assumes uncompressed blocks, so the ciphertext region spans exactly
+// PlaintextSize bytes from the end of the header.
 func TestMigratedV3ObjectRecoversNothingFromCiphertext(t *testing.T) {
 	ctx := context.Background()
 	mb := NewMockBackend()
 	const key = "legacy/v1-secret.bin"
 	const blockSize = 65536 // the defect pairs adjacent 64 KB blocks
-
-	t.Skip("migrated-object leak pin is out of scope for bead armor-90e6f3b0 - tracked in armor-511015d0 (FormatMigrator re-encrypts v3 output with the v1 counter derivation); unskip when that bead lands")
 
 	mek := make([]byte, 32)
 	for i := range mek {
@@ -296,5 +290,90 @@ func TestMigratedV3ObjectRecoversNothingFromCiphertext(t *testing.T) {
 	}
 	if !bytes.Equal(decrypted, plaintext) {
 		t.Fatal("migrated object no longer decrypts to the original plaintext")
+	}
+}
+
+// TestMigratedV3ObjectMatchesCanonicalSinglePutLayout pins the storage format
+// of the migration output: a migrated v3 object must match the canonical
+// single-PUT v3 layout the production PUT path writes — header || blocks ||
+// trailer block table ([HMAC(32) || clen(4)] per block) — and must decrypt
+// through the production-format crypto path alone (envelope header, trailer
+// prefix sums, part-0 v3 counters), not through any migrator-specific reader.
+// Before the EncryptV3 fix the migrator appended a legacy v2-style flat HMAC
+// table, so migrated objects matched no v3 reader in the codebase.
+func TestMigratedV3ObjectMatchesCanonicalSinglePutLayout(t *testing.T) {
+	ctx := context.Background()
+	mb := NewMockBackend()
+	const key = "legacy/v1-layout.bin"
+	const blockSize = 65536
+
+	mek := make([]byte, 32)
+	for i := range mek {
+		mek[i] = byte(i)
+	}
+
+	plaintext, _, _ := storeLegacyObject(t, mb, key, mek, crypto.Version1, blockSize)
+
+	migrator := NewFormatMigrator(mb, "test-bucket", mek, "default", crypto.Version3, []string{"1"}, nil)
+	result, err := migrator.Migrate(ctx, false, 1)
+	if err != nil {
+		t.Fatalf("migration failed: %v", err)
+	}
+	if result.ProcessedObjects != 1 || result.FailedObjects != 0 {
+		t.Fatalf("migration result: processed=%d failed=%d failures=%v",
+			result.ProcessedObjects, result.FailedObjects, result.Failures)
+	}
+
+	obj := mb.objects[key]
+	if obj == nil {
+		t.Fatal("migrated object missing at its original key")
+	}
+	hdr, err := crypto.DecodeHeader(obj.Data)
+	if err != nil {
+		t.Fatalf("decode migrated envelope header: %v", err)
+	}
+	if hdr.Version != crypto.Version3 {
+		t.Fatalf("migrated header version = %d, want 3", hdr.Version)
+	}
+
+	// Canonical layout math: the stored object is header || ciphertext ||
+	// trailer, with the trailer exactly BlockTableEntrySize per block.
+	blockCount := crypto.ComputeBlockCount(int64(hdr.PlaintextSize), hdr.BlockSize())
+	tableSize := int(blockCount) * crypto.BlockTableEntrySize
+	wantSize := int(crypto.HeaderSize) + int(hdr.PlaintextSize) + tableSize
+	if len(obj.Data) != wantSize {
+		t.Fatalf("migrated object size = %d, want %d (header %d + ciphertext %d + trailer %d)",
+			len(obj.Data), wantSize, crypto.HeaderSize, hdr.PlaintextSize, tableSize)
+	}
+
+	// The production-format read: unwrap the DEK the migration wrapped, split
+	// the trailer off the tail, and decrypt part 0 through DecryptV3.
+	armorMeta, ok := backend.ParseARMORMetadata(obj.Metadata)
+	if !ok {
+		t.Fatal("migrated object metadata does not parse as ARMOR metadata")
+	}
+	dek, err := crypto.UnwrapDEK(mek, armorMeta.WrappedDEK)
+	if err != nil {
+		t.Fatalf("unwrap migrated DEK: %v", err)
+	}
+	blockTable, err := crypto.DecodeBlockTable(obj.Data[len(obj.Data)-tableSize:], hdr.BlockSize(), blockCount)
+	if err != nil {
+		t.Fatalf("decode trailer block table: %v", err)
+	}
+	if blockTable.TotalCiphertextLength() != uint32(hdr.PlaintextSize) {
+		t.Fatalf("trailer covers %d ciphertext bytes, want %d",
+			blockTable.TotalCiphertextLength(), hdr.PlaintextSize)
+	}
+	decryptor, err := crypto.NewDecryptorWithVersion(dek, hdr.IV[:], hdr.BlockSize(), crypto.Version3)
+	if err != nil {
+		t.Fatalf("create v3 decryptor: %v", err)
+	}
+	ciphertextRegion := obj.Data[crypto.HeaderSize : crypto.HeaderSize+int(hdr.PlaintextSize)]
+	decrypted, err := decryptor.DecryptV3(ciphertextRegion, 0, blockTable)
+	if err != nil {
+		t.Fatalf("production-format v3 read failed: %v", err)
+	}
+	if !bytes.Equal(decrypted, plaintext) {
+		t.Fatal("migrated object does not decrypt to the original plaintext through the production v3 path")
 	}
 }

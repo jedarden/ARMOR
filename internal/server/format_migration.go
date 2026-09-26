@@ -969,6 +969,35 @@ func (fm *FormatMigrator) decryptSingleObject(armorMeta *backend.ARMORMetadata, 
 		return nil, fmt.Errorf("failed to create decryptor: %w", err)
 	}
 
+	// v3 single-PUT layout: header || blocks || trailer block table — the
+	// format the production PUT path writes and encryptAsSingle migrates to.
+	// The trailer holds [HMAC(32) || clen(4)] per block, so the block table's
+	// prefix sums rather than a fixed stride locate each block in the
+	// ciphertext region.
+	if header.Version == crypto.Version3 {
+		blockCount := crypto.ComputeBlockCount(int64(plaintextSize), blockSize)
+		tableSize := int(blockCount) * crypto.BlockTableEntrySize
+		if len(ciphertext) < tableSize {
+			return nil, fmt.Errorf("ciphertext too short to contain v3 block table: got %d, need %d", len(ciphertext), tableSize)
+		}
+
+		encryptedData := ciphertext[:len(ciphertext)-tableSize]
+		blockTable, err := crypto.DecodeBlockTable(ciphertext[len(ciphertext)-tableSize:], blockSize, blockCount)
+		if err != nil {
+			return nil, fmt.Errorf("failed to decode v3 block table: %w", err)
+		}
+
+		plaintext, err := decryptor.DecryptV3(encryptedData, 0, blockTable)
+		if err != nil {
+			return nil, fmt.Errorf("%w: %w", ErrIntegrityVerification, err)
+		}
+
+		if err := header.VerifyPlaintextSHA(plaintext); err != nil {
+			return nil, fmt.Errorf("plaintext integrity check failed: %w", err)
+		}
+		return plaintext, nil
+	}
+
 	plaintext, err := decryptor.Decrypt(encryptedData, hmacTable)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrIntegrityVerification, err)
@@ -1116,16 +1145,11 @@ func (fm *FormatMigrator) encryptAsSingle(plaintext []byte) (ciphertext, iv, wra
 		return nil, nil, nil, 0, "", fmt.Errorf("failed to create encryptor: %w", err)
 	}
 
-	// Encrypt
-	ciphertext, hmacTable, err := encryptor.Encrypt(plaintext)
-	if err != nil {
-		return nil, nil, nil, 0, "", fmt.Errorf("failed to encrypt: %w", err)
-	}
-
-	// Append HMAC table to ciphertext (as single-PUT format requires)
-	ciphertext = append(ciphertext, hmacTable...)
-
-	// Create envelope header and prepend to ciphertext
+	// Encrypt with the storage layout the production write path emits for
+	// this version. The version-blind Encrypt cannot be used for v3: its
+	// makeCounter has no v3 branch, so it falls back to the legacy v1
+	// derivation and the migrated envelope would carry the ADR-005
+	// keystream reuse the migration exists to remove while badging itself v3.
 	plaintextSHA := crypto.ComputePlaintextSHA256(plaintext)
 	header, err := crypto.NewEnvelopeHeaderWithVersion(iv, int64(len(plaintext)), blockSize, plaintextSHA, fm.currentWriteVersion)
 	if err != nil {
@@ -1137,8 +1161,36 @@ func (fm *FormatMigrator) encryptAsSingle(plaintext []byte) (ciphertext, iv, wra
 		return nil, nil, nil, 0, "", fmt.Errorf("failed to encode envelope header: %w", err)
 	}
 
-	// Prepend header to ciphertext for storage format
-	fullData := append(headerBuf, ciphertext...)
+	fullData := make([]byte, 0, len(headerBuf)+len(plaintext))
+	fullData = append(fullData, headerBuf...)
+
+	if fm.currentWriteVersion == crypto.Version3 {
+		// v3 single-PUT format: header || blocks || trailer block table
+		// (handlers.go PUT path). EncryptV3 derives every block counter with
+		// the v3 (part, block, aesBlock) construction and records each
+		// block's HMAC and length in the trailer table the v3 readers parse.
+		encrypted, blockTable, err := encryptor.EncryptV3(plaintext, false) // Compression off, matching the migrator's uncompressed output
+		if err != nil {
+			return nil, nil, nil, 0, "", fmt.Errorf("failed to encrypt: %w", err)
+		}
+
+		trailerTable, err := blockTable.Encode()
+		if err != nil {
+			return nil, nil, nil, 0, "", fmt.Errorf("failed to encode block table: %w", err)
+		}
+
+		fullData = append(fullData, encrypted...)
+		fullData = append(fullData, trailerTable...)
+	} else {
+		// v1/v2 single-PUT format: header || blocks || flat HMAC table
+		ciphertext, hmacTable, err := encryptor.Encrypt(plaintext)
+		if err != nil {
+			return nil, nil, nil, 0, "", fmt.Errorf("failed to encrypt: %w", err)
+		}
+
+		fullData = append(fullData, ciphertext...)
+		fullData = append(fullData, hmacTable...)
+	}
 
 	return fullData, iv, wrappedDEK, blockSize, mekFingerprint, nil
 }
