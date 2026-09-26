@@ -677,7 +677,9 @@ func TestBeadPayload_UniqueRefKey(t *testing.T) {
 	base := BeadPayload{Kind: BeadFailure, Bucket: "bkt", ObjectKey: "k", Path: PathARMOR, FailureClass: FailureChecksumError}
 
 	// Identical dedupe identity -> identical key, across calls (restart-stable).
-	if base.UniqueRefKey() != base.UniqueRefKey() {
+	firstKey := base.UniqueRefKey()
+	secondKey := base.UniqueRefKey()
+	if firstKey != secondKey {
 		t.Fatal("UniqueRefKey must be deterministic for the same payload")
 	}
 	// Each dedupe-key component distinguishes referrers: a different failure

@@ -294,8 +294,8 @@ func buildContractBinary(t *testing.T) string {
 
 	goTool, err := exec.LookPath("go")
 	if err != nil {
-		if _, statErr := os.Stat(filepath.Join(runtime.GOROOT(), "bin", "go")); statErr == nil {
-			goTool = filepath.Join(runtime.GOROOT(), "bin", "go")
+		if _, statErr := os.Stat(filepath.Join(runtime.GOROOT(), "bin", "go")); statErr == nil { //nolint:staticcheck // fallback for a toolchain unavailable through PATH
+			goTool = filepath.Join(runtime.GOROOT(), "bin", "go") //nolint:staticcheck // fallback for a toolchain unavailable through PATH
 		} else {
 			t.Fatalf("no go toolchain in PATH for the binary build: %v", err)
 		}
