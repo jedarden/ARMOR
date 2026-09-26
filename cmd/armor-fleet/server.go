@@ -13,6 +13,8 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+
+	"github.com/jedarden/armor/internal/agentation"
 )
 
 // Server serves the fleet status HTTP endpoints.
@@ -31,23 +33,9 @@ func NewServer(monitor *FleetMonitor, address string) *Server {
 
 // Run starts the HTTP server.
 func (s *Server) Run() error {
-	mux := http.NewServeMux()
-
-	// Fleet JSON endpoint
-	mux.HandleFunc("/fleet.json", s.handleFleetJSON)
-
-	// Metrics endpoint (Prometheus)
-	mux.Handle("/metrics", promhttp.Handler())
-
-	// Agentation.js endpoint
-	mux.HandleFunc("/agentation.js", s.handleAgentationJS)
-
-	// Root endpoint - HTML dashboard
-	mux.HandleFunc("/", s.handleHTML)
-
 	server := &http.Server{
 		Addr:    s.address,
-		Handler: mux,
+		Handler: s.handler(),
 	}
 
 	// Start server in goroutine
@@ -77,6 +65,27 @@ func (s *Server) Run() error {
 	return nil
 }
 
+// handler assembles the fleet server's route table. It is separate from Run
+// so tests can exercise the real routes over httptest.
+func (s *Server) handler() http.Handler {
+	mux := http.NewServeMux()
+
+	// Fleet JSON endpoint
+	mux.HandleFunc("/fleet.json", s.handleFleetJSON)
+
+	// Metrics endpoint (Prometheus)
+	mux.Handle("/metrics", promhttp.Handler())
+
+	// Agentation.js endpoint — the real toolbar module; the page head wires
+	// it with the shared import map and mount self-check.
+	mux.HandleFunc("/agentation.js", agentation.Handler())
+
+	// Root endpoint - HTML dashboard
+	mux.HandleFunc("/", s.handleHTML)
+
+	return mux
+}
+
 // handleFleetJSON serves the fleet status as JSON.
 func (s *Server) handleFleetJSON(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
@@ -104,24 +113,10 @@ func (s *Server) handleHTML(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprint(w, htmlTemplate)
 }
 
-// handleAgentationJS serves the Agentation toolbar script.
-func (s *Server) handleAgentationJS(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
-	fmt.Fprint(w, agentationJSScript)
-}
-
-// agentationJSScript is the Agentation toolbar JavaScript.
-const agentationJSScript = `// Agentation toolbar placeholder
-// This file serves as a placeholder for the Agentation visual feedback tool.
-// In production, this would be replaced by the actual agentation.js implementation.
-
-console.log('Agentation toolbar placeholder loaded');
-`
+// handleAgentationJS was removed: /agentation.js now serves the real
+// vendored module from internal/agentation. The previous handler served a
+// console.log placeholder, which mounted nothing while every grep read it
+// as working wiring.
 
 // htmlTemplate is the self-contained HTML dashboard.
 const htmlTemplate = `<!DOCTYPE html>
@@ -320,18 +315,8 @@ const htmlTemplate = `<!DOCTYPE html>
             color: #6c757d;
         }
     </style>
-    <script type="importmap">
-    {
-        "imports": {
-            "react": "https://esm.sh/react@18.3.1",
-            "react-dom": "https://esm.sh/react-dom@18.3.1",
-            "react-dom/client": "https://esm.sh/react-dom@18.3.1/client",
-            "react/jsx-runtime": "https://esm.sh/react@18.3.1/jsx-runtime"
-        }
-    }
-    </script>
-    <script type="module" src="/agentation.js"></script>
-</head>
+` + agentation.ImportMapHTML + `<script type="module" src="/agentation.js"></script>
+` + agentation.MountCheckHTML + `</head>
 <body>
     <div class="container">
         <h1>ARMOR Fleet Dashboard</h1>

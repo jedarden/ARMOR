@@ -227,6 +227,7 @@ func TestDashboardFailClosedWhenUnconfigured(t *testing.T) {
 		"/dashboard",
 		"/dashboard/",
 		"/dashboard?prefix=archive/",
+		"/dashboard/agentation.js",
 		"/dashboard/object?key=a.txt",
 		"/dashboard/metrics",
 		"/dashboard/encryption-stats",

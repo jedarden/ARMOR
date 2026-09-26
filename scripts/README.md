@@ -285,6 +285,26 @@ journalctl --user -u armor-starvation-watch.service -n 20
 
 ## Testing & Validation
 
+### verify-agentation-mount.sh
+
+Browser smoke test for the Agentation toolbar on ARMOR's two web UI entry
+points (proxy dashboard and fleet console). The workspace rule is verify by
+mounting, never by grepping the tag — a page with the module tag but no
+import map renders perfectly while the toolbar never mounts — so this script
+drives a real headless Chromium against both pages served from their real
+route tables and requires `#agentation-root` in the rendered DOM with the
+toolbar inside. Exits non-zero if a mount check fails OR if every check
+skipped (no browser, `esm.sh` unreachable): a skip means nothing was
+verified. The structural wiring pins (import map before the module tag
+before the mount check, module endpoint serving the vendored module) run
+always, in `go test` and the definition of done; only the browser leg needs
+this script.
+
+```bash
+./scripts/verify-agentation-mount.sh
+AGENTATION_BROWSER=/path/to/chromium ./scripts/verify-agentation-mount.sh
+```
+
 ### alerting-rule-unittest.sh
 
 Offline semantics test for the shipped alert set (ADR-002 / ADR-004 §6): extracts the

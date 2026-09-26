@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"expvar"
+	"github.com/jedarden/armor/internal/agentation"
 	"github.com/jedarden/armor/internal/backend"
 	"github.com/jedarden/armor/internal/metrics"
 )
@@ -221,6 +222,25 @@ func (d *Dashboard) Handler() http.HandlerFunc {
 func (d *Dashboard) HandlerWithAuth() http.HandlerFunc {
 	return d.auth.Wrap(d.handlerImpl())
 }
+
+// AgentationJSHandlerWithAuth serves the Agentation toolbar module at
+// /dashboard/agentation.js for the dashboard page, under the same
+// authentication as the rest of the dashboard routes.
+func (d *Dashboard) AgentationJSHandlerWithAuth() http.HandlerFunc {
+	return d.auth.Wrap(agentation.Handler())
+}
+
+// dashboardAgentationModuleTag loads the Agentation module from this
+// package's endpoint. It is root-absolute because the page is served at
+// both /dashboard and /dashboard/<prefix> for prefix navigation.
+const dashboardAgentationModuleTag = "<script type=\"module\" src=\"/dashboard/agentation.js\"></script>\n"
+
+// agentationHeadWiring is the Agentation wiring injected before </head>:
+// import map, then the module tag the map resolves, then the mount
+// self-check. The ordering is load-bearing — a map after the tag never
+// applies to it — and is pinned by the tests in internal/agentation and
+// dashboard_test.go.
+const agentationHeadWiring = agentation.ImportMapHTML + dashboardAgentationModuleTag + agentation.MountCheckHTML
 
 // handlerImpl is the actual implementation of the main dashboard handler.
 func (d *Dashboard) handlerImpl() http.HandlerFunc {
@@ -1716,7 +1736,7 @@ const dashboardHTML = `<!DOCTYPE html>
             table { min-width: 680px; }
         }
     </style>
-</head>
+` + agentationHeadWiring + `</head>
 <body>
     <div class="container">
         <header>

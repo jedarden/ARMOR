@@ -707,6 +707,11 @@ func (s *Server) AdminHandler() http.Handler {
 	if s.dashboard != nil {
 		mux.HandleFunc("/dashboard", s.dashboard.HandlerWithAuth())
 		mux.HandleFunc("/dashboard/", s.dashboard.HandlerWithAuth()) // For prefix navigation
+		// The dashboard page's Agentation module tag loads /dashboard/agentation.js
+		// (root-absolute, so prefix navigation resolves to the same route); it must
+		// be registered explicitly or the longer "/dashboard/" pattern would answer
+		// the module request with the dashboard HTML and the toolbar would never mount.
+		mux.HandleFunc("/dashboard/agentation.js", s.dashboard.AgentationJSHandlerWithAuth())
 		mux.HandleFunc("/dashboard/object", s.dashboard.ObjectDetailHandlerWithAuth())
 		mux.HandleFunc("/dashboard/metrics", s.dashboard.MetricsHandlerWithAuth())
 		mux.HandleFunc("/dashboard/encryption-stats", s.dashboard.EncryptionStatsHandlerWithAuth())
