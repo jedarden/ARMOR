@@ -9,7 +9,8 @@
 # (scripts/toolchain-parity.sh), the compose.yaml ↔ VERSION parity gate
 # (scripts/compose-version-parity.sh), the Go build and vet, and the Python
 # scripts test suite (tests/test_drift_check.py, tests/test_toolchain_parity.py,
-# tests/test_compose_version_parity.py). The
+# tests/test_compose_version_parity.py, tests/test_restore_verifier_inventory.py).
+# The
 # default mode adds `go test ./... -short`. CI (iad-ci armor-build) runs the
 # containerized build/lint legs; this script is the local gate. The pytest
 # entry point is `python3 -m pytest` rather than the `pytest` shim, whose
@@ -46,7 +47,7 @@ run ./scripts/toolchain-parity.sh
 run ./scripts/compose-version-parity.sh
 run "$GO" build "${go_build_flags[@]}" ./...
 run "$GO" vet "${go_build_flags[@]}" ./...
-run "$PY" -m pytest tests/test_drift_check.py tests/test_toolchain_parity.py tests/test_compose_version_parity.py -q
+run "$PY" -m pytest tests/test_drift_check.py tests/test_toolchain_parity.py tests/test_compose_version_parity.py tests/test_restore_verifier_inventory.py -q
 
 if [ "$fast" = 0 ]; then
   run "$GO" test ./... -short

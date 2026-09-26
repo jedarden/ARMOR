@@ -4,6 +4,38 @@
 
 The restore-verifier is a standalone service for continuous backup verification that runs dual-path verification (ARMOR read path + armor decrypt direct) to prove that backups are restorable through both the normal server path and disaster recovery.
 
+## Fleet topology (authoritative)
+
+The rule, decided in [ADR-004](adr/004-continuous-restore-verification.md)
+(Addendum + "Fleet topology" section): **one restore-verifier Deployment per
+ARMOR bucket scope** (bucket + MEK + B2 credential set), deployed in a
+cluster whose own secret store can deliver that scope's credentials — never a
+single fleet-wide verifier, and never more than one verifier per scope.
+Coverage is the union of the Deployments, not something an ARMOR proxy
+Deployment implies.
+
+The current fleet is **four restore-verifier Deployments** (2026-09-25):
+
+| Deployment | Cluster/namespace | Scope |
+|---|---|---|
+| `restore-verifier` | `iad-ci/armor` | bucket `iad-ci` — escalation bead-filing and alert evaluation live here |
+| `restore-verifier` | `iad-kalshi/armor` | bucket `kalshi-tape` |
+| `restore-verifier` | `ord-devimprint/devimprint` | devimprint bucket (key `bucket` in `armor-credentials`), `ARMOR_PREFIX=commitgraph/` |
+| `restore-verifier-acb` | `rs-manager/armor` | bucket `armor-apexalgo`, verified from rs-manager while apexalgo-iad's ArgoCD sync is broken |
+
+The authoritative enumeration is mechanical, not this table:
+
+```
+python3 scripts/find-armor-deployments.py ~/declarative-config
+```
+
+filtered to `image_type == armor-restore-verifier`.
+`tests/test_restore_verifier_inventory.py` fails when this guide, ADR-004,
+the [alerting runbook](runbooks/restore-verifier-alerting.md), or plan.md's
+bump list disagree with the golden inventory pinned in that test — when the
+fleet changes, update the golden inventory and every prose count in the same
+change.
+
 ## Deployment Configuration
 
 ### Standard Deployment

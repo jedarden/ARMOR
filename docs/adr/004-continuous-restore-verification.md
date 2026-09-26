@@ -1,6 +1,6 @@
 # ADR-004: Continuous dual-path restore verification
 
-**Status:** Accepted (implemented and deployed — the artifact-class assertions and the deployment manifests have both landed; the deployment form that shipped is one restore-verifier Deployment per bucket scope rather than one fleet-wide instance, see the [Addendum: Per-Cluster Deployment Form](#addendum-per-cluster-deployment-form-2026-09-25) below. Phase record: plan.md Phase 6)
+**Status:** Accepted (implemented and deployed — the artifact-class assertions and the deployment manifests have both landed; the deployment form that shipped is one restore-verifier Deployment per bucket scope rather than one fleet-wide instance, see the [Addendum: Per-Cluster Deployment Form](#addendum-per-cluster-deployment-form-2026-09-25) and the [Fleet topology](#fleet-topology-scope-discovery-secrets-metrics-alerting-2026-09-25) sections below. Phase record: plan.md Phase 6)
 **Date:** 2026-07-18
 
 ## Context
@@ -19,7 +19,7 @@ Backups stored through ARMOR are continuously proven restorable by a dedicated *
    - **direct-to-ciphertext** (the `armor decrypt` logic against raw B2 objects with the escrowed MEK, honoring the ADR-003 multipart layout), proving recoverability with no ARMOR server in the loop — the actual DR scenario.
    Divergence between the paths is itself a first-class failure signal (it localizes the fault to ARMOR's serving path vs. the stored data).
 3. **Application-level assertions per artifact class,** beyond SHA-256 comparison: SQLite gets `PRAGMA integrity_check` plus row-count/recency probes; tar/gzip gets listing + sampled extraction; Parquet gets footer parse + a DuckDB row-count query through the range-read path (regression-testing range translation on real data); everything else gets the generic checksum path.
-4. **Deployment form:** a long-running Deployment with an internal scheduling loop (per the workspace no-CronJobs convention), deployed via declarative-config, one instance covering all ARMOR buckets. *(The "one instance" half was amended on 2026-09-25 — see the [Addendum: Per-Cluster Deployment Form](#addendum-per-cluster-deployment-form-2026-09-25) below.)*
+4. **Deployment form:** a long-running Deployment with an internal scheduling loop (per the workspace no-CronJobs convention), deployed via declarative-config, one instance covering all ARMOR buckets. *(The "one instance" half was amended on 2026-09-25 — see the [Addendum: Per-Cluster Deployment Form](#addendum-per-cluster-deployment-form-2026-09-25) and the [Fleet topology](#fleet-topology-scope-discovery-secrets-metrics-alerting-2026-09-25) sections below.)*
 5. **Escalation, not retry:** every verification failure files a bead carrying object key, bucket, deployment, provenance writer version, and both-path evidence. Staleness (no verified restore within the freshness window) escalates identically. Escalation is one bead per distinct failure — the mechanism must be storm-proof (no per-tick re-filing, no unbounded retries; the 2026-07 NEEDLE retry-storms are the anti-pattern).
 6. **Metrics:** per-bucket gauges (`armor_last_verified_restore_timestamp`, `armor_verified_object_ratio`, `armor_restore_verification_failures_total`) with alerting on restore-age and failures via declarative-config.
 
@@ -93,3 +93,86 @@ credential set legitimately spans scopes.
 Decision 4's coverage intent is unchanged: every ARMOR bucket is proven
 restorable by a continuously-running dual-path verifier. "One instance" holds
 at fleet scope only as the union of the per-scope instances.
+
+## Fleet topology: scope, discovery, secrets, metrics, alerting (2026-09-25)
+
+The Addendum fixes the deployment *form* and why it won. This section records
+the operating contract for the fleet that form produces (armor-79255e46), so
+the runbooks and the deployment guide have one place to point at.
+
+**Scope.** One Deployment verifies exactly one bucket scope (bucket + MEK +
+B2 credential set); a Deployment never straddles scopes. Fleet coverage is
+the union of the Deployments, and it is a per-scope deployment decision
+recorded in declarative-config — an ARMOR proxy Deployment does not by itself
+imply a verifier, and several proxies have none today.
+
+**Inventory.** Four restore-verifier Deployments make up the fleet as of
+2026-09-25:
+
+| Deployment | Cluster/namespace | Scope | Notes |
+|---|---|---|---|
+| `restore-verifier` | `iad-ci/armor` | bucket `iad-ci` | escalation bead-filing and alert evaluation live here |
+| `restore-verifier` | `iad-kalshi/armor` | bucket `kalshi-tape` | |
+| `restore-verifier` | `ord-devimprint/devimprint` | devimprint bucket (key `bucket` in `armor-credentials`), `ARMOR_PREFIX=commitgraph/` | |
+| `restore-verifier-acb` | `rs-manager/armor` | bucket `armor-apexalgo` | stand-in for apexalgo-iad while that cluster's ArgoCD sync is broken; direct-to-B2, no co-located proxy for this bucket |
+
+**The authoritative enumeration is mechanical, not this table:**
+`python3 scripts/find-armor-deployments.py ~/declarative-config`, filtered to
+`image_type == armor-restore-verifier`.
+`tests/test_restore_verifier_inventory.py` pins that inventory (golden
+snapshot 2026-09-25) and fails when this ADR, the
+[deployment guide](../restore-verifier-deployment-guide.md), the
+[alerting runbook](../runbooks/restore-verifier-alerting.md), or plan.md's
+bump list drifts from it. When the fleet changes — scope added, retired, or
+re-homed — update the test's golden inventory and every prose count in the
+same change.
+
+**Discovery.** Env-driven per
+[ADR-014](014-restore-verifier-discovery-reliability.md): `ARMOR_BUCKET`
+always, `ARMOR_PREFIX` only where the Deployment itself sets it —
+ord-devimprint does today. Co-located verifiers read the proxy's env sources
+key-by-key, but the prefix is not inherited implicitly: iad-kalshi's proxy
+sets `ARMOR_PREFIX=iad-kalshi/` while its verifier sets no prefix env, so
+prefixed objects are invisible to that Deployment (a verifier for a
+prefix-namespaced bucket must set `ARMOR_PREFIX` in its own env; the false
+"no objects found" readings this produced are the discovery gap ADR-014
+records).
+
+**Secrets.** Every verifier takes its scope's values by reference
+(`secretKeyRef`/`configMapKeyRef`, never literals) from that scope's own
+store, synced by ExternalSecret. Three patterns in the fleet today:
+co-located verifiers reuse the proxy's `armor-config` ConfigMap and
+`armor-secrets` Secret (iad-ci, iad-kalshi); ord-devimprint keeps every
+B2/MEK value in `armor-credentials`; the standalone `restore-verifier-acb`
+has a dedicated ExternalSecret
+(`restore-verifier-acb-b2-credentials`, backed by OpenBao
+`rs-manager/iad-acb/armor`). Escalation state needs a PVC (`sata`) at
+`/var/lib/restore-verifier` where `VERIFIER_ESCALATION=true` — iad-ci only,
+today.
+
+**Metrics.** Every Deployment serves `/metrics` on a `:9002` Service.
+Collection and rule evaluation are estate-local and currently iad-ci-only
+(VictoriaMetrics + vmalert, activated 2026-09-25); the per-cluster
+`restore-verifier-monitoring.yaml.disabled` manifests stay `.disabled`
+elsewhere (no Prometheus Operator CRDs — rs-manager has none at all), so the
+other three Deployments' gauges are exposed but uncollected.
+
+**Alert routing.** iad-ci: vmalert → Alertmanager → the ntfy webhook — the
+pipeline and responses are the
+[restore-verifier alerting runbook](../runbooks/restore-verifier-alerting.md).
+Bead-filing escalation (Decision 5) is likewise a per-Deployment feature,
+enabled only on iad-ci; day-to-day fleet status stays in the
+[deployment guide](../restore-verifier-deployment-guide.md).
+
+**Where the stale counts came from.** The original deployment (bf-1pphhz)
+targeted six scopes — `iad-acb` (bucket `armor-apexalgo`), `iad-ci`,
+`iad-kalshi`, `ord-devimprint`, `rs-manager`, `iad-native-ads` — which is
+where the bead-era "six" comes from; plan.md's bump list later said "five
+(rs-manager ×2 incl. acb)". The live four are what survives: `iad-native-ads`
+went with its cluster (decommissioned 2026-07-27, declarative-config
+`45ae70b5`), the apexalgo-iad AI-battle estate retired 2026-08-22
+(`af2a78a5`) leaving bucket `armor-apexalgo` to be verified cross-cluster by
+`restore-verifier-acb`, and the plain `rs-manager/armor` verifier was removed
+2026-09-23 (`abe7dd0c`) because everything in its bucket's listing belonged
+to a foreign scope (armor-0f9efb09 — it could only ever fail on foreign
+MEKs).

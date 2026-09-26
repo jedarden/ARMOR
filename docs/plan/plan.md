@@ -1090,8 +1090,15 @@ Decisions:
   Deployments (rs-manager, iad-ci, iad-ci/armor-test, iad-kalshi,
   ord-devimprint), the `ronaldraygun/armor` sidecar pin in
   `k8s/ardenone-cluster/commitgraph-dashboard/parquet-mirror-deployment.yml`,
-  and the **five** restore-verifier Deployments (rs-manager ×2 incl. acb,
-  iad-ci, iad-kalshi, ord-devimprint — iad-native-ads is gone). Cut points,
+  and the **four** restore-verifier Deployments (`iad-ci/armor`,
+  `iad-kalshi/armor`, `ord-devimprint/devimprint`, and `rs-manager/armor`'s
+  `restore-verifier-acb`) — amended 2026-09-25 (armor-79255e46): the plain
+  rs-manager verifier was removed 2026-09-23 (declarative-config `abe7dd0c`,
+  armor-0f9efb09 — it could only fail on foreign MEKs), and the earlier
+  "five / rs-manager ×2" here and the original six-scope deployment list
+  predate the removals. ADR-004's "Fleet topology" section carries the
+  lineage; `tests/test_restore_verifier_inventory.py` pins this list to the
+  mechanical enumeration. Cut points,
   in this order because `VERSION` bumps on `main` are linear: the Version-2
   default (with the paginated restore-verifier discovery riding along), the
   format-migration endpoint, the CLI/demo/credential-file release, and the
@@ -1109,8 +1116,11 @@ Decisions:
 Handled in-document on 2026-08-28 (ADR links, Phase 6/7 checkboxes). Still
 open and beaded: restore-verifier discovery Bug B (paginate
 `getLatestObject`; `.armor/*` sorts first and swamps a single page — iad-ci has
-29,303 bookkeeping objects vs 26,219 real ones); enable the periodic DR drill
-(`VERIFIER_DR_DRILL_INTERVAL`) in every restore-verifier Deployment; run the
+29,303 bookkeeping objects vs 26,219 real ones); ~~enable the periodic DR drill
+(`VERIFIER_DR_DRILL_INTERVAL`) in every restore-verifier Deployment~~ (done —
+declarative-config `1550e3e8`, 2026-08-28, recorded 2026-09-25 in Phase 6:
+all four restore-verifier Deployments set the 24h cadence; see the Phase 6
+scheduled-DR-drill item); run the
 multipart-era corruption audit on the four unaudited buckets with
 `armor verify` (integrated 2026-08-28; `cmd/verify-objects` folded into `armor verify` subcommand)
 and commit the inventory under `docs/notes/`; and the periodic DR drill is

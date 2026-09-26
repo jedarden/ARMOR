@@ -20,7 +20,7 @@ client works unmodified. Full product documentation starts at
 | `cmd/armor` | The server binary and its subcommands (`serve`, `demo`, `check`, `decrypt`, `verify`, `migrate`, `client-config`, `version`, `help`) |
 | `cmd/restore-verifier`, `cmd/armor-fleet` | Companion binaries (restore verification harness, fleet console). The old offline verifier `cmd/verify-objects` was deleted 2026-09-20 — stale against fingerprinted DEKs and v3, and fully folded into `armor verify` (armor-da67956d), which now unwraps fingerprinted DEKs with ring fallback, verifies v3 multipart objects via manifest + sidecar, emits one report row per object, and exits non-zero on any failure |
 | `internal/` | All packages: `server` (S3 + admin handlers), `crypto`, `backend`, `config`, `keymanager`, `manifest`, `acl`, `canary`, `dashboard`, `presign`, `provenance`, `replication`, `restoreverifier`, `metrics`, `logging`, `b2keys`, `docsindex`, `version`, `testutil` |
-| `tests/` | Go test suites outside the package tree: `integration/` (real B2, build-tagged), `aws-cli-compatibility/`, `docker-demo-smoke/`, `fixtures/`; plus `test_drift_check.py` for the drift tooling |
+| `tests/` | Go test suites outside the package tree: `integration/` (real B2, build-tagged), `aws-cli-compatibility/`, `docker-demo-smoke/`, `fixtures/`; plus the Python gate suites (`test_drift_check.py`, `test_toolchain_parity.py`, `test_compose_version_parity.py`, `test_restore_verifier_inventory.py` — the restore-verifier fleet-inventory doc pin, `test_publish_release.py`) |
 | `scripts/` | Operator tooling: `definition-of-done.sh`, `release-gate.sh`, `cut-release.sh`, drift check, starvation watch. See `scripts/README.md` |
 | `docs/` | ADRs, runbooks, notes, plan. `docs/plan/plan.md` is the architecture and phase record |
 | `config/drift-config.json` | Fleet drift-check configuration |
@@ -63,10 +63,11 @@ make help                            # the rest of the targets
   broken), and when an `ARMOR_*` variable read by `internal/config` is absent
   from `README.md`. Add the doc to the index and the variable to the README
   configuration table in the same change.
-- Python: `tests/test_drift_check.py` and `tests/test_toolchain_parity.py`
-  (both run by the definition of done) and `tests/test_publish_release.py`,
-  via `python3 -m pytest` (the `pytest` shim has a stale shebang on NixOS
-  hosts).
+- Python: `tests/test_drift_check.py`, `tests/test_toolchain_parity.py`,
+  `tests/test_compose_version_parity.py`, and
+  `tests/test_restore_verifier_inventory.py` (all run by the definition of
+  done) and `tests/test_publish_release.py`, via `python3 -m pytest` (the
+  `pytest` shim has a stale shebang on NixOS hosts).
 - Never commit build output (`bin/`, `*.test`) or caches; `.gitignore` covers
   them.
 
@@ -133,6 +134,13 @@ leftover, not something CI pushes.
   and `restore-verifier*.y*ml`. Enumerate the current inventory with
   `python3 scripts/find-armor-deployments.py ~/declarative-config` rather than
   trusting any list in a document.
+- Restore-verifier topology is **one Deployment per ARMOR bucket scope**
+  (bucket + MEK + B2 credential set), usually co-located with that scope's
+  ARMOR proxy and reusing its env sources — never one fleet-wide verifier
+  (ADR-004, Addendum + "Fleet topology"). Four run today.
+  `tests/test_restore_verifier_inventory.py` pins the prose to the
+  enumeration above with a golden inventory — change the golden and every
+  prose count in the same change as the fleet.
 - Change desired state only by committing to declarative-config; ArgoCD syncs
   it (`<namespace>-ns-<cluster>` applications). `kubectl` mutations
   (`apply`, `patch`, `set image`, `rollout restart`, `delete`) are prohibited

@@ -15,7 +15,12 @@ manifests stay `.disabled` everywhere — no ARMOR cluster runs the Prometheus
 Operator CRDs — and the other three verifier deployments (ord-devimprint,
 iad-kalshi, rs-manager) have no evaluator at all. `docs/plan/plan.md`
 (Phase 6 and the §8 estate questions) is the authoritative activation
-history; ADR-004's status paragraph still describes the pre-activation state.
+history. The verifier fleet itself — four restore-verifier Deployments today
+(`iad-ci/armor`, `iad-kalshi/armor`, `ord-devimprint/devimprint`, and
+`rs-manager/armor` running `restore-verifier-acb`) — is defined in ADR-004's
+"Fleet topology" section; `scripts/find-armor-deployments.py` enumerates it
+mechanically, and `tests/test_restore_verifier_inventory.py` fails if this
+runbook's count drifts from the fleet.
 
 ## 1. The pipeline, end to end
 
