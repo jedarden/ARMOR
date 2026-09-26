@@ -1,0 +1,15 @@
+# Fixture rendered by litestream_compat_test.go.  Keep the shape in sync with
+# the documented `armor client-config --for litestream` example.  Values in
+# double braces are supplied only in the test's private temporary copy.
+dbs:
+  - path: "{{DB_PATH}}"
+    replicas:
+      - type: s3
+        endpoint: "{{ENDPOINT}}"
+        bucket: "{{BUCKET}}"
+        path: litestream-compat
+        region: "{{REGION}}"
+        access-key-id: "{{ACCESS_KEY}}"
+        secret-access-key: "{{SECRET_KEY}}"
+        force-path-style: true
+        sync-interval: 1s

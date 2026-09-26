@@ -1,9 +1,11 @@
-# AWS CLI / rclone Compatibility Tests
+# S3 Client Compatibility Tests
 
 Implements the **Compatibility Tests** section of `docs/plan/plan.md`: it
-verifies that the real `aws` CLI (`s3 cp` / `ls` / `rm` / `sync`, plus
-`head-object` and server-side copy) and `rclone copy` round-trip byte-identical
-objects through ARMOR.
+verifies that real S3 clients round-trip or read data through ARMOR: the AWS
+CLI, rclone, boto3, DuckDB/httpfs, litestream, and barman-cloud. The fixtures
+under `testdata/` are the checked-in, credential-free forms of the documented
+client examples; each test renders a private copy with only ephemeral runtime
+values.
 
 This is the plan's third pillar of multipart/transfer coverage alongside the
 production-image boto3 test in `tests/test_s3_basic_operations.py` and the Go-level
@@ -22,11 +24,15 @@ at `httptest.NewServer(srv.Handler())` via `--endpoint-url` (AWS CLI) or an
 `rclone.conf` S3 remote (`force_path_style = true`). Every round-tripped
 object is checked byte-for-byte (SHA-256) against the original.
 
-## Two layers
+## Client legs and two layers
 
 | File | What | When it runs |
 |------|------|--------------|
 | `awscli_compat_test.go` | `TestAWSCLI_*` / `TestRclone_*` — shells out to the **real** `aws` and `rclone` binaries | Only when the binaries are on `PATH` **and** not under `-short` |
+| `boto3_compat_test.go` + `testdata/boto3_leg.py` | botocore's real SigV4 signer, metadata, list, range, and delete requests | Full mode; endpoint mode makes missing boto3 fatal |
+| `duckdb_compat_test.go` + `testdata/duckdb-httpfs.sql` | DuckDB/httpfs footer and column range reads over an encrypted Parquet object | Full mode; endpoint mode makes missing DuckDB fatal |
+| `litestream_compat_test.go` + `testdata/litestream.yml` | `litestream replicate` followed by `litestream restore` and SQLite content verification | Full mode; endpoint mode makes missing Litestream fatal |
+| `barman_compat_test.go` + `testdata/barman-cloud.env` | `barman-cloud-backup` with 5MB tar chunks, then `barman-cloud-restore` into a fresh PostgreSQL cluster | Full mode; endpoint mode makes missing Barman/PostgreSQL tools fatal |
 | `zz_verify_sdk_test.go` | `TestVerify_*` — drives the identical request paths via `aws-sdk-go-v2` (multipart, out-of-order completion, concurrent transfers) | **Always**, including CI's `-short` gate — it needs no external binaries |
 
 The `TestVerify_*` smoke tests are the suite's teeth on machines without the
@@ -60,8 +66,9 @@ curl https://rclone.org/install.sh | sudo bash   # see https://rclone.org/instal
 go test -race ./tests/aws-cli-compatibility/
 ```
 
-The built-image boto3 leg runs in endpoint mode, using botocore's real SigV4
-signer and transfer manager rather than a hand-written request signer:
+The built-image client matrix runs in endpoint mode. The boto3 leg uses
+botocore's real SigV4 signer rather than a hand-written request signer; the
+DuckDB, Litestream, and Barman legs likewise invoke their real binaries:
 
 ```bash
 ARMOR_COMPAT_ENDPOINT=http://127.0.0.1:9000 \
@@ -71,9 +78,12 @@ ARMOR_BUCKET=demo-bucket \
 python3 tests/test_s3_basic_operations.py
 ```
 
-`make compat` runs this leg automatically when `ARMOR_COMPAT_ENDPOINT` is set.
-The image compatibility gate starts the freshly built image, exports these
-variables, and runs the boto3 test with the AWS CLI and rclone tests.
+`make compat` runs the Go client matrix and the broader boto3 test when
+`ARMOR_COMPAT_ENDPOINT` is set. The image compatibility gate starts the freshly
+built image, exports these variables, installs the client versions pinned by
+the workflow, and runs every matrix leg. Credentials are supplied by the
+deployment's secret references; no credential value is stored in a fixture or
+the repository.
 
 The `TestShortFinalPart_*` multipart integration tests
 (`short_final_part_test.go`) are gated behind the `awscli_integration` build

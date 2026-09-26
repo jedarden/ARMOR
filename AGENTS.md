@@ -56,7 +56,8 @@ make help                            # the rest of the targets
 - The definition of done for any code change is `scripts/definition-of-done.sh`
   green. CI (`armor-build` in iad-ci) additionally runs golangci-lint, the race
   release gate, an integration-suite compile, the Docker builds, a registry
-  existence check for every image, and an AWS CLI / rclone compatibility suite
+  existence check for every image, and the real-client compatibility suite
+  (AWS CLI, rclone, boto3, DuckDB/httpfs, litestream, and barman-cloud)
   against the freshly built image.
 - Two tests guard documentation: `internal/docsindex` fails when a file under
   `docs/` is missing from `docs/README.md` (or linked twice, or a link is
