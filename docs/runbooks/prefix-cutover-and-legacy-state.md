@@ -298,8 +298,11 @@ object written under the prefix is unreachable — the mirror image of gate
   `.armor/` tree can be ignored; it holds no data.
 - **After post-cutover writes**: the reverse data move, run inside a fresh
   pause window, with the same three-piece rule mirrored:
-  1. Copy every post-cutover object `<prefix><key>` → `<key>`, metadata
-     verbatim.
+  1. Copy every object now stored under the prefix — the post-cutover
+     writes **and** the forward-moved pre-cutover objects, whose root
+     originals §4 step 8 already retired — `<prefix><key>` → `<key>`,
+     metadata verbatim. A post-cutover-writes-only move would strand the
+     legacy era on the namespace being rolled back to.
   2. Rename sidecars back: `<prefix><key>.armor-manifest` →
      `<key>.armor-manifest` (strip the prefix), and
      `<prefix>.armor/hmac/<sha256(<prefix>+key)>` →
