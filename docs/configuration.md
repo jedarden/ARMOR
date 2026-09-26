@@ -2,7 +2,9 @@
 
 ARMOR is configured entirely by environment variables. Every variable read by
 `internal/config` is listed here; a test (`internal/docsindex`) fails when one
-is missing. Names in `<angle brackets>` are placeholders.
+is missing, when a Default column disagrees with the default the code
+declares, or when a row omits a bound or accepted value the code enforces.
+Names in `<angle brackets>` are placeholders.
 
 The required minimum for a new deployment is the README's
 [Required configuration](../README.md#required-configuration) table; everything
@@ -66,7 +68,7 @@ deployment whose traffic skews across replicas is `ARMOR_MAX_CONN_AGE=90s`.
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
 | `ARMOR_MEK` | Yes | — | Master encryption key for the default key (hex, 32 bytes = 64 characters) |
-| `ARMOR_MEK_<NAME>` | No | — | A named master key (same format). `<NAME>` is lower-cased; `ARMOR_MEK_DEFAULT` is reserved |
+| `ARMOR_MEK_<NAME>` | No | — | A named master key (same format: hex, 32 bytes = 64 characters). `<NAME>` is lower-cased; `ARMOR_MEK_DEFAULT` is reserved |
 | `ARMOR_MEK_RING` | No | — | Comma-separated retired MEKs (hex) that remain valid for reading objects wrapped with the default key before a rotation |
 | `ARMOR_MEK_<NAME>_RING` | No | — | The same for a named key; requires `ARMOR_MEK_<NAME>` |
 | `ARMOR_KEY_ROUTES` | No | — | Prefix-to-key routes, e.g. `data/pii/*=sensitive,archive/*=archive,*=default` (see [Multi-key routing](#multi-key-routing)) |
@@ -118,7 +120,7 @@ need a HEAD per object. It is stored under `.armor/manifest/` in the bucket.
 | *(none of the three above)* | — | — | The dashboard then requires `ARMOR_ADMIN_TOKEN`, and returns 403 when that is unset too |
 | `ARMOR_DASHBOARD_CREDENTIAL` | No | — | Access key of a configured named credential the dashboard signs uploads, downloads and deletes with. Unset means browse-only |
 | `ARMOR_PRESIGN_ENABLED` | No | `false` | Enable pre-signed share URLs (`POST /admin/presign`, `GET /share/`) |
-| `ARMOR_PRESIGN_SECRET` | With presign | — | Signing key (hex, at least 32 bytes) |
+| `ARMOR_PRESIGN_SECRET` | With presign | — | Signing key (hex, at least 32 bytes = 64 hex characters) |
 | `ARMOR_PRESIGN_BASE_URL` | With presign | — | Absolute base URL for generated share links (`http://` or `https://`) |
 
 ## Secondary backend (async replication, [ADR-006](adr/006-dual-backend-replication.md))
