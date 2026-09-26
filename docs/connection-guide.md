@@ -229,6 +229,30 @@ SELECT * FROM read_parquet('s3://my-bucket/data.parquet');
 SELECT * FROM glob('s3://my-bucket/*.parquet');
 ```
 
+## Shared-Bucket Tenants (ARMOR_PREFIX)
+
+If your instance sets `ARMOR_PREFIX` — the shared-bucket deployment form from
+[ADR-001](./adr/001-bucket-prefix.md) — your keys are namespaced under your
+prefix inside one shared bucket. The prefix is transparent when you address
+objects: you never type it, and keys come back without it. It does **not**
+give you a virtual bucket of your own:
+
+- **ListBuckets reports the real bucket name(s), unchanged.** `aws s3 ls`,
+  boto3's `list_buckets()`, and every other ListBuckets consumer see the
+  shared bucket the instance writes into — not a bucket named after your
+  prefix. Address your data as `s3://<shared-bucket>/<your-key>`, and expect
+  that same real name in every response body (`Name` in ListObjectsV2 and
+  friends).
+- **The listing is not scoped to your prefix.** You may see sibling buckets
+  that share your B2 credential; your credential's ACL scope, not the
+  listing, is what limits what you can touch.
+
+This is deliberate, load-bearing behavior — ADR-001 records it under
+"Consequences", and `TestListBucketsWithPrefixReturnsRealBucketNames` in
+`internal/server/handlers/handlers_prefix_test.go` pins it. Tenant
+credentials and expectations are set per the [Unified Bucket Tenant
+Onboarding runbook](./runbooks/unified-bucket-tenant-onboarding.md).
+
 ## Multipart Uploads (Large Files)
 
 Files above a client's multipart threshold are uploaded as multiple parts.
@@ -430,5 +454,6 @@ server {
 - [README.md](../README.md) - ARMOR overview and architecture
 - [Multipart Client-Compatibility Matrix](./multipart-client-compatibility.md) - Per-client concurrency behavior per write format, and the tests behind it
 - [Cloudflare Setup](./cloudflare-setup.md) - Zero-egress download configuration
+- [Unified Bucket Tenant Onboarding](./runbooks/unified-bucket-tenant-onboarding.md) - Onboarding a tenant onto the shared bucket, including the ARMOR_PREFIX expectations above
 - [Disaster Recovery](./disaster-recovery.md) - Backup and restore procedures
 - [Integration Tests](../tests/integration/README.md) - Testing against real B2 + Cloudflare

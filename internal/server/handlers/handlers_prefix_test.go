@@ -684,6 +684,89 @@ func TestSpecialCharactersInKeyWithPrefix(t *testing.T) {
 	}
 }
 
+// TestListBucketsWithPrefixReturnsRealBucketNames pins the ADR-001 known
+// consequence that ListBuckets from a prefixed ARMOR still lists the real
+// bucket name(s): ARMOR_PREFIX namespaces keys, not buckets, so a consumer
+// sees the shared bucket it writes into rather than a virtual per-prefix
+// bucket. Rewriting the backend's names or synthesizing one from the prefix
+// would hand every S3 client a bucket name that does not match the one it
+// addresses, so the listing must pass through unchanged.
+func TestListBucketsWithPrefixReturnsRealBucketNames(t *testing.T) {
+	cfg, mb, cache, footerCache, km := testSetupWithPrefix(t, "tenant-a/")
+	h := handlers.New(cfg, mb, cache, footerCache, km, nil)
+
+	// Store an object through the client-facing path so the prefix is in
+	// force, and prove it before asserting on the listing — without this the
+	// test could pass on an instance that never applied the prefix at all.
+	plaintext := []byte("tenant data")
+	req := httptest.NewRequest(http.MethodPut, "/shared-bucket/data/file.txt", bytes.NewReader(plaintext))
+	req.Header.Set("Content-Type", "text/plain")
+	w := httptest.NewRecorder()
+	h.HandleRoot(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("PUT failed: status %d, body: %s", w.Code, w.Body.String())
+	}
+
+	mb.mu.Lock()
+	_, prefixed := mb.objects["shared-bucket/tenant-a/data/file.txt"]
+	mb.mu.Unlock()
+
+	if !prefixed {
+		t.Fatal("object should be stored with the ARMOR_PREFIX in the backend")
+	}
+
+	// A second bucket the backend credential can see but this instance never
+	// serves. A shared-bucket deployment's B2 key sees sibling buckets, and
+	// the listing must reflect whatever the backend reports — names included
+	// — without filtering or rewriting them.
+	mb.mu.Lock()
+	mb.objects["other-bucket/tenant-b/obj"] = []byte("another bucket's data")
+	mb.mu.Unlock()
+
+	// Root GET is ListBuckets.
+	req = httptest.NewRequest(http.MethodGet, "/", nil)
+	w = httptest.NewRecorder()
+	h.HandleRoot(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("ListBuckets failed: status %d, body: %s", w.Code, w.Body.String())
+	}
+
+	var result struct {
+		Buckets []struct {
+			Name string `xml:"Name"`
+		} `xml:"Buckets>Bucket"`
+	}
+	if err := xml.Unmarshal(w.Body.Bytes(), &result); err != nil {
+		t.Fatalf("failed to parse XML: %v", err)
+	}
+
+	names := make(map[string]bool, len(result.Buckets))
+	for _, b := range result.Buckets {
+		names[b.Name] = true
+		// The prefix is a key namespace, never a bucket: it must not appear
+		// as a bucket of its own, and no real bucket name may be replaced or
+		// decorated with it.
+		if b.Name == "tenant-a" || b.Name == "tenant-a/" {
+			t.Errorf("ListBuckets returned the ARMOR_PREFIX %q as a virtual bucket; consumers must see the real shared bucket (ADR-001)", b.Name)
+		}
+		if hasPrefix(b.Name, "tenant-a") {
+			t.Errorf("ListBuckets prefixed bucket name %q; the real name must be returned unchanged (ADR-001)", b.Name)
+		}
+	}
+
+	want := map[string]bool{"shared-bucket": true, "other-bucket": true}
+	if len(names) != len(want) {
+		t.Errorf("ListBuckets returned %v, want %v", names, want)
+	}
+	for name := range want {
+		if !names[name] {
+			t.Errorf("ListBuckets missing real bucket %q; returned %v", name, names)
+		}
+	}
+}
+
 // hasPrefix is a helper to check if a string has a prefix.
 func hasPrefix(s, prefix string) bool {
 	return len(s) >= len(prefix) && s[:len(prefix)] == prefix
