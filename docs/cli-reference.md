@@ -10,7 +10,14 @@ the full values reference is [Configuration](configuration.md).
 Every claim here is enforced by the smoke tests in
 [`cmd/armor/cli_reference_test.go`](../cmd/armor/cli_reference_test.go): the
 command list, every flag name, and the documented help output are checked
-against the binary's own registry, so this page cannot silently drift from the
+against the binary's own registry, and the binary is then built and exercised
+for the documented behaviors — the help and version paths exit 0 with the
+documented output, unknown subcommands, undefined flags, missing required
+flags, and stray positional arguments exit 2, the commands that need
+credentials fail with exit 1 without them, `client-config` accepts exactly
+the documented tools and prints their configuration to stdout, `migrate
+-json` keeps stdout to JSON only, and every `ARMOR_*` variable named here is
+read by the implementation — so this page cannot silently drift from the
 code.
 
 ## Global behavior

@@ -834,7 +834,13 @@ func TestDecryptParseB2URL(t *testing.T) {
 func TestMain(m *testing.M) {
 	// Clear any flags set during normal init
 	flag.Parse()
-	os.Exit(m.Run())
+	code := m.Run()
+	// The CLI-reference parity tests build the real binary into a temp
+	// directory shared across the run; remove it now that every test is done.
+	if cliReferenceBinDir != "" {
+		os.RemoveAll(cliReferenceBinDir)
+	}
+	os.Exit(code)
 }
 
 // Test that we can write to stdout
