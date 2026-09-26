@@ -222,7 +222,14 @@ want = {
     "ArmorMultipartCanaryUnhealthy": (
         "armor_multipart_canary_healthy == 0", "10m"),
 }
-def collapse(s): return " ".join(s.split())
+def collapse(s):
+    # Prometheus-compatible APIs are allowed to canonicalize optional
+    # whitespace around parentheses (the ardenone Prometheus does this),
+    # while the contract fixture preserves the authored layout. Normalize
+    # only that insignificant punctuation whitespace; keep all operator and
+    # token spacing significant so a real expression change still fails.
+    import re
+    return re.sub(r"\s*([()])\s*", r"\1", " ".join(s.split()))
 def dur_seconds(d):
     # The vmalert rules API reports duration in plain SECONDS (600), while
     # the shipped contract fixtures write Prometheus duration strings
@@ -251,7 +258,8 @@ for name, (expr, dur) in want.items():
     if r is None:
         problems.append(f"{name}: absent from group"); continue
     gexpr = collapse(r.get("query", ""))
-    if gexpr != expr:
+    want_expr = collapse(expr)
+    if gexpr != want_expr:
         problems.append(f"{name}: expr drifted from the shipped contract:\n  got  {gexpr}\n  want {expr}")
     try:
         got_s, want_s = dur_seconds(r.get("duration", "")), dur_seconds(dur)
