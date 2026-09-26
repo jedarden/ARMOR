@@ -1,6 +1,6 @@
 # ADR-004: Continuous dual-path restore verification
 
-**Status:** Accepted (harness implemented; assertions and deployment pending — see plan.md Phase 6)
+**Status:** Accepted (implemented and deployed — the artifact-class assertions and the deployment manifests have both landed; the deployment form that shipped is one restore-verifier Deployment per bucket scope rather than one fleet-wide instance, see the [Addendum: Per-Cluster Deployment Form](#addendum-per-cluster-deployment-form-2026-09-25) below. Phase record: plan.md Phase 6)
 **Date:** 2026-07-18
 
 ## Context
@@ -19,7 +19,7 @@ Backups stored through ARMOR are continuously proven restorable by a dedicated *
    - **direct-to-ciphertext** (the `armor decrypt` logic against raw B2 objects with the escrowed MEK, honoring the ADR-003 multipart layout), proving recoverability with no ARMOR server in the loop — the actual DR scenario.
    Divergence between the paths is itself a first-class failure signal (it localizes the fault to ARMOR's serving path vs. the stored data).
 3. **Application-level assertions per artifact class,** beyond SHA-256 comparison: SQLite gets `PRAGMA integrity_check` plus row-count/recency probes; tar/gzip gets listing + sampled extraction; Parquet gets footer parse + a DuckDB row-count query through the range-read path (regression-testing range translation on real data); everything else gets the generic checksum path.
-4. **Deployment form:** a long-running Deployment with an internal scheduling loop (per the workspace no-CronJobs convention), deployed via declarative-config, one instance covering all ARMOR buckets.
+4. **Deployment form:** a long-running Deployment with an internal scheduling loop (per the workspace no-CronJobs convention), deployed via declarative-config, one instance covering all ARMOR buckets. *(The "one instance" half was amended on 2026-09-25 — see the [Addendum: Per-Cluster Deployment Form](#addendum-per-cluster-deployment-form-2026-09-25) below.)*
 5. **Escalation, not retry:** every verification failure files a bead carrying object key, bucket, deployment, provenance writer version, and both-path evidence. Staleness (no verified restore within the freshness window) escalates identically. Escalation is one bead per distinct failure — the mechanism must be storm-proof (no per-tick re-filing, no unbounded retries; the 2026-07 NEEDLE retry-storms are the anti-pattern).
 6. **Metrics:** per-bucket gauges (`armor_last_verified_restore_timestamp`, `armor_verified_object_ratio`, `armor_restore_verification_failures_total`) with alerting on restore-age and failures via declarative-config.
 
@@ -48,3 +48,48 @@ restore-verifier Deployments keep escalation off until each gets the volume
 + env. See the [restore-verifier deployment guide](../restore-verifier-deployment-guide.md).
 
 **Known defect in the direct path (verified 2026-07-18; fixed 2026-07-19, bf-5jc1j8):** `armor decrypt` could not read multipart objects at all — it failed with `invalid ARMOR magic` because it implemented the never-shipped reserved-byte envelope design (expected a 64-byte header at offset 0 and, for local files, a local sidecar path) instead of the shipped ADR-003 layout (headerless ciphertext, `x-amz-meta-armor-multipart` marker, sidecar object in B2). The "ARMOR server is gone" recovery path therefore did not exist for exactly the object class that matters most (large backups) — the failure mode the dual-path tripwire is designed to catch, which fired on its first real use. **Fixed:** `decryptB2` now dispatches on the `x-amz-meta-armor-multipart` marker (mirroring the server's GET path and the restore-verifier's direct path): for multipart objects it reads headerless ciphertext from offset 0, loads the JSON HMAC sidecar via `MultipartStateManager.LoadHMACTable`, and verifies with absolute block indices; single-PUT objects keep the envelope-header path. Local-file mode accepts a JSON sidecar alongside the headerless ciphertext (`-sidecar`) plus the object IV (`-iv`). Covered by round-trip and corruption tests against a real headerless + sidecar fixture. The placeholder whole-object SHA (ADR-003 gap bf-1v2ehf) means multipart objects still have no header SHA to verify — per-block HMAC verification is the integrity guarantee.
+
+## Addendum: Per-Cluster Deployment Form (2026-09-25)
+
+Decision 4 specifies "a long-running Deployment … one instance covering all
+ARMOR buckets". The long-running-Deployment half (internal scheduling loop, no
+CronJob, declarative-config) shipped exactly as written; the "one instance"
+half did not. What shipped instead is **one restore-verifier Deployment per
+bucket scope, deployed per cluster** — as of this addendum, four:
+`iad-ci/armor`, `iad-kalshi/armor`, `ord-devimprint/devimprint`, and
+`rs-manager/armor` (`restore-verifier-acb`, which verifies apexalgo-iad's
+ai-code-battle bucket from rs-manager while that cluster's ArgoCD connection
+is broken — still one bucket, one MEK). The manifests live at
+`declarative-config/k8s/<cluster>/<namespace>/restore-verifier*.y*ml`;
+`scripts/find-armor-deployments.py` enumerates the live inventory and the
+[restore-verifier deployment guide](../restore-verifier-deployment-guide.md)
+is the operational reference. Each Deployment carries exactly one
+`ARMOR_BUCKET` (`ARMOR_BUCKET_ALIASES` are alternate names for the same
+bucket, not additional buckets) and one `ARMOR_MEK` — plus retired ring keys
+where rotation has run — referenced from that scope's own secret store via
+ExternalSecret.
+
+Why the single fleet-wide instance lost out: the verifier decrypts, so every
+input it needs is scoped the way the data it verifies is scoped, and no
+credential set legitimately spans scopes.
+
+- **MEK scoping.** Each ARMOR instance encrypts with its own MEK, delivered
+  as that cluster's Secret from that cluster's OpenBao prefix. One central
+  verifier would need every cluster's MEK escrowed into a single namespace —
+  the one credential that decrypts everything, concentrated in one Deployment,
+  crossing the per-cluster secret boundary the rest of the fleet maintains.
+- **B2 credential scoping.** B2 application keys are bucket-scoped, so a
+  fleet-wide verifier cannot even list, let alone fetch, every bucket. The
+  `acb` stand-in is the exception that proves the shape: it exists because a
+  bucket's verifier must run where that bucket's secret reference can sync,
+  and it is itself single-bucket, single-MEK.
+- **Read-path scoping.** The ARMOR read path goes through each deployment's
+  own Cloudflare-fronted domain (`ARMOR_CF_DOMAIN`); there is no shared
+  endpoint that exercises every consumer experience.
+- **Failure isolation.** Per-scope deployments keep a verifier outage, a
+  freshness gap, or an escalation-filing failure contained to the bucket it
+  verifies; fleet scope would couple them.
+
+Decision 4's coverage intent is unchanged: every ARMOR bucket is proven
+restorable by a continuously-running dual-path verifier. "One instance" holds
+at fleet scope only as the union of the per-scope instances.
