@@ -21,6 +21,7 @@ This index organizes all durable documentation by audience. Every file under `do
 - **[Connection Guide](connection-guide.md)** — Network topology, Cloudflare PNI setup, and connectivity troubleshooting
 - **[Cloudflare Setup](cloudflare-setup.md)** — DNS and CDN configuration for zero-egress downloads
 - **[Dashboard](dashboard.md)** — Web UI for bucket browsing, encryption status, and metrics
+- **[Fleet Console](fleet-console.md)** — The `cmd/armor-fleet` companion binary: one page of live per-instance health (version, canaries, restore-verifier gauges) polled read-only through SEAM, its targets file and SEAM token model, the private pinned-semver companion image, and how it complements the drift checker
 - **[Metrics](metrics.md)** — Prometheus metrics reference and alerting guidance
 - **[Observability Contract](observability-contract.md)** — The published canary and restore-verifier contract: status API response fields and transitions, exact Prometheus series and labels, freshness windows, alert rules, and escalation deduplication (ADR-002/ADR-004), pinned by contract tests
 - **[Litestream Restore Procedure](litestream-restore-procedure-and-verification.md)** — Restoring PostgreSQL databases via Litestream through ARMOR
