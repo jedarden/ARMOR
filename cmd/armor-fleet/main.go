@@ -7,12 +7,17 @@ import (
 	"os"
 )
 
+// The command line is registered at package level, not inside main, so the
+// registry is static: the CLI-reference smoke tests (cli_reference_test.go)
+// read exactly these flags against docs/companion-cli-reference.md.
+var (
+	targetsFile  = flag.String("targets", "", "Path to targets YAML file")
+	listen       = flag.String("listen", ":8080", "Address to listen on")
+	pollInterval = flag.Int("interval", 60, "Poll interval in seconds")
+	seamToken    = flag.String("seam-token", "", "SEAM bearer token (or set SEAM_TOKEN env var)")
+)
+
 func main() {
-	// Parse flags
-	targetsFile := flag.String("targets", "", "Path to targets YAML file")
-	listen := flag.String("listen", ":8080", "Address to listen on")
-	pollInterval := flag.Int("interval", 60, "Poll interval in seconds")
-	seamToken := flag.String("seam-token", "", "SEAM bearer token (or set SEAM_TOKEN env var)")
 	flag.Parse()
 
 	if *targetsFile == "" {

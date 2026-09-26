@@ -191,9 +191,7 @@ func main() {
 	// ARMOR server (internal/config/config.go). This lets each per-cluster
 	// restore-verifier Deployment reuse the cluster's existing ARMOR_B2_REGION
 	// (ConfigMap or ExternalSecret) without hardcoding an endpoint per cluster.
-	if *b2Endpoint == "" && *b2Region != "" {
-		*b2Endpoint = fmt.Sprintf("https://s3.%s.backblazeb2.com", *b2Region)
-	}
+	*b2Endpoint = deriveB2Endpoint(*b2Region, *b2Endpoint)
 
 	// Validate required flags
 	if *b2Region == "" || *b2Endpoint == "" || *b2AccessKey == "" || *b2SecretKey == "" {
@@ -411,6 +409,17 @@ func main() {
 	}
 
 	log.Println("Restore-verifier stopped gracefully")
+}
+
+// deriveB2Endpoint returns the explicit endpoint when set, otherwise the
+// endpoint derived from the region, otherwise the empty endpoint. Extracted
+// from main so the documented derivation (companion-cli-reference.md) has a
+// deterministic in-process smoke path.
+func deriveB2Endpoint(region, endpoint string) string {
+	if endpoint != "" || region == "" {
+		return endpoint
+	}
+	return fmt.Sprintf("https://s3.%s.backblazeb2.com", region)
 }
 
 // usage prints usage information.
