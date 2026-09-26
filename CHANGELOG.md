@@ -14,6 +14,32 @@ Entries before 0.1.1958 were written by hand on the Forgejo releases and are
 reproduced here; entries from 0.1.1958 on were reconstructed from git history
 on 2026-09-18 (bead armor-43ec803f).
 
+## 0.1.1976 (2026-09-26)
+
+- fix(metrics): keep Prometheus exposition numeric (armor-c866e4ca)
+- fix(alerting): tolerate Prometheus expression formatting (armor-c866e4ca)
+- docs(alerting): fleet activation — smoke-test shape knobs, runbook estate table (armor-cb731b20)
+- docs(restore-verifier): reconcile fleet topology; inventory pin test (armor-79255e46)
+- test(prefix): pin ADR-001 ListBuckets real-bucket behavior; document it (armor-b4818824)
+- docs(adr): record per-cluster restore-verifier deployment form as ADR-004 addendum (armor-02a5889c)
+- feat(release): cut-release.sh bumps compose.yaml pin; parity gate (armor-3c849ea3)
+- test(config): ARMOR_MANIFEST_PREFIX tenant-namespace escape matrix (armor-0d909e77)
+- docs(server): publish prefix-aware multipart layout and read-path contract (armor-8ab6625e)
+- test(server): mixed-era ARMOR_PREFIX cutover regression suite (armor-93205de7)
+- test(client-config): golden + property tests for every tool and write format (armor-4a220505)
+- build(toolchain): hard-fail on go.mod/Dockerfile golang pin drift (armor-255e8f31)
+- feat(restoreverifier): canonical bead-rs escalation filer + deployment support (armor-babc0b2b)
+- docs(alerting): restore-verifier alerting runbook + live-run smoke-test fixes (armor-afe279bd)
+- test(verify): binary-level contract suite for armor verify (armor-121caf08)
+- test(compat): cover boto3 API against built image (armor-b8f5262d)
+- test(restore-verifier): scheduled drill failure signals + no-retry-storm pin (armor-a166a6bc)
+- feat(alerting): activation verification for the ARMOR alert set — live smoke test + offline rule unittest (armor-afe279bd)
+- docs(prefix): ARMOR_PREFIX cutover and legacy internal-state runbook + both-eras integration tests (armor-a7192841)
+- test(restore-verifier): pin scheduled DR-drill execution, reporting, pause (armor-445bcb28)
+- docs(multipart): reconcile ADR-003/015 contract scoping; add reader and min-part-size contract tests (armor-96d1a374)
+- docs(adr): reconcile ADR-005 with the current V3 write format (armor-56d44708)
+- test(observability): contract-pin shipped multipart-canary alerts and endpoint failure semantics (armor-470d6e60)
+
 ## 0.1.1975 (2026-09-24)
 
 - fix(metrics): drop unused typeLine struct that fails golangci-lint (armor-b36ec129)
