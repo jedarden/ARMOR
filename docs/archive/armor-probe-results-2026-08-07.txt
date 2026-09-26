@@ -1,0 +1,149 @@
+================================================================================
+ARMOR Multipart Upload Alignment Probe Results
+Date: 2026-08-07
+================================================================================
+Block size hypothesis: 65536 bytes (64KB) alignment requirement
+
+Test Environment:
+- ARMOR endpoint: http://127.0.0.1:9000
+- Bucket: devimprint
+- ARMOR instance: Local (PID 799384, started Jul 28)
+
+================================================================================
+TEST RESULTS
+================================================================================
+
+Test 1: Single misaligned part (4837376 B = 65536*73 + 32768)
+  Reason: Part size not a multiple of block size
+  Expected: FAIL
+  Actual: UNEXPECTED(InternalError)
+  Error: InvalidPart - One or more of the specified parts could not be found
+  Status: ✗ FAIL (unexpected error code)
+  ⚠ MISMATCH: Expected FAIL, got UNEXPECTED(InternalError)
+
+Test 2: Single aligned part (4849664 B = 65536*74)
+  Reason: Part size is a multiple of block size
+  Expected: OK
+  Actual: UNEXPECTED(InternalError)
+  Error: InvalidPart - One or more of the specified parts could not be found
+  Status: ✗ FAIL (unexpected error code)
+  ⚠ MISMATCH: Expected OK, got UNEXPECTED(InternalError)
+
+Test 3: Aligned first part + short final part (1000 B)
+  Reason: Final part size not a multiple of block size
+  Expected: FAIL
+  Actual: UNEXPECTED(InternalError)
+  Error: InvalidPart - One or more of the specified parts could not be found
+  Status: ✗ FAIL (unexpected error code)
+  ⚠ MISMATCH: Expected FAIL, got UNEXPECTED(InternalError)
+
+Test 4: Misaligned first part + short final part
+  Reason: First part misaligned, final part also invalid
+  Expected: FAIL
+  Actual: UNEXPECTED(InternalError)
+  Error: InvalidPart - One or more of the specified parts could not be found
+  Status: ✗ FAIL (unexpected error code)
+  ⚠ MISMATCH: Expected FAIL, got UNEXPECTED(InternalError)
+
+Test 5: Exactly-one-block part (65536 B)
+  Reason: Single minimal aligned part
+  Expected: OK
+  Actual: UNEXPECTED(InternalError)
+  Error: InvalidPart - One or more of the specified parts could not be found
+  Status: ✗ FAIL (unexpected error code)
+  ⚠ MISMATCH: Expected OK, got UNEXPECTED(InternalError)
+
+Test 6: Zero-byte final part
+  Reason: Zero-byte part is invalid
+  Expected: FAIL
+  Actual: UNEXPECTED(InternalError)
+  Error: InvalidPart - One or more of the specified parts could not be found
+  Status: ✗ FAIL (unexpected error code)
+  ⚠ MISMATCH: Expected FAIL, got UNEXPECTED(InternalError)
+
+Test 7: PutObject with misaligned length (non-multipart)
+  Reason: WAL archiving uses PutObject, alignment not enforced
+  Expected: OK
+  Actual: OK
+  Status: ✓ PASS
+
+================================================================================
+SUMMARY
+================================================================================
+Tests passed: 1/7
+
+✗ ARMOR behavior differs significantly from expectations
+
+Failed tests:
+  - Single misaligned part (4837376 B = 65536*73 + 32768) (got: UNEXPECTED(InternalError))
+  - Single aligned part (4849664 B = 65536*74) (got: UNEXPECTED(InternalError))
+  - Aligned first part + short final part (1000 B) (got: UNEXPECTED(InternalError))
+  - Misaligned first part + short final part (got: UNEXPECTED(InternalError))
+  - Exactly-one-block part (65536 B) (got: UNEXPECTED(InternalError))
+  - Zero-byte final part (got: UNEXPECTED(InternalError))
+
+================================================================================
+KEY FINDINGS
+================================================================================
+
+1. MULTIPART UPLOAD BROKEN: All 6 multipart upload tests failed with the same
+   InternalError wrapping InvalidPart. The parts are being accepted during
+   upload_part() (no InvalidPartSize errors), but CompleteMultipartUpload
+   cannot find them.
+
+2. NO ALIGNMENT VALIDATION DETECTED: Since all parts - both aligned and
+   misaligned - fail with the same InvalidPart error, there is NO evidence
+   that ARMOR is enforcing 65536-byte alignment during part upload.
+
+3. PUTOBJECT WORKS FINE: Test 7 (PutObject with misaligned 4837376 B) passed,
+   confirming that credentials and basic bucket access work correctly.
+
+4. ERROR PATTERN: All multipart uploads fail at CompleteMultipartUpload with:
+   "One or more of the specified parts could not be found. The part may not
+   have been uploaded, or the specified entity tag may not match the part's
+   entity tag."
+
+   This suggests either:
+   a) Parts are not being persisted to storage after upload
+   b) Part ETags are being miscalculated/mismatched
+   c) There's a bug in how ARMOR tracks uploaded parts internally
+
+================================================================================
+HYPOTHESIS STATUS
+================================================================================
+
+❌ REFUTED: "Every part must be 65536-aligned, including the final one"
+   - No InvalidPartSize errors were ever raised
+   - Both aligned and misaligned parts fail identically
+   - No evidence of alignment validation during upload_part()
+
+❌ CONFIRMED: Block size is 65536 (cannot confirm - no alignment tests passed)
+   - Cannot verify the enforced block size because all multipart uploads fail
+   before completion
+
+⚠️ NEW HYPOTHESIS: ARMOR's multipart upload implementation has a fundamental
+   bug that prevents ANY multipart upload from completing, regardless of
+   part alignment.
+
+================================================================================
+NEXT STEPS
+================================================================================
+
+1. Investigate ARMOR multipart upload implementation:
+   - Check how parts are stored during upload
+   - Verify part ETag calculation
+   - Check part tracking/listing mechanisms
+
+2. Test with a known-good ARMOR version:
+   - Try different ARMOR image tags (currently using fcbf6d3)
+   - Check if this is a regression
+
+3. Manual AWS CLI testing:
+   - Use aws-cli-compatibility.test binary for comparison
+   - Test with official AWS S3 for baseline behavior
+
+4. Check ARMOR logs for multipart upload errors:
+   - ARMOR process logs may show why parts aren't found
+   - Look for storage backend errors during CompleteMultipartUpload
+
+================================================================================
