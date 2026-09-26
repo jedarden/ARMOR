@@ -8,14 +8,28 @@ the contract in
 this runbook covers the pipeline around them and the iad-ci-specific
 operational facts that nowhere else records.
 
-Status of the fleet: **iad-ci is the only cluster where the rules are
-evaluated** (activated 2026-09-25). The per-cluster
+Status of the fleet: **the pipeline is live on every ARMOR deployment**
+(iad-ci first, 2026-09-25, armor-afe279bd; every other cluster replicated in
+the same change wave, armor-cb731b20). The estate split, by what each cluster
+already ran:
+
+| Cluster | Form | Tailnet endpoints (smoke-test env) |
+|---|---|---|
+| iad-ci | dedicated store: VictoriaMetrics + vmalert + Alertmanager | `vmetrics-iad-ci-ts` / `vmalert-iad-ci-ts` / `alertmanager-iad-ci-ts` `.ardenone.com:8444` |
+| rs-manager | dedicated store (iad-ci shape, armor job only) | `vmetrics-rs-manager-ts` / `vmalert-rs-manager-ts` / `alertmanager-rs-manager-ts` `.ardenone.com:8444` |
+| iad-kalshi | dedicated store | `vmetrics-iad-kalshi` / `vmalert-iad-kalshi` / `alertmanager-iad-kalshi` `.tail1b1987.ts.net` (Tailscale-operator Services) |
+| ord-devimprint | dedicated store | `vmetrics-ord-devimprint` / `vmalert-ord-devimprint` / `alertmanager-ord-devimprint` `.tail1b1987.ts.net` (Tailscale-operator Services) |
+| apexalgo-iad | kube-prometheus-stack: ServiceMonitors + PrometheusRule, cluster Prometheus + Alertmanager | `prometheus-apexalgo-iad-ts` / `alertmanager-apexalgo-iad-ts` `.ardenone.com:8444` (`VM_BASE` and `VMALERT_BASE` are both the Prometheus) |
+| ardenone-cluster | kube-prometheus-stack (no verifier — server canary only) | `prometheus-ardenone-cluster-ts` / `alertmanager-ardenone-cluster-ts` `.ardenone.com:8444` |
+
+All alerting clusters page the one shared ntfy topic (the cnpg-backup-watchdog
+channel); each page names its cluster via vmalert's `-external.label` or the
+Prometheus `externalLabels` equivalent. The per-cluster
 `restore-verifier-monitoring.yaml.disabled` PrometheusRule/ServiceMonitor
 manifests stay `.disabled` everywhere — no ARMOR cluster runs the Prometheus
-Operator CRDs — and the other three verifier deployments (ord-devimprint,
-iad-kalshi, rs-manager) have no evaluator at all. `docs/plan/plan.md`
-(Phase 6 and the §8 estate questions) is the authoritative activation
-history. The verifier fleet itself — four restore-verifier Deployments today
+Operator CRDs those objects need; the two kube-prometheus-stack clusters
+consume the live PrometheusRule form instead. The verifier fleet itself —
+four restore-verifier Deployments today
 (`iad-ci/armor`, `iad-kalshi/armor`, `ord-devimprint/devimprint`, and
 `rs-manager/armor` running `restore-verifier-acb`) — is defined in ADR-004's
 "Fleet topology" section; `scripts/find-armor-deployments.py` enumerates it
@@ -87,6 +101,42 @@ cluster sync that touches `monitoring/`, and whenever a page seems implausible
 (it distinguishes "alert firing because reality is bad" from "pipeline
 broken" in one pass).
 
+Per-cluster invocations (all from inside the tailnet; the shape knobs are
+documented in the script header):
+
+```bash
+# iad-ci (defaults)
+./scripts/alerting-smoke-test.sh
+
+# rs-manager / iad-kalshi / ord-devimprint — dedicated-store replicas of the
+# iad-ci shape; only the hostnames differ
+VM_BASE=https://vmetrics-rs-manager-ts.ardenone.com:8444 \
+VMALERT_BASE=https://vmalert-rs-manager-ts.ardenone.com:8444 \
+AM_BASE=https://alertmanager-rs-manager-ts.ardenone.com:8444 \
+  ./scripts/alerting-smoke-test.sh
+
+# apexalgo-iad — kube-prometheus-stack: Prometheus is both store and rule
+# evaluator; two armor targets, no verifier, canaries disabled at scrape
+VM_BASE=https://prometheus-apexalgo-iad-ts.ardenone.com:8444 \
+VMALERT_BASE=https://prometheus-apexalgo-iad-ts.ardenone.com:8444 \
+AM_BASE=https://alertmanager-apexalgo-iad-ts.ardenone.com:8444 \
+ARMOR_JOB_REGEX='native-ads-scan-armor|armor-ledger' \
+ARMOR_EXPECT_SERVER_TARGETS=2 ARMOR_EXPECT_VERIFIER=0 ARMOR_EXPECT_CANARY=0 \
+  ./scripts/alerting-smoke-test.sh
+
+# ardenone-cluster — kube-prometheus-stack, one armor server, real canary,
+# no verifier
+VM_BASE=https://prometheus-ardenone-cluster-ts.ardenone.com:8444 \
+VMALERT_BASE=https://prometheus-ardenone-cluster-ts.ardenone.com:8444 \
+AM_BASE=https://alertmanager-ardenone-cluster-ts.ardenone.com:8444 \
+ARMOR_EXPECT_VERIFIER=0 \
+  ./scripts/alerting-smoke-test.sh
+```
+
+The iad-kalshi and ord-devimprint lines follow the rs-manager pattern with
+their own `*.tail1b1987.ts.net` hostnames (table in the fleet-status section
+above).
+
 ## 3. Changing a rule — three verbatim copies, one change
 
 The rule group exists in three copies that must stay byte-identical:
@@ -126,11 +176,14 @@ config edit into a silently stale one.
   so these series are *expected* to be absent from vmetrics. The smoke test
   asserts the numeric canary counters instead. Nothing alert-side may treat
   the string gauges as samples.
-- **The `.disabled` suffix stays on iad-ci.** Activation there did not drop
-  the suffix (there are no Prometheus Operator CRDs to accept the objects);
-  it added the vmalert evaluator instead. The observability-contract line
-  about dropping the suffix applies to a future kube-prometheus-stack
-  cluster, not to this one.
+- **The `.disabled` suffix stays everywhere.** No ARMOR cluster runs the
+  Prometheus Operator CRDs the manifests' ServiceMonitor/PrometheusRule
+  objects need — iad-ci and the three dedicated-store replicas evaluate via
+  vmalert instead, and the two kube-prometheus-stack clusters (apexalgo-iad,
+  ardenone-cluster) consume a live PrometheusRule carrying the same group.
+  The observability-contract line about dropping the suffix applies to a
+  future kube-prometheus-stack verifier cluster; the server-only clusters
+  that have the stack today got the CRD form without touching these files.
 - **vmalert's API reports `for` durations in seconds** (`600`), while the
   fixtures write `10m`. The smoke test normalizes; a hand-rolled comparison
   against the fixture strings will false-fail.
@@ -164,9 +217,37 @@ config edit into a silently stale one.
 
 ## 6. Activating another cluster
 
-Not a copy-paste of iad-ci: the other verifier deployments have no metrics
-store at all today, and the estate decision (VictoriaMetrics+vmalert
-everywhere vs. kube-prometheus-stack where CRDs would land) is tracked as an
-open question in `docs/plan/plan.md` §8. The reusable iad-ci pieces are the
-scrape job shape, the vmalert Deployment, and the alertmanager delivery
-config; the rules always come from the contract-pinned fixture (§3).
+Done fleet-wide 2026-09-25 (armor-cb731b20); the estate question in
+`docs/plan/plan.md` §8 (Phase 6 leftover) records the outcome. The form is
+NOT a copy-paste of iad-ci — it follows what the cluster already runs:
+
+- **Cluster has a kube-prometheus-stack** (apexalgo-iad,
+  ardenone-cluster): no second store. A `ServiceMonitor` beside each armor
+  Service (admin-api port, armor_* keep-list, canary families dropped at
+  scrape where `ARMOR_CANARY_DISABLED=true` pins the gauge at 0 forever),
+  the contract-pinned rule group as a `PrometheusRule` (with whatever rule
+  selector labels that cluster's Prometheus CR actually selects on —
+  ardenone requires the `release=` label), and an Alertmanager config
+  ExternalSecret whose root route stays on the chart-default `'null'`
+  receiver with a `component=~"restore-verifier|armor-canary"` sub-route to
+  ntfy, so nothing else on the shared Alertmanager starts paging. Cluster
+  attribution comes from `prometheusSpec.externalLabels`.
+- **Cluster has no store** (rs-manager, iad-kalshi, ord-devimprint): the
+  iad-ci shape — `victoriametrics-application.yml` (armor job + self-scout
+  only, 5Gi sata, requests under the cluster's per-pod cap), `vmalert.yml`
+  (rules verbatim from §3's fixture, `-external.label=cluster=<name>`),
+  `alertmanager.yml` (ExternalSecret rendering the ntfy receiver from
+  OpenBao). Tailnet read paths follow the cluster's existing mechanism
+  (Traefik vpn entrypoint + tailnet DNS records, or Tailscale-operator
+  companion Services).
+
+Whatever the form, the invariants are the same: the rule group is byte-identical
+to §3's fixture; the verifier target keeps exactly the restore trio (never-run
+canary families are dropped at scrape); string-valued gauges are expected to be
+absent from any store; the `.disabled` manifests stay `.disabled`; and the new
+`monitoring/` manifests sync through the cluster's normal ArgoCD path — no
+`kubectl apply` anywhere. A new ARMOR deployment on an already-activated
+cluster needs only its scrape surface added (a static target in the armor job,
+or a ServiceMonitor) — the evaluator and delivery are cluster-level and
+already running. The fleet smoke-test invocations for the current clusters
+are in §2.

@@ -319,6 +319,12 @@ hostnames, so it must run from inside the tailnet.
 VM_BASE=... VMALERT_BASE=... AM_BASE=... ./scripts/alerting-smoke-test.sh
 ```
 
+Fleet-wide since armor-cb731b20: the shape knobs (`ARMOR_JOB_REGEX`,
+`ARMOR_EXPECT_SERVER_TARGETS`, `ARMOR_EXPECT_VERIFIER`, `ARMOR_EXPECT_CANARY`)
+adapt the same checks to the kube-prometheus-stack clusters and to armor
+servers without a verifier; the alerting runbook's §2 carries the
+per-cluster invocation lines.
+
 ### test-armor-endpoints.sh
 
 Tests all ARMOR endpoints for expected responses and status codes.

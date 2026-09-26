@@ -25,6 +25,28 @@
 #
 # Usage: scripts/alerting-smoke-test.sh
 #   VM_BASE / VMALERT_BASE / AM_BASE override the three endpoints.
+#   Shape knobs for the clusters activated since (bead armor-cb731b20) — all
+#   default to the iad-ci shape:
+#     ARMOR_JOB_REGEX           regex for the scrape job label(s) carrying the
+#                               armor targets. Dedicated stores name the job
+#                               `armor` (default); ServiceMonitor-derived
+#                               targets carry the Service name(s), e.g.
+#                               'native-ads-scan-armor|armor-ledger'.
+#     ARMOR_EXPECT_SERVER_TARGETS  how many :9001 targets the job should have
+#                               (default 1; 2 on apexalgo-iad).
+#     ARMOR_EXPECT_VERIFIER     1 (default) requires one :9002 target and the
+#                               three restore gauges fresh; 0 for clusters
+#                               with no restore-verifier Deployment (the
+#                               restore rules then legitimately have no
+#                               series — Phase 3 reads that as quiet).
+#     ARMOR_EXPECT_CANARY       1 (default) requires the numeric canary
+#                               counters fresh; 0 where the canary is
+#                               disabled by config and its families are
+#                               dropped at scrape (apexalgo-iad).
+#   On the kube-prometheus-stack clusters (apexalgo-iad, ardenone-cluster)
+#   VM_BASE and VMALERT_BASE are BOTH the cluster's Prometheus (it serves the
+#   same /api/v1/query, /api/v1/rules and /api/v1/alerts shapes this script
+#   already speaks), and AM_BASE its Alertmanager.
 # Exit: 0 all checks pass; 1 one or more failed; 2 environment problem.
 
 set -uo pipefail
@@ -32,6 +54,10 @@ set -uo pipefail
 VM_BASE="${VM_BASE:-https://vmetrics-iad-ci-ts.ardenone.com:8444}"
 VMALERT_BASE="${VMALERT_BASE:-https://vmalert-iad-ci-ts.ardenone.com:8444}"
 AM_BASE="${AM_BASE:-https://alertmanager-iad-ci-ts.ardenone.com:8444}"
+ARMOR_JOB_REGEX="${ARMOR_JOB_REGEX:-armor}"
+ARMOR_EXPECT_SERVER_TARGETS="${ARMOR_EXPECT_SERVER_TARGETS:-1}"
+ARMOR_EXPECT_VERIFIER="${ARMOR_EXPECT_VERIFIER:-1}"
+ARMOR_EXPECT_CANARY="${ARMOR_EXPECT_CANARY:-1}"
 
 for tool in curl python3; do
     command -v "$tool" >/dev/null 2>&1 || { echo "FATAL: $tool not on PATH" >&2; exit 2; }
@@ -98,9 +124,9 @@ note "delivery: $AM_BASE"
 note ""
 
 # ---------------------------------------------------------------- collection
-note "-- Phase 1: collection (VictoriaMetrics scrape of both armor targets)"
+note "-- Phase 1: collection (scrape of the armor targets)"
 
-TARGETS_UP="$(vm_query 'up{job="armor"}' | python3 -c '
+TARGETS_UP="$(vm_query "up{job=~\"^($ARMOR_JOB_REGEX)\$\"}" | python3 -c '
 import json,sys
 r = json.load(sys.stdin)
 up = {s["metric"].get("instance","?"): s["value"][1] for s in r}
@@ -108,16 +134,20 @@ print(len([v for v in up.values() if v == "1"]), len(up))
 for i, v in sorted(up.items()):
     print(i, v)' 2>/dev/null)"
 
+EXPECTED_TOTAL=$((ARMOR_EXPECT_SERVER_TARGETS + ARMOR_EXPECT_VERIFIER))
+
 if [ -z "$TARGETS_UP" ]; then
-    bad "up{job=\"armor\"} unreadable — store unreachable or the armor job absent"
+    bad "up{job=~\"^($ARMOR_JOB_REGEX)$\"} unreadable — store unreachable or the armor job absent"
 else
     TOTAL="$(printf '%s\n' "$TARGETS_UP" | head -1)"
-    SERVER_UP="$(printf '%s\n' "$TARGETS_UP" | awk '$1 ~ /:9001$/ {print $2}')"
-    VERIFIER_UP="$(printf '%s\n' "$TARGETS_UP" | awk '$1 ~ /:9002$/ {print $2}')"
-    if [ "$TOTAL" = "2 2" ] && [ "$SERVER_UP" = "1" ] && [ "$VERIFIER_UP" = "1" ]; then
-        ok "both armor targets scraped, up=1 (server :9001, verifier :9002)"
+    SERVER_UP="$(printf '%s\n' "$TARGETS_UP" | awk -v n="$ARMOR_EXPECT_SERVER_TARGETS" '$1 ~ /:9001$/ {c++} END {print c+0}')"
+    VERIFIER_UP="$(printf '%s\n' "$TARGETS_UP" | awk '$1 ~ /:9002$/ {c++} END {print c+0}')"
+    if [ "$TOTAL" = "$EXPECTED_TOTAL $EXPECTED_TOTAL" ] \
+       && [ "$SERVER_UP" -eq "$ARMOR_EXPECT_SERVER_TARGETS" ] \
+       && [ "$VERIFIER_UP" -eq "$ARMOR_EXPECT_VERIFIER" ]; then
+        ok "all $EXPECTED_TOTAL armor targets scraped, up=1 (server :9001 x$ARMOR_EXPECT_SERVER_TARGETS, verifier :9002 x$ARMOR_EXPECT_VERIFIER)"
     else
-        bad "armor scrape targets wrong: total=[$TOTAL] server_9001=[$SERVER_UP] verifier_9002=[$VERIFIER_UP]"
+        bad "armor scrape targets wrong: total=[$TOTAL] want $EXPECTED_TOTAL up; server_9001=[$SERVER_UP] want $ARMOR_EXPECT_SERVER_TARGETS; verifier_9002=[$VERIFIER_UP] want $ARMOR_EXPECT_VERIFIER"
     fi
 fi
 
@@ -139,24 +169,34 @@ check_fresh_series() {
 }
 
 # Restore-verifier gauges (the ArmorRestoreVerification* alert inputs).
-check_fresh_series 'armor_last_verified_restore_timestamp' 'restore-verifier'
-check_fresh_series 'armor_verified_object_ratio'           'restore-verifier'
-check_fresh_series 'armor_restore_verification_failures_total' 'restore-verifier'
+# Skipped on clusters with no restore-verifier Deployment: the gauges do not
+# exist there, and their absence is the correct state — not a collection
+# failure.
+if [ "$ARMOR_EXPECT_VERIFIER" = "1" ]; then
+    check_fresh_series 'armor_last_verified_restore_timestamp' 'restore-verifier'
+    check_fresh_series 'armor_verified_object_ratio'           'restore-verifier'
+    check_fresh_series 'armor_restore_verification_failures_total' 'restore-verifier'
+fi
 # Canary gauges from the ARMOR server (the ArmorMultipartCanaryUnhealthy input).
 # The *_last_check_time members of the canary family are deliberately NOT
 # asserted: the contract's string-valued gauge caveat (docs/observability-
 # contract.md, "Canary metric series") makes them RFC3339 strings on the wire,
 # so a Prometheus-compatible store drops them at ingest as non-numeric — they
 # are diagnostic strings by design, and their absence from the store is the
-# CORRECT state. The numeric counters prove collection instead.
-check_fresh_series 'armor_multipart_canary_healthy'         'armor canary'
-check_fresh_series 'armor_canary_checks_total'              'armor canary'
-check_fresh_series 'armor_multipart_canary_checks_total'    'armor canary'
+# CORRECT state. The numeric counters prove collection instead. Skipped where
+# the canary is disabled by config (ARMOR_CANARY_DISABLED=true) and the canary
+# families are dropped at scrape — same reasoning: absence is correct there.
+if [ "$ARMOR_EXPECT_CANARY" = "1" ]; then
+    check_fresh_series 'armor_multipart_canary_healthy'         'armor canary'
+    check_fresh_series 'armor_canary_checks_total'              'armor canary'
+    check_fresh_series 'armor_multipart_canary_checks_total'    'armor canary'
+fi
 
-# Cardinality guard: this job sits on a 20Gi-capped store. A series explosion
-# here is the loud failure the armor_* keep-list is supposed to produce, not
-# a slow disk death.
-SERIES_COUNT="$(value_of 'count({job="armor"})' | cut -d. -f1)"
+# Cardinality guard: this job sits on a size-capped store (20Gi on iad-ci,
+# 5Gi on the replicated stores, a 4GB retentionSize on the operator stacks).
+# A series explosion here is the loud failure the armor_* keep-list is
+# supposed to produce, not a slow disk death.
+SERIES_COUNT="$(value_of "count({job=~\"^($ARMOR_JOB_REGEX)\$\"})" | cut -d. -f1)"
 if [ -n "$SERIES_COUNT" ] && [ "$SERIES_COUNT" -lt 20000 ] 2>/dev/null; then
     ok "armor job series count sane ($SERIES_COUNT)"
 else
