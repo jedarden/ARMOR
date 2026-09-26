@@ -58,7 +58,13 @@ make help                            # the rest of the targets
   release gate, an integration-suite compile, the Docker builds, a registry
   existence check for every image, and the real-client compatibility suite
   (AWS CLI, rclone, boto3, DuckDB/httpfs, litestream, and barman-cloud)
-  against the freshly built image.
+  against the freshly built image. The real-B2 suite itself never executes in
+  `armor-build` — without credentials every test in it skips — so it is run by
+  the separate `armor-integration` WorkflowTemplate in declarative-config
+  (`k8s/iad-ci/argo-workflows/armor-integration-workflowtemplate.yml`):
+  nightly against `main` via the `armor-integration-nightly` CronWorkflow, and
+  per release per [docs/release-process.md](docs/release-process.md), where a
+  green run covering the release commit gates the fleet roll.
 - Two tests guard documentation: `internal/docsindex` fails when a file under
   `docs/` is missing from `docs/README.md` (or linked twice, or a link is
   broken), and when an `ARMOR_*` variable read by `internal/config` is absent

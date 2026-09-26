@@ -88,26 +88,32 @@ go test -tags=integration ./tests/integration/... -short
 
 ## CI Integration
 
-For CI pipelines, use a test bucket dedicated to integration testing:
+The suite is executed in CI by the `armor-integration` WorkflowTemplate
+(declarative-config
+`k8s/iad-ci/argo-workflows/armor-integration-workflowtemplate.yml`), nightly
+against `main` via the `armor-integration-nightly` CronWorkflow and per
+release per `docs/release-process.md`. Each run builds `./cmd/armor` from
+the revision under test, boots it against a real B2 scope with
+`ARMOR_PREFIX=integration-tests/` and its own `ARMOR_WRITER_ID` (so its
+manifest chain and objects are isolated from any live deployment sharing
+the bucket), then runs:
 
-```yaml
-# Example GitHub Actions
-- name: Run Integration Tests
-  env:
-    ARMOR_INTEGRATION_TEST: 1
-    ARMOR_B2_ACCESS_KEY_ID: ${{ secrets.B2_ACCESS_KEY_ID }}
-    ARMOR_B2_SECRET_ACCESS_KEY: ${{ secrets.B2_SECRET_ACCESS_KEY }}
-    ARMOR_B2_REGION: us-east-005
-    ARMOR_BUCKET: armor-test-bucket
-    ARMOR_CF_DOMAIN: ${{ secrets.CF_DOMAIN }}
-    ARMOR_MEK: ${{ secrets.MEK }}
-    ARMOR_AUTH_ACCESS_KEY: test-key
-    ARMOR_AUTH_SECRET_KEY: test-secret
-  run: |
-    go run ./cmd/armor &
-    sleep 5
-    go test -tags=integration ./tests/integration/... -v
+```bash
+go test -v -race -tags=integration -timeout 50m \
+  -skip '^TestMultipart5GB' ./tests/integration/...
 ```
+
+**No `-short`**: every test in this suite skips under it, so a `-short` run
+executes nothing — this was exactly how the suite sat unused until 2026-09
+(ADR-002: a test that isn't gating deploys is decorative). The default
+`-skip '^TestMultipart5GB'` excludes only `TestMultipart5GB*`, which
+uploads a genuine 6 GiB object and stays opt-in by its own design; submit a
+manual workflow run with `skip-tests: ""` to include it.
+
+The equivalent local run is the Quick Start above, minus `-short`.
+Credentials for the CI leg reach the workflow through the
+`armor-integration` ExternalSecret, which reads the live deployment's
+OpenBao paths — values are never committed to either repository.
 
 ## Troubleshooting
 

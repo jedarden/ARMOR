@@ -93,7 +93,7 @@ status on GitHub at start and at the end, which is what the README badge shows.
 | `resolve-version` | The pushed commit changed `VERSION` and the value is `MAJOR.MINOR.PATCH`. A non-release push fails here by design |
 | `lint` | `golangci-lint` clean |
 | `test` | `scripts/release-gate.sh` with `ARMOR_RELEASE_RACE=1` (crypto, backend, restore-verifier, canary, config, cmd, handlers under `-race`) |
-| `integration-test` | `tests/integration` compiles and runs in short mode |
+| `integration-test` | `tests/integration` compiles and runs in short mode — compile coverage only: every test in the suite skips without real-B2 credentials. Execution is the separate `armor-integration` leg (see [Live-B2 integration leg](#live-b2-integration-leg-armor-integration)) |
 | `docker-build`, `docker-build-restore-verifier`, `docker-build-fleet`, `docker-build-ghcr` | The four images are built with kaniko from the pushed tree. They are siblings: the server image is published even if a companion build fails |
 | `verify-*-image` | Each Docker Hub tag is resolvable through the registry API (the ghost-tag guard) |
 | `compat-suite-test` | The freshly pushed server image serves AWS CLI and rclone end to end |
@@ -163,6 +163,65 @@ awk "/^## $V /{f=1;next} /^## /{f=0} f" CHANGELOG.md | head           # the note
 `gh release view` also matches drafts, so check `isDraft` rather than mere
 existence.
 
+### Live-B2 integration leg (`armor-integration`)
+
+`armor-build` never executes `tests/integration`: the `integration-test`
+step runs the suite in short mode without credentials, and every test in it
+skips — which is exactly the decorative-gate failure ADR-002 recorded. The
+execution leg is a separate WorkflowTemplate: `armor-integration`
+(declarative-config
+`k8s/iad-ci/argo-workflows/armor-integration-workflowtemplate.yml`). Each
+run builds `./cmd/armor` from the revision under test, boots it against
+the live iad-ci bucket scope isolated under `ARMOR_PREFIX=integration-tests/`
+with its own `ARMOR_WRITER_ID` (so its manifest chain and every object it
+writes are disjoint from the live deployment's keys in the same bucket),
+and runs the suite with `-race` and **without** `-short` — omitting
+`-short` is the point, since every test skips under it. Only
+`TestMultipart5GB*` (a genuine 6 GiB upload, opt-in by the suite's own
+design) is excluded by default via the `skip-tests` parameter; an empty
+value runs the boundary pair too.
+
+The leg runs nightly against current `main`
+(`armor-integration-nightly` CronWorkflow). A red nightly flags a
+live-surface regression the same day it lands; per release, confirm a run
+has covered the release commit:
+
+```bash
+kubectl --server=http://traefik-iad-ci:8001 get workflows -n argo-workflows \
+  | grep armor-integration | tail -5
+kubectl --server=http://traefik-iad-ci:8001 get workflow <name> -n argo-workflows \
+  -o jsonpath='{.status.phase} - {.status.message}'
+```
+
+If the newest green run predates the release commit, submit one for the
+exact SHA by hand (needs the write kubeconfig):
+
+```bash
+kubectl --kubeconfig=/home/coding/.kube/iad-ci.kubeconfig create -f - <<EOF
+apiVersion: argoproj.io/v1alpha1
+kind: Workflow
+metadata:
+  generateName: armor-integration-manual-
+  namespace: argo-workflows
+spec:
+  workflowTemplateRef:
+    name: armor-integration
+  arguments:
+    parameters:
+      - name: branch
+        value: main
+      - name: revision
+        value: <full sha of the release commit>
+EOF
+```
+
+Credentials reach the run through the `armor-integration` ExternalSecret in
+the same directory, which reads the live deployment's OpenBao paths
+(`rs-manager/iad-ci/b2/iad-ci`, `rs-manager/iad-ci/armor`,
+`rs-manager/iad-ci/armor/admin`); no values are stored in or passed through
+this repository. The admin key-rotation tests rotate only the in-pod
+server's ring — nothing shared with the live deployment.
+
 ## Rolling the fleet forward
 
 Desired state lives only in `jedarden/declarative-config`; ArgoCD applies it.
@@ -186,14 +245,19 @@ As of 2026-09-18 that is (ArgoCD application `<namespace>-ns-<cluster>`):
 
 To roll out:
 
-1. Edit the image tag(s) in the manifest(s): `ronaldraygun/armor:<version>`
+1. Confirm a green `armor-integration` run covering the release commit (see
+   [Verifying a release](#verifying-a-release)): the nightly exercises the
+   S3 surface against real B2, which no other gate executes, and a red run
+   against the release SHA is a fleet-roll blocker. Submit the manual
+   per-release run if the nightly has not covered the SHA yet.
+2. Edit the image tag(s) in the manifest(s): `ronaldraygun/armor:<version>`
    and, in the same change, `ronaldraygun/armor-restore-verifier:<version>`.
    Keep the digest pin form used in that file if it has one.
-2. Commit with a message that names the version and the reason, push to
+3. Commit with a message that names the version and the reason, push to
    declarative-config `origin` (Forgejo). ArgoCD syncs within minutes; a failed
    sync attempt is not retried for that revision, so check the Application if
    nothing has landed after ~20 minutes.
-3. Verify each deployment:
+4. Verify each deployment:
 
    ```bash
    kubectl --server=http://traefik-<cluster>:8001 get pods -n <namespace> -l app=armor \
