@@ -2294,13 +2294,14 @@ func (h *Handlers) HeadObject(w http.ResponseWriter, r *http.Request, bucket, ke
 	prefixedKey := h.applyPrefix(key)
 
 	// Fast path: serve from the in-memory manifest index when available,
-	// avoiding a B2 HeadObject round-trip entirely.
+	// avoiding a B2 HeadObject round-trip entirely. User metadata is enriched
+	// from the manifest object when one exists; when it doesn't, the index
+	// entry's headers are served as-is — never a backend Head, which would
+	// turn the metadata fast path back into the round trip it exists to skip.
 	if h.manifest != nil {
 		if entry, ok := h.manifest.Lookup(bucket, key); ok {
 			if _, manifestMetadata, err := h.readManifest(ctx, bucket, key); err == nil {
 				writeUserMetadataHeaders(w, manifestMetadata)
-			} else if info, err := h.backend.Head(ctx, bucket, prefixedKey); err == nil {
-				writeUserMetadataHeaders(w, info.Metadata)
 			}
 			if status := checkConditionalRequest(r, entry.ETag, entry.LastModified); status != 0 {
 				if status == http.StatusNotModified {
@@ -4966,12 +4967,12 @@ func (h *Handlers) stripPrefixFromCommonPrefix(commonPrefix string) string {
 // The request ID is extracted from the request context and included in the XML body.
 // The resource is the request path. This function also logs a structured s3_error event.
 func (h *Handlers) writeError(w http.ResponseWriter, r *http.Request, code, message string, statusCode int) {
-	// Extract operation (verb) from request for metrics
-	operation := acl.ActionForRequest(r)
-
-	// Increment error counter (ADR-008) - always increment, even without logger
+	// Increment error counter (ADR-008) - always increment, even without logger.
+	// The metric's operation label is the S3 operation name (docs/metrics.md),
+	// not the ADR-012 verb — InvalidPartSize alerting depends on distinguishing
+	// CompleteMultipartUpload from the other "put" stages.
 	if h.metrics != nil {
-		h.metrics.IncErrors(code, operation)
+		h.metrics.IncErrors(code, s3OperationForRequest(r))
 	}
 
 	// Log structured S3 error event before writing response

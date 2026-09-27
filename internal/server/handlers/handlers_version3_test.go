@@ -216,13 +216,18 @@ func TestVersion3CompressionFlagInHeader(t *testing.T) {
 	// Set FormatWriteVersion to 3
 	cfg.FormatWriteVersion = 3
 
-	// Enable compression (per ADR-007, though compression is off pending compress-rules bead)
+	// Enable compression explicitly (per ADR-007; the global default is off,
+	// so the flag must be set for the buffered PUT path to even attempt it)
 	cfg.Compress = true
 
 	h := handlers.New(cfg, mb, cache, footerCache, km, nil)
 
-	// Create plaintext content
-	plaintext := []byte("Hello, ARMOR! Testing compression flag in v3 header.")
+	// Create plaintext content. It must be compressible: crypto.Compress uses
+	// opportunistic pass-through (incompressible input is stored as-is), which
+	// would legitimately skip the compression flag this test exists to check.
+	// (A 52-byte one-line fixture was exactly such an input — zstd could not
+	// shrink it and the flag was correctly never set.)
+	plaintext := bytes.Repeat([]byte("Hello, ARMOR! Testing compression flag in v3 header."), 8)
 
 	// Create PUT request
 	req := httptest.NewRequest(http.MethodPut, "/test-bucket/test-key", bytes.NewReader(plaintext))
@@ -257,13 +262,13 @@ func TestVersion3CompressionFlagInHeader(t *testing.T) {
 
 	// Reserved field is at offset 62 (2 bytes before end of 64-byte header)
 	reservedByte := data[62]
-	if reservedByte == 0 {
-		t.Errorf("expected compression flag set in Reserved[0], got 0x%02x", reservedByte)
+	if reservedByte != crypto.CompressionFlagZstd {
+		t.Errorf("expected zstd compression flag 0x%02x in Reserved[0], got 0x%02x", crypto.CompressionFlagZstd, reservedByte)
 	}
 
 	// Verify compression type in metadata
 	compressionType := meta["x-amz-meta-armor-compression-type"]
-	if compressionType != "zstd" && compressionType != "" {
+	if compressionType != "zstd" {
 		t.Errorf("expected zstd compression type, got %s", compressionType)
 	}
 }

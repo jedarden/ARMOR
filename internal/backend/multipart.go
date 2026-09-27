@@ -651,12 +651,22 @@ func DecodeHMACFromBase64(encoded string) ([][]byte, error) {
 // partNumbers is the authoritative, already-sorted set of part numbers to
 // include; any number missing from partSHAs yields an error so a gap can never
 // silently produce a wrong digest.
+//
+// A zero-byte part (e.g. the empty final part aws-cli emits) contributes no
+// chunk to ComputeMultipartDigest's plaintext split — the plaintext simply
+// ends — so its digest is skipped here rather than folded in. Folding it in
+// would store a digest no reader could reproduce (the streaming accumulator
+// sees no blocks for an empty part), tripping the plaintext SHA-256
+// enforcement on every read of the object.
 func CombinePartPlaintextSHAs(partSHAs map[int]string, partNumbers []int) (string, error) {
 	h := sha256.New()
 	for _, n := range partNumbers {
 		hexDigest, ok := partSHAs[n]
 		if !ok {
 			return "", fmt.Errorf("missing plaintext SHA-256 for part %d", n)
+		}
+		if hexDigest == EmptyPlaintextSHA256Hex {
+			continue
 		}
 		digest, err := hex.DecodeString(hexDigest)
 		if err != nil || len(digest) != sha256.Size {

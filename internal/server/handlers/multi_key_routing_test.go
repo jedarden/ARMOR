@@ -69,7 +69,17 @@ func TestMultiKeyRoutingEncryptsAndDecryptsByPath(t *testing.T) {
 			t.Errorf("PUT %s key ID = %q, want %q", key, gotKeyID, want.keyID)
 		}
 
-		wrapped, err := base64.StdEncoding.DecodeString(meta["x-amz-meta-armor-wrapped-dek"])
+		// The PUT path writes the fingerprinted form v2:<fp16>:<base64>; the
+		// fingerprint must be the routed key's, so a reader can resolve the
+		// DEK without consulting the (informational) key-id metadata.
+		dekParts := strings.SplitN(meta["x-amz-meta-armor-wrapped-dek"], ":", 3)
+		if len(dekParts) != 3 || dekParts[0] != "v2" {
+			t.Fatalf("wrapped DEK for %s is not v2:<fp>:<base64>: %q", key, meta["x-amz-meta-armor-wrapped-dek"])
+		}
+		if wantFp := crypto.MEKFingerprint(want.mek); dekParts[1] != wantFp {
+			t.Errorf("wrapped DEK fingerprint for %s = %q, want routed key %q fingerprint %q", key, dekParts[1], want.keyID, wantFp)
+		}
+		wrapped, err := base64.StdEncoding.DecodeString(dekParts[2])
 		if err != nil {
 			t.Fatalf("decode wrapped DEK for %s: %v", key, err)
 		}
@@ -112,8 +122,18 @@ func TestMultiKeyRoutingRejectsUnknownMetadataKey(t *testing.T) {
 		t.Fatalf("PUT: status %d, body %s", w.Code, w.Body.String())
 	}
 
+	// The reader resolves the DEK by the fingerprint embedded in the wrapped
+	// DEK (v2:<fp16>:<base64>) with active/ring lookup; the key-id metadata is
+	// informational. An object whose fingerprint no configured key matches
+	// must fail closed rather than serve ciphertext as plaintext.
 	mb.mu.Lock()
-	mb.meta["bucket/object.txt"]["x-amz-meta-armor-key-id"] = "removed-key"
+	orig := mb.meta["bucket/object.txt"]["x-amz-meta-armor-wrapped-dek"]
+	parts := strings.SplitN(orig, ":", 3)
+	if len(parts) != 3 || parts[0] != "v2" {
+		mb.mu.Unlock()
+		t.Fatalf("PUT did not store a v2 fingerprinted wrapped DEK: %q", orig)
+	}
+	mb.meta["bucket/object.txt"]["x-amz-meta-armor-wrapped-dek"] = "v2:0000000000000000:" + parts[2]
 	mb.mu.Unlock()
 	cache.Clear()
 
@@ -121,10 +141,10 @@ func TestMultiKeyRoutingRejectsUnknownMetadataKey(t *testing.T) {
 	w = httptest.NewRecorder()
 	h.HandleRoot(w, req)
 	if w.Code != http.StatusInternalServerError {
-		t.Fatalf("GET with unknown key ID: status %d, body %s", w.Code, w.Body.String())
+		t.Fatalf("GET with unknown key fingerprint: status %d, body %s", w.Code, w.Body.String())
 	}
-	if !strings.Contains(w.Body.String(), "decryption key") {
-		t.Errorf("GET with unknown key ID error = %q, want decryption-key context", w.Body.String())
+	if !strings.Contains(w.Body.String(), "not found in active or ring keys") {
+		t.Errorf("GET with unknown key fingerprint error = %q, want fingerprint-not-found context", w.Body.String())
 	}
 }
 

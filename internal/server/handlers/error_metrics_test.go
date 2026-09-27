@@ -108,20 +108,26 @@ func TestErrorMetricsMultipleErrors(t *testing.T) {
 	h := New(cfg, nil, nil, nil, nil, nil)
 	h.WithMetrics(m)
 
-	// Simulate multiple different errors
+	// Simulate multiple different errors. Each case carries the request whose
+	// S3 operation names the asserted label: armor_errors_total's operation is
+	// classified from the failing request itself (docs/metrics.md), so a
+	// PutObject label can only ever be produced by a PUT, a
+	// CompleteMultipartUpload label by a POST ?uploadId, and so on.
 	testCases := []struct {
 		code      string
 		operation string
 		status    int
+		method    string
+		target    string
 	}{
-		{"AccessDenied", "PutObject", 403},
-		{"NoSuchKey", "GetObject", 404},
-		{"InvalidPartSize", "CompleteMultipartUpload", 400},
-		{"InternalError", "DeleteObject", 500},
+		{"AccessDenied", "PutObject", 403, "PUT", "/test-bucket/test-key"},
+		{"NoSuchKey", "GetObject", 404, "GET", "/test-bucket/test-key"},
+		{"InvalidPartSize", "CompleteMultipartUpload", 400, "POST", "/test-bucket/test-key?uploadId=u1"},
+		{"InternalError", "DeleteObject", 500, "DELETE", "/test-bucket/test-key"},
 	}
 
 	for _, tc := range testCases {
-		req := httptest.NewRequest("GET", "/test-bucket/test-key", nil)
+		req := httptest.NewRequest(tc.method, tc.target, nil)
 		w := httptest.NewRecorder()
 		h.writeError(w, req, tc.code, "test message", tc.status)
 
