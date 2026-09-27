@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"net/http"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -179,44 +178,6 @@ func TestAWSCLI_CopyObject(t *testing.T) {
 	got := filepath.Join(work, "dst.txt")
 	mustRun(t, "aws", env, append([]string{"s3", "cp", s3URL(dstKey), got}, endpointFlag(endpoint)...)...)
 	assertFilesEqual(t, want, got)
-}
-
-// TestRclone_CopyRoundTrip verifies `rclone copy` pushes a tree to ARMOR and
-// pulls it back unchanged, using an S3 remote configured against the
-// in-process server.
-func TestRclone_CopyRoundTrip(t *testing.T) {
-	requireRclone(t)
-	endpoint := startArmorServer(t)
-	conf, remote := rcloneConf(t, endpoint)
-	work := t.TempDir()
-
-	srcDir := filepath.Join(work, "src")
-	files := map[string][]byte{
-		"one.txt":     []byte("rclone one"),
-		"sub/two.dat": randomData(64 * 1024),
-	}
-	for name, data := range files {
-		writeFile(t, srcDir, name, data)
-	}
-
-	base := []string{"--config", conf}
-
-	// Push to ARMOR.
-	mustRun(t, "rclone", nil, append(append([]string{},
-		base...), "copy", srcDir, remote+":"+testBucket+"/rclone/")...)
-
-	// Pull into a fresh directory and compare.
-	dstDir := filepath.Join(work, "dst")
-	mustRun(t, "rclone", nil, append(append([]string{},
-		base...), "copy", remote+":"+testBucket+"/rclone/", dstDir)...)
-
-	for name := range files {
-		assertFilesEqual(t, filepath.Join(srcDir, name), filepath.Join(dstDir, name))
-	}
-	// Sanity: files actually landed on the server (dst is non-empty).
-	if ents, err := os.ReadDir(dstDir); err != nil || len(ents) == 0 {
-		t.Fatalf("rclone pulled no files into %s", dstDir)
-	}
 }
 
 // TestShareGET_BasicRoundTrip verifies the share endpoint GET operation

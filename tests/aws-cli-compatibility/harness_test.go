@@ -516,15 +516,15 @@ func startArmorServer(t *testing.T) string {
 		return endpoint
 	}
 	cfg := &config.Config{
-		B2Region:         testRegion,
-		MEK:              testMEK(),
-		BlockSize:        65536,
-		CacheMaxEntries:  1000,
-		CacheTTL:         300,
-		AuthAccessKey:    testAccessKey,
-		AuthSecretKey:    testSecretKey,
-		FormatWriteVersion: 2, // Explicitly use v2 format - mock backend doesn't support v3 multipart storage
-		PresignEnabled:   true, // Enable /share/ endpoint for presigned URL tests
+		B2Region:           testRegion,
+		MEK:                testMEK(),
+		BlockSize:          65536,
+		CacheMaxEntries:    1000,
+		CacheTTL:           300,
+		AuthAccessKey:      testAccessKey,
+		AuthSecretKey:      testSecretKey,
+		FormatWriteVersion: 2,    // Explicitly use v2 format - mock backend doesn't support v3 multipart storage
+		PresignEnabled:     true, // Enable /share/ endpoint for presigned URL tests
 		Credentials: map[string]*config.Credential{
 			testAccessKey: {
 				AccessKey: testAccessKey,
@@ -557,15 +557,15 @@ func startArmorServerWithPresigner(t *testing.T) (string, *presign.Signer) {
 		return endpoint, nil
 	}
 	cfg := &config.Config{
-		B2Region:         testRegion,
-		MEK:              testMEK(),
-		BlockSize:        65536,
-		CacheMaxEntries:  1000,
-		CacheTTL:         300,
-		AuthAccessKey:    testAccessKey,
-		AuthSecretKey:    testSecretKey,
-		FormatWriteVersion: 2, // Explicitly use v2 format - mock backend doesn't support v3 multipart storage
-		PresignEnabled:   true, // Enable /share/ endpoint for presigned URL tests
+		B2Region:           testRegion,
+		MEK:                testMEK(),
+		BlockSize:          65536,
+		CacheMaxEntries:    1000,
+		CacheTTL:           300,
+		AuthAccessKey:      testAccessKey,
+		AuthSecretKey:      testSecretKey,
+		FormatWriteVersion: 2,    // Explicitly use v2 format - mock backend doesn't support v3 multipart storage
+		PresignEnabled:     true, // Enable /share/ endpoint for presigned URL tests
 		Credentials: map[string]*config.Credential{
 			testAccessKey: {
 				AccessKey: testAccessKey,
@@ -751,11 +751,11 @@ func awsEnv(t *testing.T, endpoint string, multipart bool) []string {
 // rcloneConf writes an rclone.conf with an S3 remote named "armor" pointing at
 // the in-process server and returns (configPath, remoteName). When
 // ARMOR_COMPAT_ENDPOINT is set, uses credentials from the environment instead
-// of the test constants.
+// of the test constants. The rendering itself lives in writeRcloneConf
+// (rclone_compat_test.go), which the authentication leg also uses to render
+// corrupted-pair variants.
 func rcloneConf(t *testing.T, endpoint string) (string, string) {
 	t.Helper()
-	dir := t.TempDir()
-	confPath := filepath.Join(dir, "rclone.conf")
 
 	// Use credentials from environment when in endpoint mode
 	accessKey := testAccessKey
@@ -769,14 +769,7 @@ func rcloneConf(t *testing.T, endpoint string) (string, string) {
 		secretKey = sk
 	}
 
-	body := fmt.Sprintf("[armor]\ntype = s3\nprovider = Other\nendpoint = %s\n"+
-		"access_key_id = %s\nsecret_access_key = %s\nregion = %s\n"+
-		"force_path_style = true\nno_check_bucket = true\n",
-		endpoint, accessKey, secretKey, testRegion)
-	if err := os.WriteFile(confPath, []byte(body), 0o600); err != nil {
-		t.Fatalf("write rclone config: %v", err)
-	}
-	return confPath, "armor"
+	return writeRcloneConf(t, endpoint, accessKey, secretKey)
 }
 
 // run executes name with args under env, returning combined stdout/stderr. It

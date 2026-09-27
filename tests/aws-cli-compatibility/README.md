@@ -28,8 +28,9 @@ object is checked byte-for-byte (SHA-256) against the original.
 
 | File | What | When it runs |
 |------|------|--------------|
-| `awscli_compat_test.go` | `TestAWSCLI_*` / `TestRclone_*` — shells out to the **real** `aws` and `rclone` binaries | Only when the binaries are on `PATH` **and** not under `-short` |
-| `boto3_compat_test.go` + `testdata/boto3_leg.py` | botocore's real SigV4 signer, metadata, list, range, and delete requests | Full mode; endpoint mode makes missing boto3 fatal |
+| `awscli_compat_test.go` | `TestAWSCLI_*` — shells out to the **real** `aws` binary: put/get round-trip, list and delete, sync, multipart, server-side copy | Only when the binary is on `PATH` **and** not under `-short` |
+| `rclone_compat_test.go` | `TestRclone_*` — the **real** `rclone` binary: credential accept plus wrong-secret / unknown-key rejections (`SignatureDoesNotMatch` / `InvalidAccessKeyId`), copy round-trip, single-PUT write and read, listing with sizes and prefix scoping, byte-range reads via `cat --head/--offset/--count`, overwrite and delete, and a low-cutoff multipart upload with a part-boundary range read (the multipart download passes `--ignore-checksum` and asserts bytes directly: ARMOR's completed-multipart ETag is a bare-hex ciphertext digest, which rclone would otherwise misread as a content MD5 — real S3 returns the `md5(md5s)-N` composite there) | Only when `rclone` is on `PATH` **and** not under `-short`; endpoint mode makes a missing binary fatal |
+| `boto3_compat_test.go` + `testdata/boto3_leg.py` | botocore's real SigV4 signer: single-PUT with metadata, full and bounded range reads, HEAD, listing, overwrite, delete with `NoSuchKey`, explicit multipart (`create_multipart_upload` / `upload_part` / `list_parts` / `complete_multipart_upload`, short final part, part-boundary range read) and the abort path | Full mode; endpoint mode makes missing boto3 fatal |
 | `duckdb_compat_test.go` + `testdata/duckdb-httpfs.sql` | DuckDB/httpfs footer and column range reads over an encrypted Parquet object | Full mode; endpoint mode makes missing DuckDB fatal |
 | `litestream_compat_test.go` + `testdata/litestream.yml` | `litestream replicate` followed by `litestream restore` and SQLite content verification | Full mode; endpoint mode makes missing Litestream fatal |
 | `barman_compat_test.go` + `testdata/barman-cloud.env` | `barman-cloud-backup` with 5MB tar chunks, then `barman-cloud-restore` into a fresh PostgreSQL cluster | Full mode; endpoint mode makes missing Barman/PostgreSQL tools fatal |
@@ -42,9 +43,10 @@ so if they pass, the CLI tests will pass once the CLIs are installed.
 
 ## Skipping cleanly (does not break CI)
 
-Neither `aws` nor `rclone` is installed in the current dev/CI image. The
-`TestAWSCLI_*` / `TestRclone_*` tests detect this and skip with a clear reason
-rather than fail:
+A bare development machine typically has neither `aws` nor `rclone` on `PATH`
+(the armor-build compatibility gate installs pinned versions of every client
+before running the suite — see below). The `TestAWSCLI_*` / `TestRclone_*`
+tests detect a missing binary and skip with a clear reason rather than fail:
 
 ```
 --- SKIP: TestAWSCLI_PutGetRoundTrip (0.00s)
@@ -96,10 +98,18 @@ excluded to keep `go test ./...` green. Run them explicitly on demand:
 go test -tags awscli_integration ./tests/aws-cli-compatibility/
 ```
 
-Adding `aws-cli` and `rclone` to the CI image so the `TestAWSCLI_*` /
-`TestRclone_*` tests run there too is a **separate infra decision** and is not
-done by this suite — see `Dockerfile`. The `TestVerify_*` smoke tests already
-run in CI today.
+## The armor-build compatibility gate
+
+CI exercises every matrix leg against the freshly built image: the
+`compat-suite-test` step of `armor-build`
+(`declarative-config/k8s/iad-ci/argo-workflows/armor-workflowtemplate.yml`)
+installs pinned aws CLI, rclone, litestream, DuckDB, barman and boto3
+versions, starts the new image with an ephemeral filesystem backend on the
+production `serve` path, exports the endpoint-mode variables, and runs this
+whole package plus `tests/test_s3_basic_operations.py`. In endpoint mode a
+missing client is fatal rather than a skip, so a leg can never silently drop
+out of the gate. The `TestVerify_*` smoke tests additionally run on every
+plain `go test` via CI's `-short` gate.
 
 ## Files
 
