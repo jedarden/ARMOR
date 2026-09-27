@@ -19,7 +19,7 @@ Backups stored through ARMOR are continuously proven restorable by a dedicated *
    - **direct-to-ciphertext** (the `armor decrypt` logic against raw B2 objects with the escrowed MEK, honoring the ADR-003 multipart layout), proving recoverability with no ARMOR server in the loop — the actual DR scenario.
    Divergence between the paths is itself a first-class failure signal (it localizes the fault to ARMOR's serving path vs. the stored data).
 3. **Application-level assertions per artifact class,** beyond SHA-256 comparison: SQLite gets `PRAGMA integrity_check` plus row-count/recency probes; tar/gzip gets listing + sampled extraction; Parquet gets footer parse + a DuckDB row-count query through the range-read path (regression-testing range translation on real data); everything else gets the generic checksum path.
-4. **Deployment form:** a long-running Deployment with an internal scheduling loop (per the workspace no-CronJobs convention), deployed via declarative-config, one instance covering all ARMOR buckets. *(The "one instance" half was amended on 2026-09-25 — see the [Addendum: Per-Cluster Deployment Form](#addendum-per-cluster-deployment-form-2026-09-25) and the [Fleet topology](#fleet-topology-scope-discovery-secrets-metrics-alerting-2026-09-25) sections below.)*
+4. **Deployment form:** one long-running restore-verifier Deployment per bucket scope (bucket + MEK + B2 credential set), each with an internal scheduling loop (per the workspace no-CronJobs convention), deployed via declarative-config, carrying exactly one `ARMOR_BUCKET` and one `ARMOR_MEK` referenced from that scope's own secret store. A Deployment never straddles scopes; fleet coverage is the union of the per-scope Deployments. *(As originally accepted this read "a long-running Deployment … one instance covering all ARMOR buckets"; the "one instance" half was amended on 2026-09-25 — see the [Addendum: Per-Cluster Deployment Form](#addendum-per-cluster-deployment-form-2026-09-25) and the [Fleet topology](#fleet-topology-scope-discovery-secrets-metrics-alerting-2026-09-25) sections below.)*
 5. **Escalation, not retry:** every verification failure files a bead carrying object key, bucket, deployment, provenance writer version, and both-path evidence. Staleness (no verified restore within the freshness window) escalates identically. Escalation is one bead per distinct failure — the mechanism must be storm-proof (no per-tick re-filing, no unbounded retries; the 2026-07 NEEDLE retry-storms are the anti-pattern).
 6. **Metrics:** per-bucket gauges (`armor_last_verified_restore_timestamp`, `armor_verified_object_ratio`, `armor_restore_verification_failures_total`) with alerting on restore-age and failures via declarative-config.
 
@@ -51,10 +51,11 @@ restore-verifier Deployments keep escalation off until each gets the volume
 
 ## Addendum: Per-Cluster Deployment Form (2026-09-25)
 
-Decision 4 specifies "a long-running Deployment … one instance covering all
-ARMOR buckets". The long-running-Deployment half (internal scheduling loop, no
-CronJob, declarative-config) shipped exactly as written; the "one instance"
-half did not. What shipped instead is **one restore-verifier Deployment per
+Decision 4, as originally accepted, specified "a long-running Deployment …
+one instance covering all ARMOR buckets". The long-running-Deployment half
+(internal scheduling loop, no CronJob, declarative-config) shipped exactly as
+written; the "one instance" half did not — Decision 4 above now states the
+amended form. What shipped instead is **one restore-verifier Deployment per
 bucket scope, deployed per cluster** — as of this addendum, four:
 `iad-ci/armor`, `iad-kalshi/armor`, `ord-devimprint/devimprint`, and
 `rs-manager/armor` (`restore-verifier-acb`, which verifies apexalgo-iad's
