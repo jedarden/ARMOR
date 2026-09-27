@@ -1158,6 +1158,15 @@ The promoted instance is insurance made permanent — do not leave it that way.
    and the provenance/audit history do not survive the original provider's
    loss — they restart from the promoted instance's first write.
 
+The write-through-promotion and failback legs are pinned by the fault-injected
+`TestProviderOutageFailoverWritesAndFailback` test in
+`internal/server/srvtest/failover_failback_test.go`. It proves that a
+pre-outage object is readable after promotion, a new write is acknowledged by
+the promoted filesystem and replicated to the replacement, the pre-outage
+object reaches the replacement only after the documented re-upload backfill,
+and a fresh server on that replacement can read old and new data and accept a
+new write.
+
 ### Route B — Offline decryption from the replica
 
 When you need specific objects rather than a promoted server, decrypt
@@ -1341,6 +1350,28 @@ Once per year, perform a full restore drill in a non-production environment:
 6. **Run integrity audit** — Execute `/admin/audit` and verify no chain gaps
 
 Document the drill results and any issues encountered.
+
+### Exercising the ADR-006 failover and failback drill
+
+Run the deterministic, credential-free fault-injected workflow from the
+repository root. It covers the secondary outage window, manual promotion,
+read/write routing, retry consistency, replacement replication, failback, and
+secondary-canary alert state transitions:
+
+```bash
+go test ./internal/server/srvtest ./internal/canary \
+  -run 'Test(ProviderOutage|SecondaryOutage|OverwriteDuringSecondary|ReadsIgnoreTheSecondary|MonitorSecondaryCheck)' \
+  -count=1
+```
+
+The repository gate for this workflow is:
+
+```bash
+scripts/definition-of-done.sh --fast
+```
+
+Run the full `scripts/definition-of-done.sh` gate before release; it adds the
+short Go suite to the build, vet, and documentation/script checks.
 
 ### Testing Key Rotation Failure Recovery
 

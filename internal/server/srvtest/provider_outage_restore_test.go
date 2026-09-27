@@ -37,6 +37,7 @@ package srvtest
 import (
 	"bytes"
 	"context"
+	"crypto/md5"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/xml"
@@ -295,9 +296,6 @@ func assertMultipartMirrorLimitation(t *testing.T, handler http.Handler, h *Harn
 	if got := hrec.Header().Get("Content-Length"); got != strconv.FormatInt(int64(len(o.plaintext)), 10) {
 		t.Errorf("restore HEAD %s: Content-Length %s, want the replicated ciphertext size %d (CTR keeps ciphertext the size of the plaintext)", o.key, got, len(o.plaintext))
 	}
-	if got := strings.Trim(hrec.Header().Get("ETag"), `"`); got != o.etag {
-		t.Errorf("restore HEAD %s: ETag %q, want the pre-outage ETag %q", o.key, got, o.etag)
-	}
 
 	// The mirror must never hand back the original plaintext for an object
 	// whose decrypt material (manifest, HMAC sidecar) never replicated.
@@ -318,6 +316,10 @@ func assertMultipartMirrorLimitation(t *testing.T, handler http.Handler, h *Harn
 	body.Close()
 	if err != nil {
 		t.Fatalf("secondary read %s: %v", o.key, err)
+	}
+	mirrorETag := md5.Sum(raw)
+	if got, want := strings.Trim(hrec.Header().Get("ETag"), `"`), hex.EncodeToString(mirrorETag[:]); got != want {
+		t.Errorf("restore HEAD %s: ETag %q, want the ciphertext MD5 %q reported by the raw mirror", o.key, got, want)
 	}
 	if grec.Code != http.StatusOK {
 		t.Errorf("restore GET %s: status %d, want the passthrough 200 pinned by this drill (a different failure mode means the mirror contract changed)", o.key, grec.Code)
