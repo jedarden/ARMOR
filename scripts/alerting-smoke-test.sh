@@ -178,18 +178,20 @@ if [ "$ARMOR_EXPECT_VERIFIER" = "1" ]; then
     check_fresh_series 'armor_restore_verification_failures_total' 'restore-verifier'
 fi
 # Canary gauges from the ARMOR server (the ArmorMultipartCanaryUnhealthy input).
-# The *_last_check_time members of the canary family are deliberately NOT
-# asserted: the contract's string-valued gauge caveat (docs/observability-
-# contract.md, "Canary metric series") makes them RFC3339 strings on the wire,
-# so a Prometheus-compatible store drops them at ingest as non-numeric — they
-# are diagnostic strings by design, and their absence from the store is the
-# CORRECT state. The numeric counters prove collection instead. Skipped where
-# the canary is disabled by config (ARMOR_CANARY_DISABLED=true) and the canary
-# families are dropped at scrape — same reasoning: absence is correct there.
+# The former *_last_check_time / *_last_check_error string gauges no longer
+# exist on the wire: RFC3339/error-string samples are non-numeric and a
+# Prometheus-compatible store drops them at ingest, so they were converted to
+# numeric unix-seconds *_last_check_timestamp gauges (the error text stays on
+# /armor/canary and the status surfaces). Asserting the timestamp gauge here
+# proves the converted series actually lands in the store — the check the old
+# string gauges could never pass. Skipped where the canary is disabled by
+# config (ARMOR_CANARY_DISABLED=true) and the canary families are dropped at
+# scrape — same reasoning: absence is correct there.
 if [ "$ARMOR_EXPECT_CANARY" = "1" ]; then
     check_fresh_series 'armor_multipart_canary_healthy'         'armor canary'
     check_fresh_series 'armor_canary_checks_total'              'armor canary'
     check_fresh_series 'armor_multipart_canary_checks_total'    'armor canary'
+    check_fresh_series 'armor_multipart_canary_last_check_timestamp' 'armor canary'
 fi
 
 # Cardinality guard: this job sits on a size-capped store (20Gi on iad-ci,

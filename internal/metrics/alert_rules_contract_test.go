@@ -271,6 +271,48 @@ func TestAlertRulesReferenceExportedSeries(t *testing.T) {
 	}
 }
 
+// TestAlertRulesReferenceStoredSeries closes the gap the declaration-level
+// check above cannot see: a series can sit in canaryFamily or
+// restoreVerifierFamily yet never be emitted — the *_last_check_time and
+// *_last_check_error gauges were declared via writeMetric and silently
+// skipped at render time, so no store ever held a sample and the alert
+// perimeter kept a blind spot only the live fleet exposed. Every armor_*
+// series a shipped rule consumes must carry a TYPE line in a live
+// PrometheusFormat dump — the exposition a scrape actually delivers, and the
+// only form VictoriaMetrics will store. Histogram-suffixed references
+// (`_sum`, `_count`, `_bucket`, `_last`) name samples of a family, not
+// families: normalize them to the base name before consulting the TYPE map
+// if a future rule ever aggregates a histogram.
+func TestAlertRulesReferenceStoredSeries(t *testing.T) {
+	docs := loadMonitoringDocs(t)
+	stored := typeLines(t, NewMetrics().PrometheusFormat())
+
+	var refs []string
+	for _, d := range docs {
+		if d.Kind != "PrometheusRule" {
+			continue
+		}
+		for _, g := range d.Spec.Groups {
+			for _, r := range g.Rules {
+				refs = append(refs, seriesRefRe.FindAllString(r.Expr, -1)...)
+			}
+		}
+	}
+	if len(refs) == 0 {
+		t.Fatal("no armor_* series referenced by any shipped alert")
+	}
+	seen := make(map[string]bool, len(refs))
+	for _, ref := range refs {
+		if seen[ref] {
+			continue
+		}
+		seen[ref] = true
+		if _, ok := stored[ref]; !ok {
+			t.Errorf("shipped rule references %s, which the exposition never emits (no TYPE line) — no store will ever hold it", ref)
+		}
+	}
+}
+
 // TestMultipartCanaryAlertContract pins ADR-002's alert in full: it keys on
 // the multipart health gauge (never the small-object canary's status, which
 // has no gauge), holds for 10m, and files as critical under the armor-canary

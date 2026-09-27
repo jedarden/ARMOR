@@ -791,7 +791,8 @@ func (m *Metrics) PrometheusFormat() string {
 		// useful to the JSON status endpoints, but rendering their JSON-quoted
 		// contents as gauge samples makes Prometheus reject the entire scrape
 		// (VictoriaMetrics merely drops those samples). Keep diagnostics on the
-		// status surfaces and leave them out of the numeric exposition format.
+		// status surfaces and leave them out of the numeric exposition format;
+		// time-valued diagnostics take the writeTimestampGauge path instead.
 		if _, ok := value.(*expvar.String); ok {
 			return
 		}
@@ -800,6 +801,27 @@ func (m *Metrics) PrometheusFormat() string {
 		switch v := value.(type) {
 		case *expvar.Int:
 			fmt.Fprintf(&sb, "armor_%s %s\n", name, v.String())
+		}
+	}
+
+	// writeTimestampGauge exports an RFC3339 expvar.String diagnostic as a
+	// numeric unix-seconds gauge — the storable form of a *_last_check time.
+	// String samples are not storable (a Prometheus-compatible store drops
+	// non-numeric samples at ingest), so the RFC3339 text stays on the JSON
+	// status surfaces and the store gets the unix-seconds form, matching the
+	// armor_last_verified_restore_timestamp convention. The family header is
+	// always declared so the series stays discoverable; the sample appears
+	// once a setter has recorded a parseable timestamp, because a process
+	// that never ran the check has no last check and a fake epoch-0 sample
+	// would read as "checked in 1970" in dashboards. The parse is an exact
+	// round-trip only because the setters store t.UTC().Format(time.RFC3339)
+	// — a setter switched to t.String() would silently suppress the sample
+	// forever, so keep the two in lockstep.
+	writeTimestampGauge := func(name, help string, v *expvar.String) {
+		fmt.Fprintf(&sb, "# HELP armor_%s %s\n", name, help)
+		fmt.Fprintf(&sb, "# TYPE armor_%s gauge\n", name)
+		if t, err := time.Parse(time.RFC3339, v.Value()); err == nil {
+			fmt.Fprintf(&sb, "armor_%s %d\n", name, t.Unix())
 		}
 	}
 
@@ -909,24 +931,24 @@ func (m *Metrics) PrometheusFormat() string {
 		})
 	}
 
-	// Canary metrics
+	// Canary metrics. The last-check RFC3339 diagnostics are exported in their
+	// numeric *_last_check_timestamp form; the error strings have no numeric
+	// exposition form at all — the *_check_failures_total counters carry the
+	// alerting signal and /armor/canary carries the text.
 	writeMetric("canary_checks_total", "Total number of canary checks", "counter", m.CanaryChecksTotal)
 	writeMetric("canary_check_failures_total", "Total number of canary check failures", "counter", m.CanaryCheckFailures)
-	writeMetric("canary_last_check_time", "Time of last canary check", "gauge", m.CanaryLastCheckTime)
-	writeMetric("canary_last_check_error", "Error from last failed canary check", "gauge", m.CanaryLastCheckError)
+	writeTimestampGauge("canary_last_check_timestamp", "Unix seconds of the last small-object canary check", m.CanaryLastCheckTime)
 
 	// Multipart canary metrics
 	writeMetric("multipart_canary_checks_total", "Total number of multipart canary checks", "counter", m.MultipartCanaryChecksTotal)
 	writeMetric("multipart_canary_check_failures_total", "Total number of multipart canary check failures", "counter", m.MultipartCanaryCheckFailures)
-	writeMetric("multipart_canary_last_check_time", "Time of last multipart canary check", "gauge", m.MultipartCanaryLastCheckTime)
-	writeMetric("multipart_canary_last_check_error", "Error from last failed multipart canary check", "gauge", m.MultipartCanaryLastCheckError)
+	writeTimestampGauge("multipart_canary_last_check_timestamp", "Unix seconds of the last multipart canary check", m.MultipartCanaryLastCheckTime)
 	writeMetric("multipart_canary_healthy", "Multipart canary health status (1=healthy, 0=unhealthy)", "gauge", m.MultipartCanaryHealthy)
 
 	// Secondary backend canary metrics (ADR-006)
 	writeMetric("secondary_canary_checks_total", "Total number of secondary backend canary checks", "counter", m.SecondaryCanaryChecksTotal)
 	writeMetric("secondary_canary_check_failures_total", "Total number of secondary backend canary check failures", "counter", m.SecondaryCanaryCheckFailures)
-	writeMetric("secondary_canary_last_check_time", "Time of last secondary backend canary check", "gauge", m.SecondaryCanaryLastCheckTime)
-	writeMetric("secondary_canary_last_check_error", "Error from last failed secondary backend canary check", "gauge", m.SecondaryCanaryLastCheckError)
+	writeTimestampGauge("secondary_canary_last_check_timestamp", "Unix seconds of the last secondary backend canary check", m.SecondaryCanaryLastCheckTime)
 	writeMetric("secondary_canary_healthy", "Secondary backend canary health status (1=healthy, 0=unhealthy)", "gauge", m.SecondaryCanaryHealthy)
 
 	// Multipart metrics
@@ -937,7 +959,7 @@ func (m *Metrics) PrometheusFormat() string {
 	writeMetric("key_rotations_total", "Total number of key rotations", "counter", m.KeyRotationsTotal)
 	writeMetric("key_rotation_objects_total", "Total number of objects processed during key rotations", "counter", m.KeyRotationObjects)
 	writeMetric("key_rotation_errors_total", "Total number of key rotation errors", "counter", m.KeyRotationErrors)
-	writeMetric("key_rotation_start_time", "Start time of last key rotation", "gauge", m.KeyRotationStartTime)
+	writeTimestampGauge("key_rotation_start_timestamp", "Unix seconds of the last key rotation start", m.KeyRotationStartTime)
 
 	// Provenance metrics
 	writeMetric("provenance_entries_total", "Total number of provenance entries recorded", "counter", m.ProvenanceEntriesTotal)
@@ -1151,6 +1173,67 @@ func (m *Metrics) Handler() http.HandlerFunc {
 		w.Header().Set("Content-Type", "text/plain; version=0.0.4")
 		w.Write([]byte(m.PrometheusFormat()))
 	}
+}
+
+// VerifierMetricsHandler returns an HTTP handler exposing only the metric
+// families the restore-verifier actually produces — its checks/failures/
+// objects/latency counters, the per-bucket restorability trio, the DR-drill
+// gauges, and process uptime. The verifier links this package for the
+// restore-recording methods, so the unfiltered exposition re-exports the
+// whole armor_* family from :9002 with every canary gauge pinned at its
+// before-first-check default — a verifier never runs a canary — which is what
+// forced the armor scrape job to drop canary families for the verifier target
+// and left the alert perimeter one scrape-config mistake away from paging on
+// series that can never be true there.
+func (m *Metrics) VerifierMetricsHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/plain; version=0.0.4")
+		w.Write([]byte(verifierExposition(m.PrometheusFormat())))
+	}
+}
+
+// verifierOwnedFamilies reports whether a metric family belongs to the
+// restore-verifier's own surface. Everything else in the shared exposition —
+// the request, backend, encryption, replication, error, and canary families —
+// is the ARMOR server's, because only the server serves client traffic and
+// runs the canaries.
+func verifierOwnedFamilies(name string) bool {
+	switch {
+	case name == "armor_uptime_seconds":
+		return true
+	case strings.HasPrefix(name, "armor_restore_verifier_"):
+		return true
+	case strings.HasPrefix(name, "armor_drill_"):
+		return true
+	case name == "armor_last_verified_restore_timestamp",
+		name == "armor_verified_object_ratio",
+		name == "armor_restore_verification_failures_total":
+		return true
+	}
+	return false
+}
+
+// verifierExposition filters a full PrometheusFormat dump down to the
+// verifier-owned families. The exposition interleaves each family's HELP/TYPE
+// header with its samples, so tracking the current header's family name and
+// keeping only owned families' lines yields a valid, self-describing
+// exposition.
+func verifierExposition(dump string) string {
+	var sb strings.Builder
+	family := ""
+	for _, line := range strings.Split(dump, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "# HELP ") || strings.HasPrefix(trimmed, "# TYPE ") {
+			if fields := strings.Fields(trimmed); len(fields) >= 3 {
+				family = fields[2]
+			}
+		}
+		if trimmed == "" || verifierOwnedFamilies(family) {
+			sb.WriteString(line)
+			sb.WriteString("\n")
+		}
+	}
+	return sb.String()
 }
 
 // RecordRestoreVerifierCheck records a restore verifier check completion.

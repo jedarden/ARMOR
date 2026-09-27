@@ -157,7 +157,10 @@ This means:
 - `POST /trigger?mode=dr-drill`: Trigger direct-only DR drill
 - `GET /healthz`: Liveness check
 - `GET /readyz`: Readiness check
-- `GET /metrics`: Prometheus metrics
+- `GET /metrics`: Prometheus metrics — verifier-scoped: only the families this
+  process produces (restore-verifier counters, the restorability trio, the
+  drill family, uptime). The server-owned families (requests, backend,
+  canaries) are not re-exported from here.
 
 ## Scheduled DR drills (production cadence)
 

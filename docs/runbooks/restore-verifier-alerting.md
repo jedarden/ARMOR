@@ -160,22 +160,37 @@ config edit into a silently stale one.
 
 ## 4. iad-ci-specific facts that have already cost time
 
-- **The verifier exposes the canary family but never runs a canary.** It
-  links `internal/metrics` for its three restore gauges, so the whole
-  `armor_*` family appears on `:9002` — including
+- **The verifier never runs a canary, and since the 2026-09-27 exposition
+  filter its `/metrics` no longer pretends otherwise.** It links
+  `internal/metrics` for its restore gauges, and the unfiltered exposition
+  re-exported the whole `armor_*` family on `:9002` — including
   `armor_multipart_canary_healthy` at its before-first-check default `0`,
-  permanently. The armor scrape job therefore **drops the canary families for
-  the verifier target at scrape time** (`victoriametrics-application.yml`);
-  without that drop, `ArmorMultipartCanaryUnhealthy` fires forever against
-  the verifier's series and pages continuously (this happened on activation
-  day, 2026-09-25). If a future verifier ever runs a canary of its own,
-  remove that drop in the same change.
-- **String-valued gauges are never stored.** `*_last_check_time` and
-  `*_last_check_error` are RFC3339/error strings on the wire (contract
-  caveat); a Prometheus-compatible store drops non-numeric samples at ingest,
-  so these series are *expected* to be absent from vmetrics. The smoke test
-  asserts the numeric canary counters instead. Nothing alert-side may treat
-  the string gauges as samples.
+  permanently — which made `ArmorMultipartCanaryUnhealthy` page continuously
+  on activation day, 2026-09-25. The fix has two halves: the binary now
+  serves a verifier-scoped exposition (`Metrics.VerifierMetricsHandler()`,
+  `cmd/restore-verifier/main.go` — only the restore-verifier counters, the
+  restorability trio, the drill family, and uptime), and the armor scrape
+  job's canary-family drop for the verifier target
+  (`victoriametrics-application.yml`) is the stopgap covering targets still
+  running a pre-filter image. **Remove that scrape-time drop in the same
+  image-roll wave that deploys the filtered verifier** — after the roll it is
+  redundant, and leaving it forever hides a regression in the filter.
+  Verifying which state a target is in: `curl :9002/metrics` and grep for
+  `armor_multipart_canary_healthy` (absent = filtered binary).
+- **The exposition is numeric-only; the string gauges are gone, not
+  dropped-at-ingest.** A Prometheus-compatible store drops non-numeric
+  samples at ingest (strict Prometheus rejects the whole scrape), so nothing
+  string-valued may ship as a sample. The former `*_last_check_time` /
+  `*_last_check_error` / `key_rotation_start_time` gauges were declared in
+  the exposition but silently skipped at render time — dead declarations, so
+  no store ever held them and triage kept rediscovering the absence. Since
+  2026-09-27 the last-check times ship as numeric unix-seconds
+  `*_last_check_timestamp` gauges (same convention as
+  `armor_last_verified_restore_timestamp`; the header is declared from
+  startup and the sample appears after the first check), the error strings
+  are not exported at all (`/armor/canary` and the status surfaces carry
+  them), and a contract test fails any rule that references a series without
+  a TYPE line in the live exposition.
 - **The `.disabled` suffix stays everywhere.** No ARMOR cluster runs the
   Prometheus Operator CRDs the manifests' ServiceMonitor/PrometheusRule
   objects need — iad-ci and the three dedicated-store replicas evaluate via
@@ -242,9 +257,11 @@ NOT a copy-paste of iad-ci — it follows what the cluster already runs:
   companion Services).
 
 Whatever the form, the invariants are the same: the rule group is byte-identical
-to §3's fixture; the verifier target keeps exactly the restore trio (never-run
-canary families are dropped at scrape); string-valued gauges are expected to be
-absent from any store; the `.disabled` manifests stay `.disabled`; and the new
+to §3's fixture; the verifier target serves only verifier-owned families (the
+exposition is filtered at source on current images; the scrape-time canary drop
+is the stopgap for pre-filter targets — see §4); every exported sample is
+numeric — unix-seconds `*_last_check_timestamp` gauges, never RFC3339 strings,
+and no error-string series at all; the `.disabled` manifests stay `.disabled`; and the new
 `monitoring/` manifests sync through the cluster's normal ArgoCD path — no
 `kubectl apply` anywhere. A new ARMOR deployment on an already-activated
 cluster needs only its scrape surface added (a static target in the armor job,

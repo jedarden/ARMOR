@@ -371,7 +371,14 @@ func main() {
 	mux.HandleFunc("/trigger", verifier.TriggerHandler(metricsCollector))
 	mux.HandleFunc("/healthz", verifier.HealthHandler(metricsCollector))
 	mux.HandleFunc("/readyz", verifier.ReadyHandler(metricsCollector))
-	mux.HandleFunc("/metrics", metricsCollector.Handler())
+	// The verifier-scoped exposition: only the families this process actually
+	// produces (restore-verifier counters and gauges, DR-drill, uptime). The
+	// unfiltered exposition re-exported the server's canary family here pinned
+	// at its never-run defaults, which the armor scrape job then had to drop
+	// at scrape time to keep ArmorMultipartCanaryUnhealthy from firing forever.
+	// That scrape-time drop covers pre-filter targets only — remove it in the
+	// same image-roll wave that deploys this handler (runbook §4).
+	mux.HandleFunc("/metrics", metricsCollector.VerifierMetricsHandler())
 
 	// Start HTTP server
 	server := &http.Server{

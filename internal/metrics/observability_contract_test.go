@@ -59,11 +59,14 @@ func labeledValue(t *testing.T, dump, series, labelMatch string) (string, bool) 
 var canaryFamily = map[string]string{
 	"armor_canary_checks_total":                      "counter",
 	"armor_canary_check_failures_total":              "counter",
+	"armor_canary_last_check_timestamp":              "gauge",
 	"armor_multipart_canary_checks_total":            "counter",
 	"armor_multipart_canary_check_failures_total":    "counter",
+	"armor_multipart_canary_last_check_timestamp":    "gauge",
 	"armor_multipart_canary_healthy":                 "gauge",
 	"armor_secondary_canary_checks_total":            "counter",
 	"armor_secondary_canary_check_failures_total":    "counter",
+	"armor_secondary_canary_last_check_timestamp":    "gauge",
 	"armor_secondary_canary_healthy":                 "gauge",
 	"armor_multipart_canary_upload_duration_seconds": "histogram",
 }
@@ -113,16 +116,42 @@ func TestCanaryMetricFamilyContract(t *testing.T) {
 		t.Error("armor_canary_healthy must not be exported; small-object canary health is carried by /armor/canary and /readyz")
 	}
 
-	// String-valued diagnostics stay available through the status endpoints,
-	// but must not appear as invalid numeric Prometheus samples. One malformed
-	// sample makes Prometheus reject the whole target scrape.
+	// The last-check times are exported as numeric unix-seconds gauges — the
+	// storable form. (armor_key_rotation_start_timestamp is the same
+	// conversion for the key-rotation diagnostic and is asserted here because
+	// this is the test that drives a parseable timestamp into each setter.)
+	for _, want := range []string{
+		"armor_canary_last_check_timestamp 1700000000",
+		"armor_multipart_canary_last_check_timestamp 1700000000",
+		"armor_secondary_canary_last_check_timestamp 1700000000",
+	} {
+		if !strings.Contains(dump, want+"\n") {
+			t.Errorf("canary exposition missing numeric timestamp series %q", want)
+		}
+	}
+	m.SetKeyRotationStartTime(time.Unix(1700000000, 0))
+	if v, ok := gaugeValue(t, m.PrometheusFormat(), "armor_key_rotation_start_timestamp"); !ok || v != "1700000000" {
+		t.Errorf("armor_key_rotation_start_timestamp = (%q, %v), want (\"1700000000\", true)", v, ok)
+	}
+
+	// The RFC3339/error-string forms are not samples: the *_last_check_time
+	// and *_last_check_error names were declared in the exposition once and
+	// silently skipped at render time, so no store ever held them — these
+	// assertions keep the string forms from coming back as (dropped)
+	// string-valued gauges. Error text stays on the status surfaces; the
+	// *_check_failures_total counters carry the alerting signal. The match is
+	// anchored to the series boundary: a bare Contains would false-positive on
+	// the *_timestamp forms, which legitimately extend these names.
 	for _, name := range []string{
 		"armor_canary_last_check_time", "armor_canary_last_check_error",
 		"armor_multipart_canary_last_check_time", "armor_multipart_canary_last_check_error",
 		"armor_secondary_canary_last_check_time", "armor_secondary_canary_last_check_error",
 		"armor_key_rotation_start_time",
 	} {
-		if strings.Contains(dump, name) {
+		if _, ok := got[name]; ok {
+			t.Errorf("string diagnostic %s must not be declared as an exposition family", name)
+		}
+		if re := regexp.MustCompile(`(?m)^` + regexp.QuoteMeta(name) + `([ {]|$)`); re.MatchString(dump) {
 			t.Errorf("string diagnostic %s must not be emitted in Prometheus exposition", name)
 		}
 	}

@@ -654,11 +654,13 @@ scrapes `/metrics` in the cluster (see the Phase 6 caveat in `docs/plan/plan.md`
 
 ## Canary Metrics
 
-The string diagnostics remain in `/armor/canary` and verifier status
-responses, but are intentionally omitted from Prometheus exposition. A
-Prometheus parser rejects a whole target scrape when a quoted string is emitted
-under a numeric `gauge` family; alert rules consume only numeric counters and
-health gauges.
+Every canary sample is numeric. The last-check times ship as unix-seconds
+`*_last_check_timestamp` gauges (below); the error-string diagnostics remain
+in `/armor/canary` and verifier status responses only — a Prometheus parser
+rejects a whole target scrape when a quoted string is emitted under a numeric
+`gauge` family, and a Prometheus-compatible store drops non-numeric samples
+at ingest, so text has no exposition form. Alert rules consume only numeric
+counters and health gauges.
 
 ### `armor_canary_checks_total`
 
@@ -670,6 +672,24 @@ health gauges.
 
 **Type:** Counter  
 **Description:** Total number of canary check failures  
+**Labels:** None
+
+### `armor_canary_last_check_timestamp`
+
+**Type:** Gauge  
+**Description:** Unix seconds of the last small-object canary check attempt; declared from startup, no sample until the first check  
+**Labels:** None
+
+### `armor_multipart_canary_last_check_timestamp`
+
+**Type:** Gauge  
+**Description:** Unix seconds of the last multipart canary check attempt; same declared-from-startup rule  
+**Labels:** None
+
+### `armor_secondary_canary_last_check_timestamp`
+
+**Type:** Gauge  
+**Description:** Unix seconds of the last secondary-backend canary check attempt (ADR-006); same declared-from-startup rule  
 **Labels:** None
 
 ### Small-object canary health
