@@ -685,9 +685,14 @@ func (fs *FSBackend) CompleteMultipartUpload(ctx context.Context, bucket, key, u
 
 	metaMap, _ := uploadMeta["metadata"].(map[string]interface{})
 
-	// Concatenate parts in order
+	// Concatenate parts in order, hashing each stored part as it is copied so
+	// the final ETag can be the S3-standard composite (ComputeCompositeETag)
+	// instead of a bare digest of the whole ciphertext stream. The digest of
+	// every part counts — including a zero-length final part, whose MD5 is the
+	// empty-input MD5 and which real S3 likewise folds into the composite —
+	// and the suffix is the total part count.
 	totalSize := int64(0)
-	hash := md5.New()
+	partETags := make([]string, 0, len(parts))
 	for _, part := range parts {
 		partPath := fs.partPath(bucket, key, uploadID, part.PartNumber)
 		partFile, err := os.Open(partPath)
@@ -695,17 +700,22 @@ func (fs *FSBackend) CompleteMultipartUpload(ctx context.Context, bucket, key, u
 			return "", fmt.Errorf("failed to open part %d: %w", part.PartNumber, err)
 		}
 
-		written, err := io.Copy(io.MultiWriter(outFile, hash), partFile)
+		partHash := md5.New()
+		written, err := io.Copy(io.MultiWriter(outFile, partHash), partFile)
 		partFile.Close()
 		if err != nil {
 			return "", fmt.Errorf("failed to copy part %d: %w", part.PartNumber, err)
 		}
 
+		partETags = append(partETags, hex.EncodeToString(partHash.Sum(nil)))
 		totalSize += written
 	}
 
 	// Compute final ETag
-	etag := hex.EncodeToString(hash.Sum(nil))
+	etag, err := ComputeCompositeETag(partETags)
+	if err != nil {
+		return "", fmt.Errorf("failed to compute composite ETag: %w", err)
+	}
 
 	// Rename to final path
 	if err := os.Rename(finalPath, objPath); err != nil {

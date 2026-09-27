@@ -234,7 +234,7 @@ headers on the manifest object are authoritative):
 | `x-amz-meta-armor-block-size` | encryption block size |
 | `x-amz-meta-armor-plaintext-size` | whole-object plaintext size |
 | `x-amz-meta-armor-plaintext-sha256` | combined per-part digest — `ComputeMultipartDigest` over the decrypted plaintext split at `part-size` boundaries, **not** a plain SHA-256 (v2; the part-size header makes the form unambiguous). Pre-bf-1v2ehf objects carry the empty-string SHA placeholder, which verifiers treat as "no digest declared" |
-| `x-amz-meta-armor-etag` | the assembled ciphertext's ETag |
+| `x-amz-meta-armor-etag` | the S3-standard multipart composite — `md5(md5(part1)‖…‖md5(partN))-N` over the stored parts' digests (`backend.ComputeCompositeETag`). The `-N` suffix is the client-facing signal that the ETag is not a content MD5; the pre-armor-e8981148 bare digest of the concatenated ciphertext was read by rclone as a content MD5 and failed every download |
 | `x-amz-meta-armor-content-type` | original content type |
 | `x-amz-meta-armor-iv` | base64 IV (multipart objects have no header to carry it) |
 | `x-amz-meta-armor-wrapped-dek` | `v2:<fingerprint>:<base64>` (or legacy base64) |
