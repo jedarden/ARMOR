@@ -18,8 +18,11 @@ appears in this document and every flag named here exists in that binary's
 registry, every environment variable named here is read by the
 implementation, and the binaries themselves are built and exercised for the
 documented version, help, usage-error, startup-validation, HTTP-surface, and
-graceful-shutdown behaviors — so this page cannot silently drift from the
-code.
+graceful-shutdown behaviors. The secret-safety tests plant distinctive
+credential values (the verifier's B2 secret key, MEK, and MEK-ring entries;
+the console's SEAM token), drive the documented validation and failed-poll
+paths, and pin that the binaries never echo a credential value into their
+logs or served JSON — so this page cannot silently drift from the code.
 
 ## Shared behavior
 
