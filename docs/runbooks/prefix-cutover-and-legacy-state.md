@@ -276,9 +276,13 @@ evidence this bucket's data made it.
    byte-identical to its §3 count — untouched, per gate 3.
 6. **Provenance, if enabled.** The chain continues at the bucket root; its
    manifest delta walk follows the tenant prefix and still finds the
-   composed deltas (ADR-001 addendum). Tenants restricted to their own
-   prefix should not have provenance enabled at all — the same rule
-   onboarding §1 already applies.
+   composed deltas (ADR-001 addendum). The pre-cutover writer's head is
+   still discovered at the root but its history cannot be verified through
+   the composed walk — the audit reports it as a gap, which is the expected
+   mixed-era outcome, not corruption
+   (`TestPrefixCutoverMixedEraProvenanceNamespaceResolution`). Tenants
+   restricted to their own prefix should not have provenance enabled at
+   all — the same rule onboarding §1 already applies.
 7. **Retire the roots** (step 8), then re-run checks 1–4: same results,
    and the bucket-side listing now shows **nothing outside
    `<prefix>`** except the root `.armor/` trees that deliberately stay
