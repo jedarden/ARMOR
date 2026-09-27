@@ -1355,7 +1355,8 @@ Document the drill results and any issues encountered.
 
 Run the deterministic, credential-free fault-injected workflow from the
 repository root. It covers the secondary outage window, manual promotion,
-read/write routing, retry consistency, replacement replication, failback, and
+read/write routing (full-object and ranged reads through the promoted
+replica), retry consistency, replacement replication, failback, and
 secondary-canary alert state transitions:
 
 ```bash

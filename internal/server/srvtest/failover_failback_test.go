@@ -188,6 +188,13 @@ func TestProviderOutageFailoverWritesAndFailback(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("promoted PUT %s: status %d: %s", newKey, rec.Code, rec.Body.String())
 	}
+	// Partial reads must work through the promoted replica too: the
+	// client-Range translation (parseRangeHeader → backend GetRange) is
+	// distinct code from the full-object GET asserted above, and ranged
+	// fetches are how analytical clients page through data after failover.
+	rangeHeader := "bytes=1024-2047"
+	rec = signedRangeGet(t, promotedHandler, "/"+h.Bucket+"/"+newKey, rangeHeader, restoreAccessKey, restoreSecretKey)
+	assertRangedGet(t, "promoted "+newKey, rangeHeader, rec, newOnPromoted[1024:2048], 1024, 2047, int64(len(newOnPromoted)))
 	newStored := h.StoredKey(newKey)
 	pollFor(t, WaitTimeout, "promoted write to enter replacement queue", func() bool {
 		return promotedMetrics.EnqueuedTotal.Load() >= 1
@@ -250,4 +257,11 @@ func TestProviderOutageFailoverWritesAndFailback(t *testing.T) {
 	if _, err := replacement.Head(context.Background(), h.Bucket, h.StoredKey(finalKey)); err != nil {
 		t.Fatalf("replacement primary is missing the final post-failback write: %v", err)
 	}
+
+	// Ranged reads survive the failback: the replacement primary's Range
+	// translation is what range-heavy clients consume, and this range
+	// straddles a block boundary to fetch two blocks in one request.
+	rangeHeader = "bytes=65000-67000"
+	rec = signedRangeGet(t, finalCfgHandler, "/"+h.Bucket+"/"+newKey, rangeHeader, failbackAccessKey, failbackSecretKey)
+	assertRangedGet(t, "failed-back "+newKey, rangeHeader, rec, newOnPromoted[65000:67001], 65000, 67000, int64(len(newOnPromoted)))
 }

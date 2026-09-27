@@ -42,6 +42,7 @@ import (
 	"encoding/hex"
 	"encoding/xml"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -184,6 +185,68 @@ func restoreDo(t *testing.T, handler http.Handler, method, target string, body [
 	return rec
 }
 
+// signedRangeGet issues a ranged GET against a recovery or promoted
+// deployment. The Range header itself stays unsigned — SigV4 signs host and
+// x-amz-* only, exactly as real clients send it.
+func signedRangeGet(t *testing.T, handler http.Handler, target, rangeHeader, accessKey, secretKey string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodGet, target, nil)
+	req.Header.Set("Range", rangeHeader)
+	SignS3Request(req, nil, accessKey, secretKey, TestRegion)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	return rec
+}
+
+// assertRangedGet asserts one ranged GET returned 206 with exactly want[] and
+// the RFC 7233 Content-Range for [start, end] of total.
+func assertRangedGet(t *testing.T, label, rangeHeader string, rec *httptest.ResponseRecorder, want []byte, start, end, total int64) {
+	t.Helper()
+	if rec.Code != http.StatusPartialContent {
+		t.Fatalf("%s: ranged GET %q: status %d, want 206: %s", label, rangeHeader, rec.Code, rec.Body.String())
+	}
+	if !bytes.Equal(rec.Body.Bytes(), want) {
+		t.Errorf("%s: ranged GET %q: body %d bytes, want %d", label, rangeHeader, rec.Body.Len(), len(want))
+	}
+	if got, wantCR := rec.Header().Get("Content-Range"), fmt.Sprintf("bytes %d-%d/%d", start, end, total); got != wantCR {
+		t.Errorf("%s: ranged GET %q: Content-Range %q, want %q", label, rangeHeader, got, wantCR)
+	}
+}
+
+// assertSinglePutRangedReads proves a restored object serves S3 partial
+// reads. The client-Range path (parseRangeHeader → translated backend
+// GetRange) is distinct code from the full-object GET asserted in
+// assertSinglePutRestored, and ranged fetches are how range-heavy clients
+// (DuckDB httpfs, parquet readers) page through restored data, so the
+// drill's read validation covers a mid-object range and a suffix range
+// byte-for-byte through the promoted replica.
+func assertSinglePutRangedReads(t *testing.T, handler http.Handler, h *Harness, o outageObject) {
+	t.Helper()
+	total := int64(len(o.plaintext))
+	target := "/" + h.Bucket + "/" + o.key
+
+	mid := total / 2
+	start := mid - 512
+	if start < 0 {
+		start = 0
+	}
+	end := mid + 511
+	if end > total-1 {
+		end = total - 1
+	}
+	rangeHeader := fmt.Sprintf("bytes=%d-%d", start, end)
+	rec := signedRangeGet(t, handler, target, rangeHeader, restoreAccessKey, restoreSecretKey)
+	assertRangedGet(t, "restore "+o.key, rangeHeader, rec, o.plaintext[start:end+1], start, end, total)
+
+	suffix := total
+	if suffix > 100 {
+		suffix = 100
+	}
+	rangeHeader = fmt.Sprintf("bytes=-%d", suffix)
+	rec = signedRangeGet(t, handler, target, rangeHeader, restoreAccessKey, restoreSecretKey)
+	assertRangedGet(t, "restore "+o.key, rangeHeader, rec, o.plaintext[total-suffix:], total-suffix, total-1, total)
+}
+
 // TestProviderOutageRestoreFromSecondary is the Route A drill proper. For
 // both envelope generations: seed the corpus, drain replication completely,
 // destroy the primary, then serve every object from a fresh deployment on
@@ -236,6 +299,7 @@ func TestProviderOutageRestoreFromSecondary(t *testing.T) {
 					continue
 				}
 				assertSinglePutRestored(t, handler, h, o)
+				assertSinglePutRangedReads(t, handler, h, o)
 			}
 			assertRestoreListing(t, handler, h, objs)
 
