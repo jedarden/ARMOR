@@ -113,7 +113,7 @@ func TestAuthIntegration(t *testing.T) {
 		}
 
 		// Test with second credential
-		req2 := createSignedRequestForAuthTest(t, "GET", "/test-bucket/key2", "", "LIMITEDKEY", "LIMITEDSECRET123456789012345678901", nil)
+		req2 := createSignedRequestForAuthTest(t, "GET", "/test-bucket/key2", "", "LIMITEDKEY", "REMOVED-NOT-A-SECRET-VALUE", nil)
 		cred2, err := auth.VerifyRequest(req2, nil)
 		if err != nil {
 			t.Fatalf("Second credential failed: %v", err)
@@ -124,7 +124,7 @@ func TestAuthIntegration(t *testing.T) {
 	})
 
 	t.Run("ACL enforcement allows valid access", func(t *testing.T) {
-		req := createSignedRequestForAuthTest(t, "GET", "/test-bucket/limited/test-key", "", "LIMITEDKEY", "LIMITEDSECRET123456789012345678901", nil)
+		req := createSignedRequestForAuthTest(t, "GET", "/test-bucket/limited/test-key", "", "LIMITEDKEY", "REMOVED-NOT-A-SECRET-VALUE", nil)
 		cred, err := auth.VerifyRequest(req, nil)
 		if err != nil {
 			t.Fatalf("Authentication failed: %v", err)
@@ -137,7 +137,7 @@ func TestAuthIntegration(t *testing.T) {
 	})
 
 	t.Run("ACL enforcement denies invalid access", func(t *testing.T) {
-		req := createSignedRequestForAuthTest(t, "GET", "/test-bucket/other-key", "", "LIMITEDKEY", "LIMITEDSECRET123456789012345678901", nil)
+		req := createSignedRequestForAuthTest(t, "GET", "/test-bucket/other-key", "", "LIMITEDKEY", "REMOVED-NOT-A-SECRET-VALUE", nil)
 		cred, err := auth.VerifyRequest(req, nil)
 		if err != nil {
 			t.Fatalf("Authentication failed: %v", err)
@@ -162,7 +162,7 @@ func TestAuthIntegration(t *testing.T) {
 		}
 		wildcardAuth := NewSigV4AuthWithCredentials(wildcardCredentials, "us-east-005")
 
-		req := createSignedRequestForAuthTest(t, "GET", "/any-bucket/any-key", "", "STARKEY", "STARSECRET1234567890123456789012345", nil)
+		req := createSignedRequestForAuthTest(t, "GET", "/any-bucket/any-key", "", "STARKEY", "REMOVED-NOT-A-SECRET-VALUE", nil)
 		cred, err := wildcardAuth.VerifyRequest(req, nil)
 		if err != nil {
 			t.Fatalf("Authentication failed: %v", err)
@@ -194,7 +194,7 @@ func TestAuthIntegration(t *testing.T) {
 
 		// Calculate signature
 		auth := NewSigV4AuthWithCredentials(credentials, "us-east-005")
-		signature := calculateQuerySignature(t, auth, "TESTSECRETKEY123456789012345678901234", amzDate, "us-east-005", req, []string{"host"})
+		signature := calculateQuerySignature(t, auth, "REMOVED-NOT-A-SECRET-VALUE", amzDate, "us-east-005", req, []string{"host"})
 		query.Set("X-Amz-Signature", signature)
 
 		// Recreate request with signature
@@ -229,7 +229,7 @@ func TestAuthIntegration(t *testing.T) {
 		req.Header.Set("Host", "test-bucket.s3.us-east-005.backblazeb2.com")
 
 		// Calculate a valid signature for the expired timestamp
-		signature := calculateQuerySignature(t, auth, "TESTSECRETKEY123456789012345678901234", amzDate, "us-east-005", req, []string{"host"})
+		signature := calculateQuerySignature(t, auth, "REMOVED-NOT-A-SECRET-VALUE", amzDate, "us-east-005", req, []string{"host"})
 		query.Set("X-Amz-Signature", signature)
 
 		// Recreate request with signature
@@ -258,7 +258,7 @@ func TestACLActionVerbEnforcement(t *testing.T) {
 	credentials := map[string]*config.Credential{
 		"BACKUPKEY": {
 			AccessKey: "BACKUPKEY",
-			SecretKey: "REMOVED-NOT-A-SECRET-VALUE",
+			SecretKey: "BACKUPSECRET1234567890123456789012",
 			ACLs: []acl.ACLEntry{{
 				Bucket:  "test-bucket",
 				Prefix:  "backups/",
@@ -342,7 +342,7 @@ func TestAuthenticationHeaders(t *testing.T) {
 	auth := NewSigV4AuthWithCredentials(credentials, "us-east-005")
 
 	t.Run("All signed headers are included in verification", func(t *testing.T) {
-		req := createSignedRequestForAuthTest(t, "GET", "/test-bucket/test-key", "test body", "TESTKEY", "TESTSECRET123456789012345678901234", nil)
+		req := createSignedRequestForAuthTest(t, "GET", "/test-bucket/test-key", "test body", "TESTKEY", "REMOVED-NOT-A-SECRET-VALUE", nil)
 
 		cred, err := auth.VerifyRequest(req, nil)
 		if err != nil {
@@ -355,7 +355,7 @@ func TestAuthenticationHeaders(t *testing.T) {
 	})
 
 	t.Run("Custom headers can be signed", func(t *testing.T) {
-		req := createSignedRequestForAuthTest(t, "PUT", "/test-bucket/test-key", "", "TESTKEY", "TESTSECRET123456789012345678901234", nil)
+		req := createSignedRequestForAuthTest(t, "PUT", "/test-bucket/test-key", "", "TESTKEY", "REMOVED-NOT-A-SECRET-VALUE", nil)
 		req.Header.Set("X-Amz-Meta-Custom", "custom-value")
 		req.Header.Set("X-Amz-Storage-Class", "STANDARD")
 
@@ -369,7 +369,7 @@ func TestAuthenticationHeaders(t *testing.T) {
 
 		canonicalRequest := buildCanonicalRequestForTest(req, signedHeaders, []byte(""))
 		stringToSign := buildStringToSignForTest(amzDate, credentialScope, "us-east-005", canonicalRequest)
-		signingKey := deriveSigningKey("TESTSECRET123456789012345678901234", amzDate[:8], "us-east-005")
+		signingKey := deriveSigningKey("REMOVED-NOT-A-SECRET-VALUE", amzDate[:8], "us-east-005")
 		signature := hex.EncodeToString(hmacSHA256ForTest(signingKey, stringToSign))
 
 		authHeader := fmt.Sprintf("AWS4-HMAC-SHA256 Credential=TESTKEY/%s, SignedHeaders=%s, Signature=%s",

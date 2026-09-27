@@ -33,6 +33,7 @@ func TestAuthorizationHeaderPassthrough(t *testing.T) {
 
 	cfg := &config.Config{
 		Backend:     "filesystem",
+		FSPath:      t.TempDir(),
 		Bucket:      "test-bucket",
 		B2Region:    "us-east-005",
 		Credentials: credentials,
@@ -208,6 +209,7 @@ func TestAuthorizationHeaderPassthroughIntegration(t *testing.T) {
 
 	cfg := &config.Config{
 		Backend:     "filesystem",
+		FSPath:      t.TempDir(),
 		Bucket:      "test-bucket",
 		B2Region:    "us-east-005",
 		Credentials: credentials,
@@ -444,6 +446,7 @@ func TestAuthorizationHeaderExactPassthrough(t *testing.T) {
 
 	cfg := &config.Config{
 		Backend:     "filesystem",
+		FSPath:      t.TempDir(),
 		Bucket:      "test-bucket",
 		B2Region:    "us-east-005",
 		Credentials: credentials,

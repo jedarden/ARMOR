@@ -59,7 +59,7 @@ func TestAWSCLIShapeNonStreaming(t *testing.T) {
 		stringToSign := buildStringToSignForTest(amzDate, credentialScope, "us-east-005", canonicalRequest)
 
 		// Derive signing key and calculate signature
-		signingKey := deriveSigningKey("TESTAWSCLISECRET123456789012345678", amzDate[:8], "us-east-005")
+		signingKey := deriveSigningKey("REMOVED-NOT-A-SECRET-VALUE", amzDate[:8], "us-east-005")
 		signature := hex.EncodeToString(hmacSHA256ForTest(signingKey, stringToSign))
 
 		// Set Authorization header exactly as aws-cli does
@@ -105,7 +105,7 @@ func TestAWSCLIShapeNonStreaming(t *testing.T) {
 		stringToSign := buildStringToSignForTest(amzDate, credentialScope, "us-east-005", canonicalRequest)
 
 		// Derive signing key and calculate signature
-		signingKey := deriveSigningKey("TESTAWSCLISECRET123456789012345678", amzDate[:8], "us-east-005")
+		signingKey := deriveSigningKey("REMOVED-NOT-A-SECRET-VALUE", amzDate[:8], "us-east-005")
 		signature := hex.EncodeToString(hmacSHA256ForTest(signingKey, stringToSign))
 
 		// Set Authorization header
@@ -162,7 +162,7 @@ func TestBarmanCloudShapeStreaming(t *testing.T) {
 		stringToSign := buildStringToSignForTest(amzDate, credentialScope, "us-east-005", canonicalRequest)
 
 		// Derive signing key and calculate signature
-		signingKey := deriveSigningKey("TESTBARMCLOUDSECRET123456789012345", amzDate[:8], "us-east-005")
+		signingKey := deriveSigningKey("REMOVED-NOT-A-SECRET-VALUE", amzDate[:8], "us-east-005")
 		signature := hex.EncodeToString(hmacSHA256ForTest(signingKey, stringToSign))
 
 		// Set Authorization header exactly as barman-cloud does
@@ -202,7 +202,7 @@ func TestBarmanCloudShapeStreaming(t *testing.T) {
 		canonicalRequest := buildCanonicalRequestForTest(req, signedHeaders, []byte{})
 		stringToSign := buildStringToSignForTest(amzDate, credentialScope, "us-east-005", canonicalRequest)
 
-		signingKey := deriveSigningKey("TESTBARMCLOUDSECRET123456789012345", amzDate[:8], "us-east-005")
+		signingKey := deriveSigningKey("REMOVED-NOT-A-SECRET-VALUE", amzDate[:8], "us-east-005")
 		signature := hex.EncodeToString(hmacSHA256ForTest(signingKey, stringToSign))
 
 		// Use the streaming format: "," instead of ", " between parts
@@ -253,7 +253,7 @@ func TestBothShapesSideBySide(t *testing.T) {
 
 		canonicalRequest := buildCanonicalRequestForTest(req, signedHeaders, testBody)
 		stringToSign := buildStringToSignForTest(amzDate, credentialScope, "us-east-005", canonicalRequest)
-		signingKey := deriveSigningKey("TESTSECRETKEY12345678901234567890", amzDate[:8], "us-east-005")
+		signingKey := deriveSigningKey("REMOVED-NOT-A-SECRET-VALUE", amzDate[:8], "us-east-005")
 		signature := hex.EncodeToString(hmacSHA256ForTest(signingKey, stringToSign))
 
 		authHeader := fmt.Sprintf("AWS4-HMAC-SHA256 Credential=TESTKEY/%s, SignedHeaders=%s, Signature=%s",
@@ -281,7 +281,7 @@ func TestBothShapesSideBySide(t *testing.T) {
 
 		canonicalRequest := buildCanonicalRequestForTest(req, signedHeaders, []byte{})
 		stringToSign := buildStringToSignForTest(amzDate, credentialScope, "us-east-005", canonicalRequest)
-		signingKey := deriveSigningKey("TESTSECRETKEY12345678901234567890", amzDate[:8], "us-east-005")
+		signingKey := deriveSigningKey("REMOVED-NOT-A-SECRET-VALUE", amzDate[:8], "us-east-005")
 		signature := hex.EncodeToString(hmacSHA256ForTest(signingKey, stringToSign))
 
 		authHeader := fmt.Sprintf("AWS4-HMAC-SHA256 Credential=TESTKEY/%s, SignedHeaders=%s, Signature=%s",

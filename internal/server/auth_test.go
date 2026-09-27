@@ -196,7 +196,7 @@ func TestGetSigningKey(t *testing.T) {
 
 	cred := &config.Credential{
 		AccessKey: "AKIAIOSFODNN7EXAMPLE",
-		SecretKey: "REMOVED-NOT-A-SECRET-VALUE",
+		SecretKey: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
 	}
 	signingKey := auth.getSigningKeyForCredential(cred, "20130524", "us-east-1")
 	result := fmt.Sprintf("%x", signingKey)
@@ -457,11 +457,11 @@ func TestMultiCredentialAuth(t *testing.T) {
 	credentials := map[string]*config.Credential{
 		"user1-access-key": {
 			AccessKey: "user1-access-key",
-			SecretKey: "REMOVED-NOT-A-SECRET-VALUE",
+			SecretKey: "user1-secret-key",
 		},
 		"user2-access-key": {
 			AccessKey: "user2-access-key",
-			SecretKey: "REMOVED-NOT-A-SECRET-VALUE",
+			SecretKey: "user2-secret-key",
 		},
 	}
 

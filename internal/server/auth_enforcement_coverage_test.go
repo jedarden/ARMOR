@@ -418,7 +418,7 @@ func TestMultipartLifecycleVerbAuthorization(t *testing.T) {
 	// Append-only backup-writer: Put+List, no Delete
 	appendOnlyCred := &config.Credential{
 		AccessKey: "APPENDONLY",
-		SecretKey: "REMOVED-NOT-A-SECRET-VALUE",
+		SecretKey: "APPENDONLYSECRET123456789012345678",
 		ACLs: []acl.ACLEntry{{
 			Bucket:  "test-bucket",
 			Prefix:  "uploads/",
@@ -767,7 +767,7 @@ func TestScopedCredentialBroadListDenial(t *testing.T) {
 		// Create credential with bucket wildcard but prefix restriction
 		wildcardCred := &config.Credential{
 			AccessKey: "WILDCARDLIST",
-			SecretKey: "REMOVED-NOT-A-SECRET-VALUE",
+			SecretKey: "WILDCARDLISTSECRET1234567890123456",
 			ACLs: []acl.ACLEntry{{
 				Bucket:  "*",
 				Prefix:  "backups/",
