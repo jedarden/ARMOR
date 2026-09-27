@@ -185,7 +185,7 @@ spec:
       - name: armor-mek
         value: "{{ secrets.ARMOR_MEK }}"
     container:
-      image: ronaldraygun/armor:latest  # Use built ARMOR image
+      image: ronaldraygun/armor:<version>  # Use the tag from the VERSION file; ARMOR publishes no floating tag
       command: [sh]
       args:
       - -c

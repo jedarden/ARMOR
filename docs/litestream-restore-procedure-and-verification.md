@@ -150,7 +150,7 @@ ARMOR is an encryption proxy for B2 backups, deployed to devimprint namespace:
 - **Cluster:** ord-devimprint (via kubectl-proxy)
 - **Namespace:** devimprint  
 - **Access Method:** Read-only kubectl proxy (no direct kubeconfig)
-- **Image:** `ronaldraygun/armor:latest` (should be pinned to specific version)
+- **Image:** `ronaldraygun/armor:<version>` (pin the tag from the VERSION file; ARMOR publishes no floating tag)
 
 ### Related Issues
 - **armor-l64**: CrashLoopBackOff issue on ord-devimprint (RESOLVED)

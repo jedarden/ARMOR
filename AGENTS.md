@@ -76,10 +76,20 @@ make help                            # the rest of the targets
   code's validation enforces (`TestConfigReferenceParity`). Add or update the
   configuration-reference row in the same change as the code.
 - Python: `tests/test_drift_check.py`, `tests/test_toolchain_parity.py`,
-  `tests/test_compose_version_parity.py`, and
-  `tests/test_restore_verifier_inventory.py` (all run by the definition of
+  `tests/test_compose_version_parity.py`,
+  `tests/test_restore_verifier_inventory.py`,
+  `tests/test_restore_verifier_scope_validation.py`, and
+  `tests/test_prohibited_constructs.py` (all run by the definition of
   done) and `tests/test_publish_release.py`, via `python3 -m pytest` (the
   `pytest` shim has a stale shebang on NixOS hosts).
+- Prohibited deployment constructs are machine-enforced:
+  `scripts/prohibited-constructs-gate.sh` fails the tree on `.github/workflows/*`
+  files, real `kind: Job` / `kind: CronJob` manifest lines, `:latest` image
+  tags, and unpinned `ronaldraygun/*` image references — examples and notes
+  included; comment lines that merely describe the rules are exempt. It runs
+  in the definition of done and the release gate, and
+  `tests/fixtures/prohibited-constructs/` holds one regression fixture per
+  rule.
 - Never commit build output (`bin/`, `*.test`) or caches; `.gitignore` covers
   them.
 
@@ -170,6 +180,10 @@ leftover, not something CI pushes.
   `declarative-config/k8s/iad-ci/argo-workflows/`.
 - No `kind: Job` / `kind: CronJob` anywhere, including examples and notes.
 - No `:latest` and no bare git SHAs for `ronaldraygun/*` images.
+- The first three bullets are enforced by `scripts/prohibited-constructs-gate.sh`
+  (definition of done + release gate); it also fails on unpinned `ronaldraygun/*`
+  `image:` references. Regression fixtures:
+  `tests/fixtures/prohibited-constructs/`.
 - Secrets travel by reference. Never put a credential value in a file, commit,
   bead, doc, log, chat message or command line. OpenBao paths and
   `ExternalSecret` references are how values reach a cluster.

@@ -23,6 +23,12 @@ fi
 # is ever built from a tree whose compose pin lags VERSION.
 ./scripts/compose-version-parity.sh
 
+# Prohibited deployment constructs (armor-7a6ffd3c): no .github/workflows
+# files, kind: Job / kind: CronJob manifests, or :latest / unpinned
+# ronaldraygun image references — org hard rules, enforced on repository
+# content before anything is built from it.
+./scripts/prohibited-constructs-gate.sh
+
 go vet ./...
 
 go test ${race_flag} -count=1 ./internal/crypto \
