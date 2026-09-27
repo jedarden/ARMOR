@@ -36,6 +36,25 @@ bump list disagree with the golden inventory pinned in that test — when the
 fleet changes, update the golden inventory and every prose count in the same
 change.
 
+### Validating the scope contract
+
+`python3 scripts/validate-restore-verifier-scopes.py` checks the manifests
+themselves against the rule above: each verifier Deployment carries exactly
+one `ARMOR_BUCKET` and one `ARMOR_MEK` as `valueFrom` references (a literal
+MEK, MEK-ring key or B2 key is a violation of the secrets-by-reference rule
+as well as ADR-004), no Deployment straddles scopes (counted pod-wide across
+containers and init containers), no verifier imports env wholesale via
+`envFrom` (the exactly-one contract would be unverifiable), and no two
+verifier Deployments resolve to the same scope identity. Identity is
+(cluster, namespace, bucket source, MEK source, B2 key sources) —
+namespace-qualified because manifests can only prove sameness of the same
+Secret or ConfigMap object. Proxy-declared scopes with no verifier are
+reported, not failed: ADR-004 makes verifier rollout a per-scope decision,
+and the live fleet legitimately has proxies with no verifier. Pass
+`--strict-coverage` to fail on those too once the known gaps are closed.
+Exit codes: 0 valid, 1 validation errors, 2 structural (no `k8s/` tree or no
+verifier Deployments discovered at all).
+
 ## Deployment Configuration
 
 ### Standard Deployment

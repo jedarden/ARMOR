@@ -159,6 +159,44 @@ python3 scripts/find-armor-deployments.py --path /path/to/declarative-config
 
 ---
 
+### validate-restore-verifier-scopes.py
+
+Validates declarative-config against the ADR-004 restore-verifier scope contract.
+
+**Purpose:** Every restore-verifier Deployment must carry exactly one
+`ARMOR_BUCKET` and one `ARMOR_MEK` as `valueFrom` references (never literals,
+never `envFrom`), must not straddle scopes (a second bucket or MEK anywhere in
+the pod — init containers included — is a violation), and no two verifier
+Deployments may resolve to the same scope identity (cluster, namespace, bucket
+source, MEK source, B2 key sources). Proxy-declared scopes with no verifier
+are reported because ADR-004 makes verifier rollout a per-scope decision — a
+warning, or an error under `--strict-coverage`. Discovery is delegated to
+`find-armor-deployments.py`, so its classification rules (argo-workflows
+exclusion, `.disabled` files, placeholder tags) apply here too. Tests:
+`python3 -m pytest tests/test_restore_verifier_scope_validation.py -q`.
+
+**Inputs:** Path to a declarative-config checkout (default `~/declarative-config`)
+
+**Outputs:** Per-verifier scope lines, a per-scope coverage table, and
+`ERROR`/`WARNING` findings; `--json` for the machine-readable report
+
+**Examples:**
+```bash
+# Validate the live tree; exit 0 with uncovered-scope warnings
+python3 scripts/validate-restore-verifier-scopes.py
+
+# Fail on uncovered scopes too (once the known gaps are closed)
+python3 scripts/validate-restore-verifier-scopes.py --strict-coverage
+
+# Machine-readable report against a specific checkout
+python3 scripts/validate-restore-verifier-scopes.py /path/to/declarative-config --json
+```
+
+**Exit codes:** 0 valid (warnings allowed), 1 validation errors, 2 structural
+break (no `k8s/` directory, or zero verifier Deployments discovered).
+
+---
+
 ### compare-version-drift.py
 
 Compares deployments against releases to detect drift.
