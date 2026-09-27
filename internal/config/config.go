@@ -78,6 +78,14 @@ type Config struct {
 	// Empty/unset means no prefix is applied
 	Prefix string
 
+	// RequirePrefix guards the ADR-001 shared-bucket failure mode: a
+	// deployment loses its ARMOR_PREFIX and every object then lands at the
+	// bucket root, where no tenant's cleanup procedure expects it. Set
+	// ARMOR_REQUIRE_PREFIX=true on shared-bucket deployments so a missing
+	// prefix is a startup refusal rather than a silent misconfiguration;
+	// dedicated-bucket deployments leave it unset.
+	RequirePrefix bool
+
 	// Cloudflare download configuration
 	CFDomain string
 
@@ -271,6 +279,20 @@ func Load() (*Config, error) {
 	// Prefix for shared bucket support (ADR-001)
 	// Normalize to exactly one trailing slash, no leading slash
 	cfg.Prefix = normalizePrefix(os.Getenv("ARMOR_PREFIX"))
+
+	// The missing-prefix half of ADR-001's Consequences section: "a
+	// misconfigured prefix (or missing prefix on a new deployment) could
+	// result in objects written to the bucket root, complicating cleanup."
+	// ARMOR_REQUIRE_PREFIX turns that accepted risk into a detected one for
+	// deployments that opt in: a shared-bucket tenant declares that its
+	// namespace is load-bearing, and a dropped or mis-edited ARMOR_PREFIX
+	// fails startup loudly instead of writing to the root. The check runs
+	// against the normalized prefix, so any spelling that normalizes to a
+	// non-empty namespace passes; only a genuinely missing prefix trips it.
+	cfg.RequirePrefix = os.Getenv("ARMOR_REQUIRE_PREFIX") == "true"
+	if cfg.RequirePrefix && cfg.Prefix == "" {
+		errs = append(errs, fmt.Errorf("ARMOR_REQUIRE_PREFIX is set but ARMOR_PREFIX is empty: refusing to start a shared-bucket deployment that would write objects to the bucket root (ADR-001)"))
+	}
 
 	// Canary disabled flag
 	cfg.CanaryDisabled = os.Getenv("ARMOR_CANARY_DISABLED") == "true"
@@ -1092,6 +1114,9 @@ type RedactedConfig struct {
 	// Prefix for all keys (shared bucket support via ADR-001)
 	Prefix string `json:"prefix"`
 
+	// Whether the missing-prefix guard is armed (ARMOR_REQUIRE_PREFIX)
+	RequirePrefix bool `json:"require_prefix"`
+
 	// Cloudflare download configuration
 	CFDomain string `json:"cf_domain"`
 
@@ -1225,6 +1250,7 @@ func (c *Config) Redacted() *RedactedConfig {
 		B2AccessKeyID:               crypto.IdentifierFingerprint(c.B2AccessKeyID),
 		Bucket:                      crypto.IdentifierFingerprint(c.Bucket),
 		Prefix:                      c.Prefix,
+		RequirePrefix:               c.RequirePrefix,
 		CFDomain:                    c.CFDomain,
 		CanaryDisabled:              c.CanaryDisabled,
 		BlockSize:                   c.BlockSize,

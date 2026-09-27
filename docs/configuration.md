@@ -61,6 +61,7 @@ deployment whose traffic skews across replicas is `ARMOR_MAX_CONN_AGE=90s`.
 | `ARMOR_BUCKET` | Yes | — | Bucket name (both backends) |
 | `ARMOR_BUCKET_ALIASES` | No | — | Comma-separated legacy bucket names served from `ARMOR_BUCKET` (see [Bucket aliases](#bucket-aliases)) |
 | `ARMOR_PREFIX` | No | — | Key prefix for shared-bucket deployments (e.g., `kalshi-tape/`). Stored in B2, invisible to S3 clients ([ADR-001](adr/001-bucket-prefix.md)) |
+| `ARMOR_REQUIRE_PREFIX` | No | `false` | `true` arms the missing-prefix guard from [ADR-001](adr/001-bucket-prefix.md): startup is refused when `ARMOR_PREFIX` is unset, empty, or normalizes to empty, instead of silently writing objects to the bucket root. Set it on every deployment that shares a bucket; dedicated-bucket deployments leave it unset and are unaffected |
 | `ARMOR_CF_DOMAIN` | No | — | Cloudflare domain CNAMEd to the bucket. When set, reads go through Cloudflare (free egress, edge cache); when unset, reads go to the B2 S3 endpoint directly and B2 egress applies. Ignored for the filesystem backend |
 
 ## Encryption and keys

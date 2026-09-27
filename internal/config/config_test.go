@@ -662,6 +662,97 @@ func TestArmorPrefix(t *testing.T) {
 	}
 }
 
+// TestRequirePrefixGuard pins the ADR-001 missing-prefix guard: a deployment
+// that declares itself shared-bucket via ARMOR_REQUIRE_PREFIX must refuse to
+// load without a prefix, while every other combination keeps its existing
+// behavior.
+func TestRequirePrefixGuard(t *testing.T) {
+	t.Run("require with prefix set loads", func(t *testing.T) {
+		setEnv(t, append(minimalEnv(),
+			"ARMOR_PREFIX", "kalshi-tape/",
+			"ARMOR_REQUIRE_PREFIX", "true",
+		)...)
+
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load() error: %v", err)
+		}
+		if !cfg.RequirePrefix {
+			t.Error("RequirePrefix should be true when ARMOR_REQUIRE_PREFIX=true")
+		}
+		if rc := cfg.Redacted(); !rc.RequirePrefix {
+			t.Error("Redacted() should expose RequirePrefix so operators can confirm the guard is armed")
+		}
+	})
+
+	t.Run("unnormalized prefix satisfies the guard", func(t *testing.T) {
+		// The guard tests the normalized prefix: any spelling that
+		// normalizes to a non-empty namespace passes, matching how
+		// normalizePrefix makes spellings equivalent everywhere else.
+		setEnv(t, append(minimalEnv(),
+			"ARMOR_PREFIX", "/kalshi-tape",
+			"ARMOR_REQUIRE_PREFIX", "true",
+		)...)
+
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load() error: %v", err)
+		}
+		if cfg.Prefix != "kalshi-tape/" {
+			t.Errorf("Prefix = %q, want kalshi-tape/", cfg.Prefix)
+		}
+	})
+
+	t.Run("require with empty prefix refused", func(t *testing.T) {
+		setEnv(t, append(minimalEnv(),
+			"ARMOR_PREFIX", "",
+			"ARMOR_REQUIRE_PREFIX", "true",
+		)...)
+
+		_, err := Load()
+		if err == nil {
+			t.Fatal("Load() should refuse a shared-bucket deployment whose prefix is missing")
+		}
+		if !strings.Contains(err.Error(), "ARMOR_PREFIX") {
+			t.Errorf("error should name ARMOR_PREFIX so the operator knows what to set, got: %v", err)
+		}
+		if !strings.Contains(err.Error(), "bucket root") {
+			t.Errorf("error should state the bucket-root consequence (ADR-001), got: %v", err)
+		}
+	})
+
+	t.Run("slashes-only prefix counts as missing", func(t *testing.T) {
+		// normalizePrefix("///") is "" — a prefix of nothing but
+		// separators is a misconfiguration, not a namespace.
+		setEnv(t, append(minimalEnv(),
+			"ARMOR_PREFIX", "///",
+			"ARMOR_REQUIRE_PREFIX", "true",
+		)...)
+
+		if _, err := Load(); err == nil {
+			t.Fatal("Load() should refuse a slashes-only prefix under ARMOR_REQUIRE_PREFIX")
+		}
+	})
+
+	t.Run("unset require keeps unprefixed deployments working", func(t *testing.T) {
+		setEnv(t, append(minimalEnv(),
+			"ARMOR_PREFIX", "",
+			"ARMOR_REQUIRE_PREFIX", "",
+		)...)
+
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load() error: %v", err)
+		}
+		if cfg.RequirePrefix {
+			t.Error("RequirePrefix should default to false")
+		}
+		if cfg.Prefix != "" {
+			t.Errorf("Prefix = %q, want empty", cfg.Prefix)
+		}
+	})
+}
+
 func TestLoadReportsMultipleErrors(t *testing.T) {
 	// Unset all required env vars
 	for _, k := range []string{

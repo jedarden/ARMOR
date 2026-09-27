@@ -166,3 +166,40 @@ as the alias is set: an un-migrated client's read resolves through it, so
 removing either early breaks exactly the client the alias exists to carry. The
 operational steps are the runbook's, not this document's.
 
+## Addendum: Missing-Prefix Guard (2026-09-27)
+
+The Consequences section above accepts that "a misconfigured prefix (or
+missing prefix on a new deployment) could result in objects written to the
+bucket root, complicating cleanup." On a fleet consolidated onto the unified
+bucket that risk is no longer per-deployment trivia: every tenant is one
+dropped or mis-edited `ARMOR_PREFIX` away from scattering encrypted objects
+across the root, where no tenant's cleanup procedure expects them and where
+they sit outside every B2 key scope.
+
+`ARMOR_REQUIRE_PREFIX` is the runtime guard for that documented risk. A
+deployment sets it to `true` alongside its prefix, and `config.Load` then
+refuses startup — a load error, so the pod fails at boot with the reason in
+its log — whenever `ARMOR_PREFIX` normalizes to empty. The assertion runs
+after normalization, so `/kalshi-tape`, `kalshi-tape`, and `kalshi-tape/`
+all satisfy it and a prefix of nothing but slashes (`///`) does not:
+anything that normalizes to a real namespace passes, and only a genuinely
+missing prefix trips it. Deployments that leave the variable unset are
+entirely unaffected, exactly as with `ARMOR_PREFIX` itself — the guard is
+opt-in per deployment because only that deployment's own manifests know
+whether its bucket is shared. The redacted configuration view exposes
+`require_prefix` so an operator can confirm the guard is armed without
+reading env state off the pod.
+
+A startup refusal was chosen over the other candidate — a periodic scan of
+the bucket root for objects outside any tenant prefix — because refusal
+prevents the write rather than reporting it afterwards. A root scan could
+not attribute a stray object to a tenant (the ciphertext carries no tenant
+identity), would need a fleet-wide list of prefixes to know what "outside
+any tenant" means, and by the time it fired, the cleanup problem the
+Consequences section worries about would already exist. Detection that
+arrives after the damage is a census, not a guard.
+
+Arming the variable on the existing unified-bucket tenants is deployment
+work in `declarative-config`, not a code change here; the guard ships
+dormant (`false`) so no rollout is coupled to it.
+
