@@ -326,14 +326,19 @@ func TestRclone_MultipartUpload(t *testing.T) {
 	mustRun(t, "rclone", nil, rcloneArgs(base,
 		"copyto", "--s3-upload-cutoff", "6M", "--s3-chunk-size", "5M", src, target)...)
 
-	// The download carries --ignore-checksum: ARMOR's completed-multipart ETag
-	// is a bare-hex digest of the stored ciphertext, and rclone reads any bare
-	// hex ETag as the content MD5 — real S3 marks multipart objects with the
-	// "md5(md5s)-N" composite form, which tells rclone to skip that check. The
-	// byte-for-byte comparison below is the actual integrity assertion; the
-	// ETag format itself is tracked as separate server work.
+	// The download deliberately runs WITHOUT --ignore-checksum: the server now
+	// marks completed multipart objects with the S3 "md5(md5s)-N" composite
+	// (armor-e8981148), and the -N suffix is what tells rclone the ETag is not
+	// a content MD5 so its hash check must be skipped. That makes this leg the
+	// end-to-end tripwire for the ETag format in ARMOR_COMPAT_ENDPOINT mode,
+	// where the real filesystem backend answers: a regression to the old bare
+	// digest of the concatenated ciphertext surfaces here as rclone's
+	// "corrupted on transfer: md5 hash differ". Against the in-process harness
+	// mock the ETags are non-hex ("final-etag-<size>"), so rclone skips the
+	// check either way and the leg stays green. The byte-for-byte comparison
+	// below is the actual integrity assertion in both modes.
 	got := filepath.Join(work, "big.out")
-	mustRun(t, "rclone", nil, rcloneArgs(base, "copyto", "--ignore-checksum", target, got)...)
+	mustRun(t, "rclone", nil, rcloneArgs(base, "copyto", target, got)...)
 	assertFilesEqual(t, src, got)
 
 	// Range read across the part boundary (which is also a 64 KiB block
