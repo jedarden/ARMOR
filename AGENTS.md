@@ -61,7 +61,9 @@ make help                            # the rest of the targets
   release gate, an integration-suite compile, the Docker builds, a registry
   existence check for every image, and the real-client compatibility suite
   (AWS CLI, rclone, boto3, DuckDB/httpfs, litestream, and barman-cloud)
-  against the freshly built image. The real-B2 suite itself never executes in
+  against the freshly built image — every leg of that matrix is pinned
+  present by `tests/aws-cli-compatibility/client_matrix_test.go`, which runs
+  on every `go test`, including that image gate. The real-B2 suite itself never executes in
   `armor-build` — without credentials every test in it skips — so it is run by
   the separate `armor-integration` WorkflowTemplate in declarative-config
   (`k8s/iad-ci/argo-workflows/armor-integration-workflowtemplate.yml`):

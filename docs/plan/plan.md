@@ -1697,9 +1697,18 @@ ARMOR/
 ### Compatibility Tests
 
 - AWS CLI: `aws s3 cp`, `aws s3 ls`, `aws s3 rm` against ARMOR
-- DuckDB: `read_parquet('s3://...')` with httpfs extension
-- boto3: full upload/download/list/delete cycle
 - rclone: `rclone copy` to/from ARMOR
+- boto3: full upload/download/list/delete cycle
+- DuckDB: `read_parquet('s3://...')` with httpfs extension
+- litestream: `litestream replicate` / `litestream restore` round-trip
+- barman-cloud: `barman-cloud-backup` / `barman-cloud-restore` round-trip
+
+The executable inventory lives in `tests/aws-cli-compatibility/`:
+`client_matrix_test.go` binds every client leg to the operations it covers
+(authentication, reads, range reads, listing, overwrite/delete, multipart —
+where supported) and pins the always-run `aws-sdk-go-v2` conformance floor,
+and CI's `armor-build` gate runs the whole matrix against the published
+image.
 
 ---
 

@@ -36,6 +36,7 @@ object is checked byte-for-byte (SHA-256) against the original.
 | `barman_compat_test.go` + `testdata/barman-cloud.env` | `barman-cloud-backup` with 5MB tar chunks, then `barman-cloud-restore` into a fresh PostgreSQL cluster | Full mode; endpoint mode makes missing Barman/PostgreSQL tools fatal |
 | `zz_verify_sdk_test.go` | `TestVerify_*` — drives the identical request paths via `aws-sdk-go-v2` (multipart, out-of-order completion, concurrent transfers) | **Always**, including CI's `-short` gate — it needs no external binaries |
 | `protocol_conformance_test.go` | `TestVerify_Authentication` / `_RangeReads` / `_List` / `_Overwrite` / `_Delete` — pins the wire behaviors behind README's compatibility claim: SigV4 accept plus wrong-secret / unknown-key / unsigned rejections with standard error codes, block-boundary byte-range reads, prefix listing with HEAD agreement, wholesale overwrite, idempotent delete | **Always**, including CI's `-short` gate — no external binaries |
+| `client_matrix_test.go` | `TestClientMatrix_*` — the executable client matrix: binds every leg above to the operations it covers (authentication, reads, range reads, listing, overwrite/delete, multipart — where supported), pins the always-run conformance floor, and holds this table, the README intro's client list, and AGENTS.md's CI claim to the legs that actually exist | **Always**, including CI's `-short` gate and the armor-build compatibility gate against the published image — no external binaries |
 
 The `TestVerify_*` smoke tests are the suite's teeth on machines without the
 CLIs: they exercise the same in-process server and handlers the CLI tests use,
@@ -109,7 +110,10 @@ production `serve` path, exports the endpoint-mode variables, and runs this
 whole package plus `tests/test_s3_basic_operations.py`. In endpoint mode a
 missing client is fatal rather than a skip, so a leg can never silently drop
 out of the gate. The `TestVerify_*` smoke tests additionally run on every
-plain `go test` via CI's `-short` gate.
+plain `go test` via CI's `-short` gate. The `TestClientMatrix_*` inventory
+pin runs in that same image gate, so a leg dropped from the package — or an
+operation binding, or a documented client list — fails the gate against the
+published image itself, not just a local run.
 
 ## Files
 
@@ -118,3 +122,5 @@ plain `go test` via CI's `-short` gate.
   helpers, and the binary-presence / `-short` skip guards.
 - `awscli_compat_test.go` — the CLI-gated compatibility tests.
 - `zz_verify_sdk_test.go` — the always-runs SDK smoke tests.
+- `client_matrix_test.go` — the executable client matrix and its parity
+  pins (see "Client legs and two layers").
