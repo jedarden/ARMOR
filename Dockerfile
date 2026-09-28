@@ -8,8 +8,10 @@ FROM golang:1.25.14-alpine AS builder
 
 WORKDIR /build
 
-# Install build dependencies
-RUN apk add --no-cache git ca-certificates tzdata
+# Install build dependencies. python3 + py3-pytest serve the publisher
+# contract leg of scripts/release-gate.sh below (armor-562d57c9); the Go
+# toolchain alone needs only the first three.
+RUN apk add --no-cache git ca-certificates tzdata python3 py3-pytest
 
 # Copy go mod files first for caching
 COPY go.mod go.sum ./
@@ -26,7 +28,8 @@ COPY . .
 RUN mkdir -p /image-tmp && chmod 1777 /image-tmp
 
 # Test gate shared with CI. It covers the v3 cryptographic primitives,
-# multipart state, canary, concurrent HTTP round trips, and integration-suite
+# multipart state, canary, concurrent HTTP round trips, the publisher
+# contract tests (network-free, fake endpoints), and integration-suite
 # compilation without requiring live B2 credentials.
 RUN CGO_ENABLED=0 ./scripts/release-gate.sh
 

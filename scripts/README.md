@@ -4,11 +4,11 @@ This directory contains operational, testing, and monitoring scripts for ARMOR d
 
 ## definition-of-done.sh
 
-Local verification gate. `scripts/definition-of-done.sh --fast` runs the toolchain parity gate (`scripts/toolchain-parity.sh`), the compose.yaml ↔ VERSION parity gate (`scripts/compose-version-parity.sh`), the prohibited deployment constructs gate (`scripts/prohibited-constructs-gate.sh`), `go build ./...`, `go vet ./...`, and the Python scripts test suite (`tests/test_drift_check.py`, `tests/test_toolchain_parity.py`, `tests/test_compose_version_parity.py`, `tests/test_cut_release.py`, `tests/test_restore_verifier_inventory.py`, `tests/test_restore_verifier_scope_validation.py`, `tests/test_prohibited_constructs.py`, `tests/test_gate_inventory.py`); without `--fast` it additionally runs `go test ./... -short`. Exits non-zero if any leg fails. `tests/test_gate_inventory.py` pins this list — and the copies in AGENTS.md, the script's own header, and the `tests/README.md` table — to the invocation in the script, so the documented suites cannot drift from the ones executed.
+Local verification gate. `scripts/definition-of-done.sh --fast` runs the toolchain parity gate (`scripts/toolchain-parity.sh`), the compose.yaml ↔ VERSION parity gate (`scripts/compose-version-parity.sh`), the prohibited deployment constructs gate (`scripts/prohibited-constructs-gate.sh`), `go build ./...`, `go vet ./...`, and the Python scripts test suite (`tests/test_drift_check.py`, `tests/test_toolchain_parity.py`, `tests/test_compose_version_parity.py`, `tests/test_cut_release.py`, `tests/test_restore_verifier_inventory.py`, `tests/test_restore_verifier_scope_validation.py`, `tests/test_prohibited_constructs.py`, `tests/test_gate_inventory.py`, `tests/test_publish_release.py`); without `--fast` it additionally runs `go test ./... -short`. Exits non-zero if any leg fails. `tests/test_gate_inventory.py` pins this list — and the copies in AGENTS.md, the script's own header, and the `tests/README.md` table — to the invocation in the script, so the documented suites cannot drift from the ones executed.
 
 ## release-gate.sh
 
-The test gate CI and the `Dockerfile` run before building an image: the toolchain parity check, the compose.yaml ↔ VERSION parity check, crypto, backend, restore-verifier, canary, config, `cmd/armor` and the server handlers, plus an integration-suite compile. `ARMOR_RELEASE_RACE=1` adds `-race` to the packages that support it (CI sets it).
+The test gate CI and the `Dockerfile` run before building an image: the toolchain parity check, the compose.yaml ↔ VERSION parity check, the prohibited deployment constructs gate, the publisher contract tests (`tests/test_publish_release.py` — network-free, fake endpoints; needs python3 + pytest, which the `Dockerfile` builder stage and CI's `go-test` step install for this leg), crypto, backend, restore-verifier, canary, config, `cmd/armor` and the server handlers, plus an integration-suite compile. `ARMOR_RELEASE_RACE=1` adds `-race` to the packages that support it (CI sets it).
 
 ## toolchain-parity.sh
 
@@ -34,7 +34,7 @@ The idempotent release publisher the `armor-build` workflow runs after the image
 FORGEJO_TOKEN=... GITHUB_TOKEN=... python3 scripts/publish_release.py --version 0.1.1969 --commit <full sha> --dry-run
 ```
 
-**Options:** `--dry-run`, `--tag-only`, `--no-github`, `--workflow NAME` (credited in the body), `--forgejo-api`, `--github-api`, `--github-wait-seconds`. Exit codes: 0 ok, 2 usage, 3 tag conflict, 4 GitHub failure, 5 Forgejo failure. Tests: `python3 -m pytest tests/test_publish_release.py`.
+**Options:** `--dry-run`, `--tag-only`, `--no-github`, `--workflow NAME` (credited in the body), `--forgejo-api`, `--github-api`, `--github-wait-seconds`. Exit codes: 0 ok, 2 usage, 3 tag conflict, 4 GitHub failure, 5 Forgejo failure. Tests: `python3 -m pytest tests/test_publish_release.py -q` — run by the definition of done and the release gate (armor-562d57c9).
 
 ## Version Drift Monitoring
 

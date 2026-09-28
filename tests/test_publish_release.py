@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import io
 import json
+import re
 import sys
 from email.message import Message
 from pathlib import Path
@@ -392,3 +393,75 @@ def test_release_body_never_mentions_a_floating_tag():
     body = pr.release_body(VERSION, COMMIT, None, [(f"ghcr.io/jedarden/armor:{VERSION}", "public", GHCR_DIGEST)])
     assert "Only semver tags are published" in body
     assert ":latest" not in body
+
+
+# ------------------------------------------------------ contract pins
+# (armor-562d57c9) The four contract areas the release gate runs this
+# suite for: idempotency (above), version/tag consistency, release
+# artifact coverage, and rejection of floating tags.
+
+
+VERSION_TAG_TOKEN = re.compile(r"v\d+\.\d+\.\d+")
+
+
+def test_version_and_tag_are_consistent_across_every_call(tokens, api, capsys):
+    """One fresh publish derives exactly one tag from the version and uses
+    it everywhere: the Forgejo tag lookup/create, both release payloads
+    (tag_name, target_commitish, release name) and the GitHub ref wait all
+    reference v<version> and the build commit, never another version."""
+    api.route("POST", f"{FJ}/repos/{REPO}/tags", 201, {"name": TAG})
+    api.route("GET", RAW_CHANGELOG_URL, 200, changelog_markdown())
+    api.route("POST", f"{FJ}/repos/{REPO}/releases", 201, {"id": 7, "html_url": "f"})
+    api.route("GET", f"{GH}/repos/{REPO}/git/ref/tags/{TAG}", 200, {"ref": f"refs/tags/{TAG}"})
+    api.route("POST", f"{GH}/repos/{REPO}/releases", 201, {"id": 9, "html_url": "g"})
+
+    assert run() == pr.EXIT_OK
+    out = outcome(capsys)
+    assert (out["version"], out["tag"]) == (VERSION, TAG)
+
+    repo_urls = [u for _, u, _, _ in api.calls if f"/repos/{REPO}/" in u]
+    assert repo_urls, "the publish run never talked to either forge"
+    assert f"{GH}/repos/{REPO}/git/ref/tags/{TAG}" in repo_urls
+    for url in repo_urls:
+        assert set(VERSION_TAG_TOKEN.findall(url)) <= {TAG}
+
+    posts = {u: p for m, u, p, _ in api.calls if m == "POST"}
+    assert posts[f"{FJ}/repos/{REPO}/tags"] == {
+        "tag_name": TAG,
+        "target": COMMIT,
+        "message": f"ARMOR v{VERSION}",
+    }
+    for url in (f"{FJ}/repos/{REPO}/releases", f"{GH}/repos/{REPO}/releases"):
+        assert posts[url]["tag_name"] == TAG
+        assert posts[url]["target_commitish"] == COMMIT
+        assert posts[url]["name"] == f"ARMOR v{VERSION}"
+
+
+def test_digest_table_covers_exactly_the_published_artifacts():
+    """The release body's table carries one row per published artifact —
+    every PUBLIC_IMAGES and PRIVATE_IMAGES ref at :<version> with its
+    visibility — and nothing else: the server image is the only public
+    artifact and every ref is pinned to the exact version."""
+    rows = [
+        *((f"{img}:{VERSION}", "public", GHCR_DIGEST) for img in pr.PUBLIC_IMAGES),
+        *((f"{img}:{VERSION}", "private", HUB_DIGEST) for img in pr.PRIVATE_IMAGES),
+    ]
+    body = pr.release_body(VERSION, COMMIT, "armor-build-contract", rows, changelog="- a note")
+    table = [line for line in body.splitlines() if line.startswith("| `")]
+    assert table == [f"| `{ref}` | {vis} | `{digest}` |" for ref, vis, digest in rows]
+    assert len(table) == len(pr.PUBLIC_IMAGES) + len(pr.PRIVATE_IMAGES)
+    for image in (*pr.PUBLIC_IMAGES, *pr.PRIVATE_IMAGES):
+        assert f"`{image}:{VERSION}`" in body
+    assert f"docker pull {pr.PUBLIC_IMAGE}:{VERSION}" in body
+    # No public mirror rows for the deliberately-private companion images.
+    assert "ghcr.io/jedarden/armor-restore-verifier" not in body
+    assert "ghcr.io/jedarden/armor-fleet" not in body
+
+
+def test_rejects_floating_and_malformed_versions(tokens, api):
+    """No floating tag can ever be published: `latest`, a short version, a
+    suffixed prerelease and a v-prefixed argument are all refused with the
+    usage exit before a single HTTP call is made."""
+    for bad in ("latest", "0.1", "0.1.1969-dev", "v0.1.1969"):
+        assert pr.main(["--version", bad, "--commit", COMMIT]) == pr.EXIT_USAGE, bad
+    assert api.calls == []

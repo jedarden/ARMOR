@@ -13,7 +13,8 @@
 # tests/test_toolchain_parity.py, tests/test_compose_version_parity.py,
 # tests/test_cut_release.py, tests/test_restore_verifier_inventory.py,
 # tests/test_restore_verifier_scope_validation.py,
-# tests/test_prohibited_constructs.py, tests/test_gate_inventory.py). The
+# tests/test_prohibited_constructs.py, tests/test_gate_inventory.py,
+# tests/test_publish_release.py). The
 # default mode adds `go test ./... -short`. CI (iad-ci armor-build) runs the
 # containerized build/lint legs; this script is the local gate. The pytest
 # entry point is `python3 -m pytest` rather than the `pytest` shim, whose
@@ -51,7 +52,7 @@ run ./scripts/compose-version-parity.sh
 run ./scripts/prohibited-constructs-gate.sh
 run "$GO" build "${go_build_flags[@]}" ./...
 run "$GO" vet "${go_build_flags[@]}" ./...
-run "$PY" -m pytest tests/test_drift_check.py tests/test_toolchain_parity.py tests/test_compose_version_parity.py tests/test_cut_release.py tests/test_restore_verifier_inventory.py tests/test_restore_verifier_scope_validation.py tests/test_prohibited_constructs.py tests/test_gate_inventory.py -q
+run "$PY" -m pytest tests/test_drift_check.py tests/test_toolchain_parity.py tests/test_compose_version_parity.py tests/test_cut_release.py tests/test_restore_verifier_inventory.py tests/test_restore_verifier_scope_validation.py tests/test_prohibited_constructs.py tests/test_gate_inventory.py tests/test_publish_release.py -q
 
 if [ "$fast" = 0 ]; then
   run "$GO" test ./... -short

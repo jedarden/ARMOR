@@ -29,6 +29,14 @@ fi
 # content before anything is built from it.
 ./scripts/prohibited-constructs-gate.sh
 
+# Publisher contract tests (armor-562d57c9): the armor-build publish-release
+# step runs scripts/publish_release.py to cut the annotated tag and both
+# releases. These pin its contract — idempotency, version/tag consistency,
+# release artifact coverage, and rejection of floating tags — against fake
+# endpoints, network-free. Needs python3 + pytest: the Dockerfile builder
+# stage and CI's go-test step install them for this leg.
+python3 -m pytest tests/test_publish_release.py -q
+
 go vet ./...
 
 go test ${race_flag} -count=1 ./internal/crypto \
