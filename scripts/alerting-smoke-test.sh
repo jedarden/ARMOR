@@ -54,6 +54,10 @@
 #                               Set to 1 in a controlled drill that stages a
 #                               pending/firing alert; no alert is synthesized
 #                               by this read-only smoke test.
+#   The default live profile is the verified iad-ci deployment. Other
+#   deployments must supply their own endpoints and expected target shape
+#   after their GitOps evaluator rollout; a missing evaluator is a failure,
+#   not a quiet alerting state.
 #   On the kube-prometheus-stack clusters (apexalgo-iad, ardenone-cluster)
 #   VM_BASE and VMALERT_BASE are BOTH the cluster's Prometheus (it serves the
 #   same /api/v1/query, /api/v1/rules and /api/v1/alerts shapes this script
