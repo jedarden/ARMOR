@@ -29,6 +29,16 @@ fi
 # content before anything is built from it.
 ./scripts/prohibited-constructs-gate.sh
 
+# Dockerfile image contract (armor-33bc86b9): an untargeted build publishes
+# the LAST Dockerfile stage as ronaldraygun/armor, so that stage must be
+# the armor server (ENTRYPOINT ["/armor"], no CMD) and the companion
+# --target stages (restore-verifier-runtime, armor-fleet-runtime) must stay
+# addressable. Images 0.1.1833-0.1.1870 shipped /restore-verifier as the
+# default entrypoint because a runtime stage sat last after a multi-stage
+# refactor; this script runs in the builder stage, so the image build
+# itself fails before that can happen again.
+./scripts/image-contract-gate.sh
+
 # Publisher contract tests (armor-562d57c9): the armor-build publish-release
 # step runs scripts/publish_release.py to cut the annotated tag and both
 # releases. These pin its contract — idempotency, version/tag consistency,

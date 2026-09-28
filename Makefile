@@ -1,5 +1,5 @@
 # ARMOR Makefile
-# Targets: build, toolchain-check, toolchain-parity, compose-version-parity, test, test-integration, lint, docker, compat, test-docker-demo, dod, release, clean, help
+# Targets: build, toolchain-check, toolchain-parity, compose-version-parity, image-contract-gate, test, test-integration, lint, docker, compat, test-docker-demo, dod, release, clean, help
 
 VERSION ?= $(shell cat VERSION)
 
@@ -33,7 +33,7 @@ BINARIES := $(notdir $(wildcard $(CMDDIR)/*))
 # Docker build arguments
 DOCKER_BUILD := docker build --build-arg VERSION=$(VERSION)
 
-.PHONY: all build toolchain-check toolchain-parity compose-version-parity test test-integration lint docker compat compat-boto3 test-docker-demo dod release clean help
+.PHONY: all build toolchain-check toolchain-parity compose-version-parity image-contract-gate test test-integration lint docker compat compat-boto3 test-docker-demo dod release clean help
 
 all: build test lint
 
@@ -54,6 +54,10 @@ toolchain-parity:
 ## compose-version-parity: Fail when a compose.yaml ARMOR_VERSION default differs from the VERSION file
 compose-version-parity:
 	scripts/compose-version-parity.sh
+
+## image-contract-gate: Fail when the Dockerfile default image is not the armor server or a companion --target stage is gone
+image-contract-gate:
+	scripts/image-contract-gate.sh
 
 ## build: Build every cmd/ binary into bin/ with the version injected
 build: toolchain-check
@@ -83,7 +87,7 @@ lint:
 	golangci-lint run --config .golangci.yml
 
 ## docker: Build the server and test images, tagged with VERSION only (no floating tags)
-docker: toolchain-parity compose-version-parity Dockerfile Dockerfile.test
+docker: toolchain-parity compose-version-parity image-contract-gate Dockerfile Dockerfile.test
 	@echo "Building Docker images..."
 	@echo "  Building ronaldraygun/armor:$(VERSION)..."
 	$(DOCKER_BUILD) -t ronaldraygun/armor:$(VERSION) -f Dockerfile .

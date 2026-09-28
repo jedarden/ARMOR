@@ -4,11 +4,11 @@ This directory contains operational, testing, and monitoring scripts for ARMOR d
 
 ## definition-of-done.sh
 
-Local verification gate. `scripts/definition-of-done.sh --fast` runs the toolchain parity gate (`scripts/toolchain-parity.sh`), the compose.yaml ↔ VERSION parity gate (`scripts/compose-version-parity.sh`), the prohibited deployment constructs gate (`scripts/prohibited-constructs-gate.sh`), `go build ./...`, `go vet ./...`, and the Python scripts test suite (`tests/test_drift_check.py`, `tests/test_toolchain_parity.py`, `tests/test_compose_version_parity.py`, `tests/test_cut_release.py`, `tests/test_restore_verifier_inventory.py`, `tests/test_restore_verifier_scope_validation.py`, `tests/test_prohibited_constructs.py`, `tests/test_gate_inventory.py`, `tests/test_publish_release.py`); without `--fast` it additionally runs `go test ./... -short` and the Agentation browser mount smoke (`scripts/verify-agentation-mount.sh`), which loads every web UI entry point in a headless Chromium and requires `#agentation-root` in the rendered DOM — failing, not skipping, when no browser is present or esm.sh is unreachable. Exits non-zero if any leg fails. `tests/test_gate_inventory.py` pins this list — and the copies in AGENTS.md, the script's own header, and the `tests/README.md` table — to the invocation in the script, so the documented suites cannot drift from the ones executed.
+Local verification gate. `scripts/definition-of-done.sh --fast` runs the toolchain parity gate (`scripts/toolchain-parity.sh`), the compose.yaml ↔ VERSION parity gate (`scripts/compose-version-parity.sh`), the prohibited deployment constructs gate (`scripts/prohibited-constructs-gate.sh`), the Dockerfile image contract gate (`scripts/image-contract-gate.sh`), `go build ./...`, `go vet ./...`, and the Python scripts test suite (`tests/test_drift_check.py`, `tests/test_toolchain_parity.py`, `tests/test_compose_version_parity.py`, `tests/test_image_contract_gate.py`, `tests/test_cut_release.py`, `tests/test_restore_verifier_inventory.py`, `tests/test_restore_verifier_scope_validation.py`, `tests/test_prohibited_constructs.py`, `tests/test_gate_inventory.py`, `tests/test_publish_release.py`); without `--fast` it additionally runs `go test ./... -short` and the Agentation browser mount smoke (`scripts/verify-agentation-mount.sh`), which loads every web UI entry point in a headless Chromium and requires `#agentation-root` in the rendered DOM — failing, not skipping, when no browser is present or esm.sh is unreachable. Exits non-zero if any leg fails. `tests/test_gate_inventory.py` pins this list — and the copies in AGENTS.md, the script's own header, and the `tests/README.md` table — to the invocation in the script, so the documented suites cannot drift from the ones executed.
 
 ## release-gate.sh
 
-The test gate CI and the `Dockerfile` run before building an image: the toolchain parity check, the compose.yaml ↔ VERSION parity check, the prohibited deployment constructs gate, the publisher contract tests (`tests/test_publish_release.py` — network-free, fake endpoints; needs python3 + pytest, which the `Dockerfile` builder stage and CI's `go-test` step install for this leg), crypto, backend, restore-verifier, canary, config, `cmd/armor` and the server handlers, plus an integration-suite compile. `ARMOR_RELEASE_RACE=1` adds `-race` to the packages that support it (CI sets it).
+The test gate CI and the `Dockerfile` run before building an image: the toolchain parity check, the compose.yaml ↔ VERSION parity check, the prohibited deployment constructs gate, the Dockerfile image contract gate, the publisher contract tests (`tests/test_publish_release.py` — network-free, fake endpoints; needs python3 + pytest, which the `Dockerfile` builder stage and CI's `go-test` step install for this leg), crypto, backend, restore-verifier, canary, config, `cmd/armor` and the server handlers, plus an integration-suite compile. `ARMOR_RELEASE_RACE=1` adds `-race` to the packages that support it (CI sets it).
 
 ## toolchain-parity.sh
 
@@ -17,6 +17,22 @@ go.mod ↔ Dockerfile toolchain parity gate. Parses go.mod's `toolchain` directi
 ## compose-version-parity.sh
 
 compose.yaml ↔ VERSION image-pin parity gate. Every `${ARMOR_VERSION:-...}` default in the tracked `compose.yaml` (demo and production profiles) must equal the repository's `VERSION` file, which is the tag the README Quick Start points readers at. `cut-release.sh` rewrites the defaults in the release commit; this gate exits 1 on any other drift — a default pinning a different, floating or non-semver value — and 2 on a structural break (missing or non-semver `VERSION`, missing `compose.yaml`, no default left to check). Wired into the definition of done, the release gate (so no image is built from a tree whose compose pin lags `VERSION`), and `make docker`. Tests: `python3 -m pytest tests/test_compose_version_parity.py -q`.
+
+## image-contract-gate.sh
+
+Dockerfile default-image contract gate. An untargeted `docker build -f
+Dockerfile` publishes the LAST stage as `ronaldraygun/armor`, so that stage
+must be the armor server — `ENTRYPOINT ["/armor"]` in exec form (a
+shell-form entrypoint cannot execute on `FROM scratch`) and no CMD — and
+the companion images' `--target` stages (`restore-verifier-runtime`,
+`armor-fleet-runtime`) must stay present under those names with their own
+entrypoints. `Dockerfile.test` is held to the same default-image rule. The
+final stage's name is deliberately not pinned: renaming it changes nothing
+an untargeted build publishes. Exit 1 on any contract violation, 2 on a
+structural break (missing Dockerfile, no stages). Wired into the
+definition of done, the release gate — so the Dockerfile builder stage
+refuses to build an image whose own contract is broken — and `make docker`.
+Tests: `python3 -m pytest tests/test_image_contract_gate.py -q`.
 
 ## cut-release.sh
 

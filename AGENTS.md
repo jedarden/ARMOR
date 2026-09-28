@@ -23,11 +23,11 @@ README.md. Full product documentation starts at
 | `cmd/armor` | The server binary and its subcommands (`serve`, `demo`, `check`, `decrypt`, `verify`, `migrate`, `client-config`, `version`, `help`) |
 | `cmd/restore-verifier`, `cmd/armor-fleet` | Companion binaries (restore verification harness, fleet console). The old offline verifier `cmd/verify-objects` was deleted 2026-09-20 — stale against fingerprinted DEKs and v3, and fully folded into `armor verify` (armor-da67956d), which now unwraps fingerprinted DEKs with ring fallback, verifies v3 multipart objects via manifest + sidecar, emits one report row per object, and exits non-zero on any failure |
 | `internal/` | All packages: `server` (S3 + admin handlers), `crypto`, `backend`, `config`, `keymanager`, `manifest`, `acl`, `canary`, `dashboard`, `presign`, `provenance`, `replication`, `restoreverifier`, `metrics`, `logging`, `b2keys`, `docsindex`, `version`, `testutil` |
-| `tests/` | Go test suites outside the package tree: `integration/` (real B2, build-tagged), `aws-cli-compatibility/`, `docker-demo-smoke/`, `fixtures/`; plus the Python gate suites (`test_drift_check.py`, `test_toolchain_parity.py`, `test_compose_version_parity.py`, `test_cut_release.py` — the cut-release isolated-repo workflow pin, `test_restore_verifier_inventory.py` — the restore-verifier fleet-inventory doc pin, `test_restore_verifier_scope_validation.py`, `test_prohibited_constructs.py`, `test_gate_inventory.py` — the documented-inventory parity pin, and `test_publish_release.py` — the release-publisher contract suite, also run by the release gate) |
+| `tests/` | Go test suites outside the package tree: `integration/` (real B2, build-tagged), `aws-cli-compatibility/`, `docker-demo-smoke/`, `fixtures/`; plus the Python gate suites (`test_drift_check.py`, `test_toolchain_parity.py`, `test_compose_version_parity.py`, `test_image_contract_gate.py` — the Dockerfile default-image contract pin, `test_cut_release.py` — the cut-release isolated-repo workflow pin, `test_restore_verifier_inventory.py` — the restore-verifier fleet-inventory doc pin, `test_restore_verifier_scope_validation.py`, `test_prohibited_constructs.py`, `test_gate_inventory.py` — the documented-inventory parity pin, and `test_publish_release.py` — the release-publisher contract suite, also run by the release gate) |
 | `scripts/` | Operator tooling: `definition-of-done.sh`, `release-gate.sh`, `cut-release.sh`, drift check, starvation watch. See `scripts/README.md` |
 | `docs/` | ADRs, runbooks, notes, plan. `docs/plan/plan.md` is the architecture and phase record |
 | `config/drift-config.json` | Fleet drift-check configuration |
-| `Dockerfile`, `Dockerfile.test` | The published image (multi-stage; the final stage MUST stay the armor server) and the test image |
+| `Dockerfile`, `Dockerfile.test` | The published image (multi-stage; the final stage MUST stay the armor server — enforced by `scripts/image-contract-gate.sh`) and the test image |
 | `VERSION`, `CHANGELOG.md`, `compose.yaml` | The release counter, its notes, and the Compose image pin; only `scripts/cut-release.sh` changes them |
 | `.beads/` | bead-rs work tracking. Never hand-edit |
 
@@ -43,7 +43,7 @@ go vet ./...
 go test ./... -short                 # unit suite; integration tests skip without credentials
 scripts/definition-of-done.sh --fast # build + vet + python script tests (the local gate)
 scripts/definition-of-done.sh        # --fast plus `go test ./... -short` and the Agentation browser mount smoke
-scripts/release-gate.sh              # the gate CI and the Dockerfile run (crypto, backend, canary, handlers, config, cmd, publisher contract tests)
+scripts/release-gate.sh              # the gate CI and the Dockerfile run (crypto, backend, canary, handlers, config, cmd, image contract, publisher contract tests)
 make build                           # every cmd/ binary into bin/ with the version injected
 make help                            # the rest of the targets
 ```
@@ -80,7 +80,8 @@ make help                            # the rest of the targets
   code's validation enforces. Add or update the
   configuration-reference row in the same change as the code.
 - Python: `tests/test_drift_check.py`, `tests/test_toolchain_parity.py`,
-  `tests/test_compose_version_parity.py`, `tests/test_cut_release.py`,
+  `tests/test_compose_version_parity.py`,
+  `tests/test_image_contract_gate.py`, `tests/test_cut_release.py`,
   `tests/test_restore_verifier_inventory.py`,
   `tests/test_restore_verifier_scope_validation.py`,
   `tests/test_prohibited_constructs.py`, `tests/test_gate_inventory.py`,
@@ -98,6 +99,17 @@ make help                            # the rest of the targets
   in the definition of done and the release gate, and
   `tests/fixtures/prohibited-constructs/` holds one regression fixture per
   rule.
+- The Dockerfile default image is machine-enforced the same way:
+  `scripts/image-contract-gate.sh` fails the tree unless the LAST
+  `Dockerfile` stage is the armor server (`ENTRYPOINT ["/armor"]`, no CMD)
+  and the companion `--target` stages (`restore-verifier-runtime`,
+  `armor-fleet-runtime`) stay present under those names with their
+  entrypoints — an untargeted build publishes the last stage as
+  `ronaldraygun/armor`, and images 0.1.1833–0.1.1870 shipped
+  `/restore-verifier` there after a multi-stage reorder. It runs in the
+  definition of done, the release gate (hence inside the Docker build
+  itself) and `make docker`, with its own pytest suite
+  (`tests/test_image_contract_gate.py`).
 - Never commit build output (`bin/`, `*.test`) or caches; `.gitignore` covers
   them.
 
