@@ -42,11 +42,12 @@ _spec.loader.exec_module(find_armor_deployments)
 
 # (cluster, namespace, workload_name) — a snapshot of
 # `python3 scripts/find-armor-deployments.py ~/declarative-config` filtered
-# to image_type == "armor-restore-verifier", taken 2026-09-25 (armor-79255e46).
+# to image_type == "armor-restore-verifier", taken 2026-09-28 (armor-d2b9d00e).
 # restore-verifier-acb verifies apexalgo-iad's armor-apexalgo bucket from
 # rs-manager while that cluster's ArgoCD sync is broken; the plain
 # rs-manager verifier was removed 2026-09-23 (declarative-config abe7dd0c).
 GOLDEN_RESTORE_VERIFIER_INVENTORY = [
+    ("ardenone-cluster", "tradegraph-platform", "restore-verifier"),
     ("iad-ci", "armor", "restore-verifier"),
     ("iad-kalshi", "armor", "restore-verifier"),
     ("ord-devimprint", "devimprint", "restore-verifier"),
@@ -144,6 +145,40 @@ spec:
                 configMapKeyRef:
                   name: armor-config
                   key: ARMOR_PREFIX
+"""
+
+
+def _tradegraph_verifier(tag):
+    """The ardenone-cluster pattern: the verifier is co-located with the
+    prefixed ARMOR proxy and uses the tradegraph-platform namespace."""
+    return f"""\
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: restore-verifier
+  namespace: tradegraph-platform
+spec:
+  template:
+    spec:
+      containers:
+        - name: restore-verifier
+          image: ronaldraygun/armor-restore-verifier:{tag}
+          env:
+            - name: ARMOR_BUCKET
+              valueFrom:
+                secretKeyRef:
+                  name: armor-secrets
+                  key: bucket
+            - name: ARMOR_PREFIX
+              valueFrom:
+                configMapKeyRef:
+                  name: armor-config
+                  key: ARMOR_PREFIX
+            - name: ARMOR_MEK
+              valueFrom:
+                secretKeyRef:
+                  name: armor-secrets
+                  key: mek-default
 """
 
 
@@ -265,6 +300,8 @@ def declarative_config(tmp_path):
             "restore-verifier",
             "0.1.1970@sha256:a6ffe666b95fcd51a5781e4548786bde23437685c5eac1630dfe9ed407dc1e71"),
         "k8s/ord-devimprint/devimprint/restore-verifier.yaml": _credentials_verifier(
+            "0.1.1975@sha256:f15ca6ccccf08c29ab559d68cee00979ed8f991b8053f59372a1cca853526cb3"),
+        "k8s/ardenone-cluster/tradegraph-platform/restore-verifier.yaml": _tradegraph_verifier(
             "0.1.1975@sha256:f15ca6ccccf08c29ab559d68cee00979ed8f991b8053f59372a1cca853526cb3"),
         "k8s/rs-manager/armor/restore-verifier-acb-deployment.yml":
             _standalone_verifier_with_service(

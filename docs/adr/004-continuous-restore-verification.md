@@ -35,10 +35,10 @@ Backups stored through ARMOR are continuously proven restorable by a dedicated *
 Implemented: harness with dual-path verification, SHA comparison, per-bucket state, status/trigger endpoints, metrics hooks. Not implemented (as of this snapshot): the three artifact-class assertions are stubs (`return nil`); no deployment manifests in declarative-config; no PrometheusRule/Grafana; no bead-filing escalation; no scheduled `armor decrypt`-only DR drill. Tracked in plan.md Phase 6 beads. Item-by-item disposition (2026-09-28 reconciliation, armor-9e600d0f):
 
 - **Artifact-class assertions** — landed everywhere (bf-1tzyle / armor-2e8758b8; see the as-shipped note on Decision 3). Pinned by `TestSQLiteAssertion`/`TestSQLiteAssertionRowCountProbe`, `TestParquetAssertion`, and the tar/gz tests in `internal/restoreverifier/verifier_test.go`.
-- **Deployment manifests** — landed: four per-scope restore-verifier Deployments (Fleet topology below; the mechanical enumeration is `scripts/find-armor-deployments.py`, pinned by `tests/test_restore_verifier_inventory.py`).
-- **PrometheusRule/alerting** — landed on `iad-ci` only (VictoriaMetrics + vmalert, activated 2026-09-25); the other three Deployments expose `/metrics` uncollected (see Metrics in the Fleet topology section). Fleet-wide activation is open work: armor-c866e4ca, armor-cb731b20.
-- **Bead-filing escalation** — landed on `iad-ci` only (armor-babc0b2b, 2026-09-25; see the escalation-enablement note below); the other three Deployments keep escalation off until each gets the PVC + env.
-- **Scheduled `armor decrypt`-only DR drill** — landed everywhere (armor-445bcb28): all four Deployments set `VERIFIER_DR_DRILL_INTERVAL: "24h"`, and live pods confirm scheduled drills execute and report. Scheduler contract pinned in `internal/restoreverifier/drill_schedule_test.go`.
+- **Deployment manifests** — landed: five per-scope restore-verifier Deployments (Fleet topology below; the mechanical enumeration is `scripts/find-armor-deployments.py`, pinned by `tests/test_restore_verifier_inventory.py`).
+- **PrometheusRule/alerting** — landed on `iad-ci` and `ardenone-cluster` (VictoriaMetrics/vmalert plus Prometheus Operator; activated 2026-09-25); the remaining three Deployments expose `/metrics` uncollected (see Metrics in the Fleet topology section). Full fleet activation remains open work: armor-c866e4ca, armor-cb731b20.
+- **Bead-filing escalation** — landed on `iad-ci` only (armor-babc0b2b, 2026-09-25; see the escalation-enablement note below); the other four Deployments keep escalation off until each gets the PVC + env.
+- **Scheduled `armor decrypt`-only DR drill** — landed everywhere (armor-445bcb28): all five Deployments set `VERIFIER_DR_DRILL_INTERVAL: "24h"`, and live pods confirm scheduled drills execute and report. Scheduler contract pinned in `internal/restoreverifier/drill_schedule_test.go`.
 
 plan.md Phase 6 remains the running record; the two reliability regressions found after this snapshot — discovery reliability ([ADR-014](014-restore-verifier-discovery-reliability.md)) and the ARMOR-path decrypt defect ([ADR-009](009-restore-verifier-armor-path-never-decrypts.md)) — are recorded in their own ADRs.
 
@@ -51,7 +51,7 @@ dedupe state and the beads workspace, startup validation (CLI runnable,
 volume writable, workspace provisioned/opened) logs `ESCALATION FILING
 DISABLED —` with the remediation instead of crash-looping the verifier, and
 every filing carries a `--unique-ref` so the bead store itself rejects
-duplicates (a lost state file cannot file twice). The other three
+duplicates (a lost state file cannot file twice). The other four
 restore-verifier Deployments keep escalation off until each gets the volume
 + env. See the [restore-verifier deployment guide](../restore-verifier-deployment-guide.md).
 
@@ -64,11 +64,13 @@ one instance covering all ARMOR buckets". The long-running-Deployment half
 (internal scheduling loop, no CronJob, declarative-config) shipped exactly as
 written; the "one instance" half did not — Decision 4 above now states the
 amended form. What shipped instead is **one restore-verifier Deployment per
-bucket scope, deployed per cluster** — as of this addendum, four:
+bucket scope, deployed per cluster** — as of 2026-09-28, five:
 `iad-ci/armor`, `iad-kalshi/armor`, `ord-devimprint/devimprint`, and
 `rs-manager/armor` (`restore-verifier-acb`, which verifies apexalgo-iad's
 ai-code-battle bucket from rs-manager while that cluster's ArgoCD connection
-is broken — still one bucket, one MEK). The manifests live at
+is broken — still one bucket, one MEK), plus
+`ardenone-cluster/tradegraph-platform` for the `tradegraph-platform/` scope of
+the shared `nap-dashboard` bucket. The manifests live at
 `declarative-config/k8s/<cluster>/<namespace>/restore-verifier*.y*ml`;
 `scripts/find-armor-deployments.py` enumerates the live inventory and the
 [restore-verifier deployment guide](../restore-verifier-deployment-guide.md)
@@ -115,8 +117,8 @@ the union of the Deployments, and it is a per-scope deployment decision
 recorded in declarative-config — an ARMOR proxy Deployment does not by itself
 imply a verifier, and several proxies have none today.
 
-**Inventory.** Four restore-verifier Deployments make up the fleet as of
-2026-09-25:
+**Inventory.** Five restore-verifier Deployments make up the fleet as of
+2026-09-28:
 
 | Deployment | Cluster/namespace | Scope | Notes |
 |---|---|---|---|
@@ -124,6 +126,7 @@ imply a verifier, and several proxies have none today.
 | `restore-verifier` | `iad-kalshi/armor` | bucket `kalshi-tape` | |
 | `restore-verifier` | `ord-devimprint/devimprint` | devimprint bucket (key `bucket` in `armor-credentials`), `ARMOR_PREFIX=commitgraph/` | |
 | `restore-verifier-acb` | `rs-manager/armor` | bucket `armor-apexalgo` | stand-in for apexalgo-iad while that cluster's ArgoCD sync is broken; direct-to-B2, no co-located proxy for this bucket |
+| `restore-verifier` | `ardenone-cluster/tradegraph-platform` | bucket `nap-dashboard`, prefix `tradegraph-platform/` | co-located with the ARMOR proxy; explicit `-bucket` prefix scoping prevents sampling rs-manager's root scope |
 
 **The authoritative enumeration is mechanical, not this table:**
 `python3 scripts/find-armor-deployments.py ~/declarative-config`, filtered to
@@ -139,7 +142,7 @@ same change.
 **Discovery.** Env-driven per
 [ADR-014](014-restore-verifier-discovery-reliability.md): `ARMOR_BUCKET`
 always, `ARMOR_PREFIX` only where the Deployment itself sets it —
-ord-devimprint does today. Co-located verifiers read the proxy's env sources
+ord-devimprint and tradegraph-platform do today. Co-located verifiers read the proxy's env sources
 key-by-key, but the prefix is not inherited implicitly: iad-kalshi's proxy
 sets `ARMOR_PREFIX=iad-kalshi/` while its verifier sets no prefix env, so
 prefixed objects are invisible to that Deployment (a verifier for a
@@ -151,7 +154,7 @@ records).
 (`secretKeyRef`/`configMapKeyRef`, never literals) from that scope's own
 store, synced by ExternalSecret. Three patterns in the fleet today:
 co-located verifiers reuse the proxy's `armor-config` ConfigMap and
-`armor-secrets` Secret (iad-ci, iad-kalshi); ord-devimprint keeps every
+`armor-secrets` Secret (iad-ci, iad-kalshi, tradegraph-platform); ord-devimprint keeps every
 B2/MEK value in `armor-credentials`; the standalone `restore-verifier-acb`
 has a dedicated ExternalSecret
 (`restore-verifier-acb-b2-credentials`, backed by OpenBao
@@ -160,11 +163,13 @@ has a dedicated ExternalSecret
 today.
 
 **Metrics.** Every Deployment serves `/metrics` on a `:9002` Service.
-Collection and rule evaluation are estate-local and currently iad-ci-only
-(VictoriaMetrics + vmalert, activated 2026-09-25); the per-cluster
-`restore-verifier-monitoring.yaml.disabled` manifests stay `.disabled`
-elsewhere (no Prometheus Operator CRDs — rs-manager has none at all), so the
-other three Deployments' gauges are exposed but uncollected.
+Collection and rule evaluation are active on iad-ci (VictoriaMetrics + vmalert)
+and ardenone-cluster (Prometheus Operator); the per-cluster
+`restore-verifier-monitoring.yaml.disabled` manifests stay `.disabled` on the
+clusters without an evaluator (rs-manager has no Prometheus Operator). The
+iad-kalshi, ord-devimprint, and rs-manager Deployments' gauges are exposed but
+uncollected; ardenone-cluster's tradegraph verifier is scraped by its own
+ServiceMonitor.
 
 **Alert routing.** iad-ci: vmalert → Alertmanager → the ntfy webhook — the
 pipeline and responses are the
@@ -177,7 +182,8 @@ enabled only on iad-ci; day-to-day fleet status stays in the
 targeted six scopes — `iad-acb` (bucket `armor-apexalgo`), `iad-ci`,
 `iad-kalshi`, `ord-devimprint`, `rs-manager`, `iad-native-ads` — which is
 where the bead-era "six" comes from; plan.md's bump list later said "five
-(rs-manager ×2 incl. acb)". The live four are what survives: `iad-native-ads`
+(rs-manager ×2 incl. acb)". At the time of the plain rs-manager verifier's
+removal, the live four were what survived: `iad-native-ads`
 went with its cluster (decommissioned 2026-07-27, declarative-config
 `45ae70b5`), the apexalgo-iad AI-battle estate retired 2026-08-22
 (`af2a78a5`) leaving bucket `armor-apexalgo` to be verified cross-cluster by

@@ -1090,9 +1090,11 @@ Decisions:
   Deployments (rs-manager, iad-ci, iad-ci/armor-test, iad-kalshi,
   ord-devimprint), the `ronaldraygun/armor` sidecar pin in
   `k8s/ardenone-cluster/commitgraph-dashboard/parquet-mirror-deployment.yml`,
-  and the **four** restore-verifier Deployments (`iad-ci/armor`,
-  `iad-kalshi/armor`, `ord-devimprint/devimprint`, and `rs-manager/armor`'s
-  `restore-verifier-acb`) — amended 2026-09-25 (armor-79255e46): the plain
+  and the **five** restore-verifier Deployments (`iad-ci/armor`,
+  `iad-kalshi/armor`, `ord-devimprint/devimprint`, `rs-manager/armor`'s
+  `restore-verifier-acb`, and `ardenone-cluster/tradegraph-platform`) —
+  amended 2026-09-28 (armor-d2b9d00e; the tradegraph-platform verifier scopes
+  `nap-dashboard` to `tradegraph-platform/`): the plain
   rs-manager verifier was removed 2026-09-23 (declarative-config `abe7dd0c`,
   armor-0f9efb09 — it could only fail on foreign MEKs), and the earlier
   "five / rs-manager ×2" here and the original six-scope deployment list
@@ -1119,7 +1121,7 @@ open and beaded: restore-verifier discovery Bug B (paginate
 29,303 bookkeeping objects vs 26,219 real ones); ~~enable the periodic DR drill
 (`VERIFIER_DR_DRILL_INTERVAL`) in every restore-verifier Deployment~~ (done —
 declarative-config `1550e3e8`, 2026-08-28, recorded 2026-09-25 in Phase 6:
-all four restore-verifier Deployments set the 24h cadence; see the Phase 6
+all five restore-verifier Deployments set the 24h cadence; see the Phase 6
 scheduled-DR-drill item); run the
 multipart-era corruption audit on the four unaudited buckets with
 `armor verify` (integrated 2026-08-28; `cmd/verify-objects` folded into `armor verify` subcommand)

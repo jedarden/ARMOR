@@ -14,7 +14,7 @@ single fleet-wide verifier, and never more than one verifier per scope.
 Coverage is the union of the Deployments, not something an ARMOR proxy
 Deployment implies.
 
-The current fleet is **four restore-verifier Deployments** (2026-09-25):
+The current fleet is **five restore-verifier Deployments** (2026-09-28):
 
 | Deployment | Cluster/namespace | Scope |
 |---|---|---|
@@ -22,6 +22,7 @@ The current fleet is **four restore-verifier Deployments** (2026-09-25):
 | `restore-verifier` | `iad-kalshi/armor` | bucket `kalshi-tape` |
 | `restore-verifier` | `ord-devimprint/devimprint` | devimprint bucket (key `bucket` in `armor-credentials`), `ARMOR_PREFIX=commitgraph/` |
 | `restore-verifier-acb` | `rs-manager/armor` | bucket `armor-apexalgo`, verified from rs-manager while apexalgo-iad's ArgoCD sync is broken |
+| `restore-verifier` | `ardenone-cluster/tradegraph-platform` | bucket `nap-dashboard`, explicit `-bucket` scope `tradegraph-platform/` |
 
 The authoritative enumeration is mechanical, not this table:
 
@@ -170,10 +171,11 @@ checksum → artifact assertion, the "ARMOR server is gone" recovery from
 [ADR-004](adr/004-continuous-restore-verification.md)) runs for every
 configured bucket on its own ticker, independent of `VERIFIER_CHECK_INTERVAL`.
 
-**Production cadence:** all four restore-verifier Deployments set
+**Production cadence:** all five restore-verifier Deployments set
 `VERIFIER_DR_DRILL_INTERVAL: "24h"` (declarative-config commit `1550e3e8`,
 2026-08-28): `iad-ci/armor`, `iad-kalshi/armor`,
-`ord-devimprint/devimprint`, and `rs-manager/armor` (`restore-verifier-acb`).
+`ord-devimprint/devimprint`, `rs-manager/armor` (`restore-verifier-acb`), and
+`ardenone-cluster/tradegraph-platform`.
 Live pods confirm scheduled drills execute and report — e.g. iad-ci
 2026-09-24 and rs-manager 2026-09-25 both logged a full drill with every
 sampled object recovered direct-only.
@@ -307,7 +309,7 @@ default `24h`), `VERIFIER_ESCALATION_STATE`, `VERIFIER_ESCALATION_EXEC_TIMEOUT`
 (default `10s`).
 
 **Fleet status:** enabled on `iad-ci/armor` (2026-09-25, armor-babc0b2b).
-The other three restore-verifier Deployments keep escalation off until each
+The other four restore-verifier Deployments keep escalation off until each
 gets the volume + env; filing there is inert (`VERIFIER_ESCALATION` unset).
 
 ### Reading the escalation workspace

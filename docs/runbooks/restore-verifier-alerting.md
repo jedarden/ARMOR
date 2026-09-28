@@ -8,8 +8,9 @@ the contract in
 this runbook covers the pipeline around them and the iad-ci-specific
 operational facts that nowhere else records.
 
-Status of the fleet: **the pipeline is live and verified on iad-ci** (activated
-2026-09-25, armor-afe279bd). The other three restore-verifier Deployments still
+Status of the fleet: **the pipeline is live and verified on iad-ci and
+ardenone-cluster** (ardenone's ARMOR alerting was activated 2026-09-25,
+armor-cb731b20). The other three restore-verifier Deployments still
 expose `/metrics` but have no evaluator in the current GitOps estate; their
 activation recipe is recorded in §6 and must be deployed and smoke-tested from
 the owning cluster before it is called live. The estate split is:
@@ -21,16 +22,18 @@ the owning cluster before it is called live. The estate split is:
 | iad-kalshi | no compatible evaluator currently deployed | deploy the §6 dedicated-store shape before smoke testing |
 | ord-devimprint | no compatible evaluator currently deployed | deploy the §6 dedicated-store shape before smoke testing |
 | apexalgo-iad | no restore-verifier Deployment in the current inventory | server-only monitoring is outside this runbook |
-| ardenone-cluster | no restore-verifier Deployment in the current inventory | server-only monitoring is outside this runbook |
+| ardenone-cluster | Prometheus Operator on the shared kube-prometheus-stack | `tradegraph-platform/restore-verifier` is scraped by its own ServiceMonitor |
 
 iad-ci pages the shared ntfy topic (the cnpg-backup-watchdog channel); its pages
 carry the cluster label. The per-cluster
 `restore-verifier-monitoring.yaml.disabled` PrometheusRule/ServiceMonitor
-manifests stay `.disabled` everywhere — iad-ci has no Prometheus Operator CRDs
-and evaluates through an active vmalert ConfigMap instead. The verifier fleet itself —
-four restore-verifier Deployments today
+manifests stay `.disabled` on clusters without Prometheus Operator CRDs —
+iad-ci evaluates through an active vmalert ConfigMap, while ardenone-cluster
+uses active PrometheusRule/ServiceMonitor resources. The verifier fleet itself —
+five restore-verifier Deployments today
 (`iad-ci/armor`, `iad-kalshi/armor`, `ord-devimprint/devimprint`, and
-`rs-manager/armor` running `restore-verifier-acb`) — is defined in ADR-004's
+`rs-manager/armor` running `restore-verifier-acb`, plus
+`ardenone-cluster/tradegraph-platform`) — is defined in ADR-004's
 "Fleet topology" section; `scripts/find-armor-deployments.py` enumerates it
 mechanically, and `tests/test_restore_verifier_inventory.py` fails if this
 runbook's count drifts from the fleet.

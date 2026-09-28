@@ -8,10 +8,10 @@ each by reference, every proxy-declared scope covered).
 The fixtures are synthetic declarative-config trees modeled on the live
 fleet's three verifier shapes (co-located ConfigMap+Secret references,
 all-in-one credentials Secret, standalone ExternalSecret-backed Deployment
-plus its Service) — same approach as tests/test_restore_verifier_inventory.py,
-which pins the finder this validator delegates discovery to. Nothing here
-reads ~/declarative-config: the live tree legitimately carries uncovered
-proxy scopes, so validating it is an operator run, not a test assertion.
+plus its Service, and a prefixed co-located Secret scope) — same approach as
+tests/test_restore_verifier_inventory.py, which pins the finder this validator
+delegates discovery to. Nothing here reads ~/declarative-config: validating
+the live tree is an operator run, not a test assertion.
 
 Run: python3 -m pytest tests/test_restore_verifier_scope_validation.py -q
 """
@@ -101,6 +101,18 @@ COLOCATED_ENV = [
     _ref("VERIFIER_MEK_RING", secret="armor-secrets", key="mek-ring"),
 ]
 
+# The tradegraph-platform pattern: bucket and MEK from the co-located
+# armor-secrets ExternalSecret, with its retired ring.
+TRADEGRAPH_ENV = [
+    _ref("ARMOR_BUCKET", secret="armor-secrets", key="bucket"),
+    _ref("ARMOR_MEK", secret="armor-secrets", key="mek-default"),
+    _ref("ARMOR_B2_ACCESS_KEY_ID", secret="armor-secrets",
+         key="b2-access-key-id"),
+    _ref("ARMOR_B2_SECRET_ACCESS_KEY", secret="armor-secrets",
+         key="b2-secret-access-key"),
+    _ref("VERIFIER_MEK_RING", secret="armor-secrets", key="mek-ring"),
+]
+
 # The credentials pattern (ord-devimprint/devimprint): everything in one
 # scope-owned Secret.
 CREDENTIALS_ENV = [
@@ -138,9 +150,8 @@ def _write_tree(tmp_path, files):
 
 
 def _standard_fleet(tmp_path, mutate=None):
-    """The live fleet's shape: three proxy-covered scopes, the standalone acb
-    scope with no co-located proxy, and one proxy-declared scope with no
-    verifier (the legitimate per-scope decision the contract allows).
+    """The live fleet's shape: four proxy-covered scopes and the standalone
+    acb scope with no co-located proxy.
     `mutate(files)` may rewrite the dict before it lands."""
     files = {
         "k8s/iad-ci/armor/restore-verifier.yaml": [
@@ -159,6 +170,10 @@ def _standard_fleet(tmp_path, mutate=None):
             _deployment("restore-verifier-acb", "armor",
                         [_container(env=STANDALONE_ENV)]),
             _service("restore-verifier-acb", "armor"),
+        ],
+        "k8s/ardenone-cluster/tradegraph-platform/restore-verifier.yaml": [
+            _deployment("restore-verifier", "tradegraph-platform",
+                        [_container(env=TRADEGRAPH_ENV)]),
         ],
         "k8s/iad-ci/armor/armor-deployment.yaml": [
             _deployment("armor", "armor",
@@ -204,14 +219,15 @@ def _codes(report, severity=None):
 # the valid fleet
 # ---------------------------------------------------------------------------
 
-def test_valid_fleet_passes_with_uncovered_warnings(tmp_path):
+def test_valid_fleet_passes_without_uncovered_warnings(tmp_path):
     dc = _standard_fleet(tmp_path)
     report = validator.validate(dc)
     assert _codes(report, "error") == []
-    assert _codes(report, "warning") == ["uncovered-scope"]
+    assert _codes(report, "warning") == []
     assert validator.derive_exit(report) == validator.EXIT_OK
     assert [(v["cluster"], v["namespace"], v["workload"])
             for v in report["verifiers"]] == [
+        ("ardenone-cluster", "tradegraph-platform", "restore-verifier"),
         ("iad-ci", "armor", "restore-verifier"),
         ("iad-kalshi", "armor", "restore-verifier"),
         ("ord-devimprint", "devimprint", "restore-verifier"),
@@ -228,10 +244,11 @@ def test_coverage_maps_proxy_scopes_to_verifiers(tmp_path):
         ("iad-ci", "armor"): "restore-verifier",
         ("iad-kalshi", "armor"): "restore-verifier",
         ("ord-devimprint", "devimprint"): "restore-verifier",
+        ("ardenone-cluster", "tradegraph-platform"): "restore-verifier",
     }
     uncovered = [(s["cluster"], s["namespace"], s["declared_by"])
                  for s in report["scopes"] if not s["covered_by"]]
-    assert uncovered == [("ardenone-cluster", "tradegraph-platform", "armor")]
+    assert uncovered == []
 
 
 def test_scope_identity_is_namespace_qualified(tmp_path):
@@ -245,7 +262,7 @@ def test_scope_identity_is_namespace_qualified(tmp_path):
     dc = _standard_fleet(tmp_path, mutate)
     report = validator.validate(dc)
     assert _codes(report, "error") == []
-    assert len(report["verifiers"]) == 5
+    assert len(report["verifiers"]) == 6
 
 
 # ---------------------------------------------------------------------------
@@ -448,7 +465,10 @@ def test_deployment_and_service_document_pair_selects_the_workload(tmp_path):
 # ---------------------------------------------------------------------------
 
 def test_uncovered_scope_warns_by_default_and_errors_strict(tmp_path):
-    dc = _standard_fleet(tmp_path)
+    def remove_tradegraph(files):
+        files.pop("k8s/ardenone-cluster/tradegraph-platform/restore-verifier.yaml")
+
+    dc = _standard_fleet(tmp_path, remove_tradegraph)
     report = validator.validate(dc)
     assert _codes(report) == ["uncovered-scope"]
     assert validator.derive_exit(report) == validator.EXIT_OK
@@ -460,7 +480,10 @@ def test_uncovered_scope_warns_by_default_and_errors_strict(tmp_path):
 
 
 def test_strict_flag_drives_the_exit_code(tmp_path):
-    dc = _standard_fleet(tmp_path)
+    def remove_tradegraph(files):
+        files.pop("k8s/ardenone-cluster/tradegraph-platform/restore-verifier.yaml")
+
+    dc = _standard_fleet(tmp_path, remove_tradegraph)
     assert validator.main([dc]) == validator.EXIT_OK
     assert validator.main([dc, "--strict-coverage"]) == validator.EXIT_ERRORS
 
