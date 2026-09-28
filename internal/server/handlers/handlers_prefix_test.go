@@ -767,6 +767,71 @@ func TestListBucketsWithPrefixReturnsRealBucketNames(t *testing.T) {
 	}
 }
 
+// TestListBucketsWithoutPrefixReturnsRealBucketNames is the unprefixed half
+// of the ListBuckets regression pair. With no ARMOR_PREFIX, object keys stay
+// at the bucket root and ListBuckets still returns the backend bucket names
+// unchanged.
+func TestListBucketsWithoutPrefixReturnsRealBucketNames(t *testing.T) {
+	cfg, mb, cache, footerCache, km := testSetupWithPrefix(t, "")
+	h := handlers.New(cfg, mb, cache, footerCache, km, nil)
+
+	plaintext := []byte("unprefixed data")
+	req := httptest.NewRequest(http.MethodPut, "/shared-bucket/data/file.txt", bytes.NewReader(plaintext))
+	req.Header.Set("Content-Type", "text/plain")
+	w := httptest.NewRecorder()
+	h.HandleRoot(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("PUT failed: status %d, body: %s", w.Code, w.Body.String())
+	}
+
+	mb.mu.Lock()
+	_, atRawKey := mb.objects["shared-bucket/data/file.txt"]
+	_, atPrefixedKey := mb.objects["shared-bucket/tenant-a/data/file.txt"]
+	mb.objects["other-bucket/tenant-b/obj"] = []byte("another bucket's data")
+	mb.mu.Unlock()
+
+	if !atRawKey {
+		t.Fatal("object should be stored at the client key when ARMOR_PREFIX is empty")
+	}
+	if atPrefixedKey {
+		t.Fatal("object should not be stored under a prefix when ARMOR_PREFIX is empty")
+	}
+
+	// Root GET is ListBuckets.
+	req = httptest.NewRequest(http.MethodGet, "/", nil)
+	w = httptest.NewRecorder()
+	h.HandleRoot(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("ListBuckets failed: status %d, body: %s", w.Code, w.Body.String())
+	}
+
+	var result struct {
+		Buckets []struct {
+			Name string `xml:"Name"`
+		} `xml:"Buckets>Bucket"`
+	}
+	if err := xml.Unmarshal(w.Body.Bytes(), &result); err != nil {
+		t.Fatalf("failed to parse XML: %v", err)
+	}
+
+	names := make(map[string]bool, len(result.Buckets))
+	for _, b := range result.Buckets {
+		names[b.Name] = true
+	}
+
+	want := map[string]bool{"shared-bucket": true, "other-bucket": true}
+	if len(names) != len(want) {
+		t.Errorf("ListBuckets returned %v, want %v", names, want)
+	}
+	for name := range want {
+		if !names[name] {
+			t.Errorf("ListBuckets missing real bucket %q; returned %v", name, names)
+		}
+	}
+}
+
 // hasPrefix is a helper to check if a string has a prefix.
 func hasPrefix(s, prefix string) bool {
 	return len(s) >= len(prefix) && s[:len(prefix)] == prefix
