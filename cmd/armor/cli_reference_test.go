@@ -66,7 +66,7 @@ func loadCLIReference(t *testing.T) string {
 }
 
 // commandSections splits the document into per-command sections keyed by
-// subcommand name. Only `## `armor <name>`` headings count; the general
+// subcommand name. Only `## `armor <name>“ headings count; the general
 // sections (global behavior, exit-code conventions) are not bound to any one
 // command's registry and are skipped.
 func commandSections(doc string) map[string]string {
@@ -351,7 +351,10 @@ func referenceBinary(t *testing.T) string {
 			goBin = filepath.Join(runtime.GOROOT(), "bin", "go")
 		}
 		bin := filepath.Join(dir, "armor")
-		build := exec.Command(goBin, "build", "-o", bin, ".")
+		// Git archives have no VCS metadata for Go to stamp. The reference
+		// binary's contract does not depend on that metadata, so keep this
+		// executable smoke archive-safe just like the production gate builds.
+		build := exec.Command(goBin, "build", "-buildvcs=false", "-o", bin, ".")
 		build.Dir = filepath.Join(repoRoot, "cmd", "armor")
 		if out, buildErr := build.CombinedOutput(); buildErr != nil {
 			referenceBinErr = fmt.Errorf("build reference binary: %w\n%s", buildErr, out)
@@ -690,12 +693,12 @@ func TestCLIReferenceMigrateJSONOutputIsPureJSON(t *testing.T) {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{
-			"status":           "completed",
-			"total_objects":    3,
+			"status":            "completed",
+			"total_objects":     3,
 			"processed_objects": 3,
-			"skipped_objects":  0,
-			"failed_objects":   0,
-			"dry_run":          false,
+			"skipped_objects":   0,
+			"failed_objects":    0,
+			"dry_run":           false,
 		})
 	}))
 	defer srv.Close()

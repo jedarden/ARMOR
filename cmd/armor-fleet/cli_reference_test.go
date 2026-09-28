@@ -258,7 +258,9 @@ func fleetBinary(t *testing.T) string {
 			goBin = filepath.Join(runtime.GOROOT(), "bin", "go")
 		}
 		bin := filepath.Join(dir, "armor-fleet")
-		build := exec.Command(goBin, "build", "-o", bin, ".")
+		// Git archives have no VCS metadata for Go to stamp. The reference
+		// binary's contract does not depend on that metadata.
+		build := exec.Command(goBin, "build", "-buildvcs=false", "-o", bin, ".")
 		build.Dir = filepath.Join(repoRoot, "cmd", "armor-fleet")
 		if out, buildErr := build.CombinedOutput(); buildErr != nil {
 			fleetBinErr = fmt.Errorf("build reference binary: %w\n%s", buildErr, out)
