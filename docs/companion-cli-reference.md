@@ -24,6 +24,17 @@ the console's SEAM token), drive the documented validation and failed-poll
 paths, and pin that the binaries never echo a credential value into their
 logs or served JSON — so this page cannot silently drift from the code.
 
+## Release status and known limitations
+
+The verifier and fleet-console contracts below describe the current source
+tree, not every image already deployed. Restore-verifier has focused coverage
+for fingerprinted DEKs, v3 multipart manifests, sidecars, and direct-only DR
+drills; release-image and live bucket evidence is still required before an
+operator should call a rollout complete. In particular, old images and
+multipart objects with missing B2 metadata have produced false or incomplete
+verification results. Keep the [release-status and known-limitations register](release-status.md)
+beside this reference when planning a rollout.
+
 ## Shared behavior
 
 - **Single-command processes.** No subcommands, no positional arguments.

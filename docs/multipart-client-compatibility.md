@@ -1,10 +1,25 @@
 # Multipart Client-Concurrency Compatibility Matrix
 
-**Date:** 2026-09-17 · **Companion to:** [ADR-003](adr/003-multipart-object-layout-and-read-path.md), [ADR-015](adr/015-out-of-order-multipart-uniform-part-size.md), [ADR-011](adr/011-barman-stays-on-armor-non-uniform-multipart.md)
+**Date:** 2026-09-28 · **Companion to:** [ADR-003](adr/003-multipart-object-layout-and-read-path.md), [ADR-015](adr/015-out-of-order-multipart-uniform-part-size.md), [ADR-011](adr/011-barman-stays-on-armor-non-uniform-multipart.md)
+
+## Release status and known limitations
+
+This matrix is the scoped repository contract, not a blanket release claim for
+every S3 client or every deployed image. The current source has tests for v2
+and v3 multipart ordering, sidecars, HMAC reads, full GET, and range semantics;
+release-image and live-client evidence is still required for the image being
+rolled out. Historical failures in named-key lookup, wrapped-DEK decoding,
+multipart sidecars, SigV4, presigned GET, and range paths remain operator
+triage signals even where a focused regression test now passes. Read the
+[release-status register](release-status.md) before marking a client or DR
+workflow complete.
 
 ## The claim, and what reconciles it
 
-The README promises, scoped: *"Any S3-compatible client — boto3, AWS CLI, DuckDB, rclone, litestream, barman — works without modification: reads, range reads and single-PUT writes are plain S3, and multipart writers run with their default concurrency on the default write format (v3), whose only multipart rule is B2's own ≥ 5 MiB non-final-part minimum. The legacy v2 format keeps a uniform-part-size contract that stock client retry behavior already covers."* This page is what that scoping means, client by client, with the tests that back it.
+Earlier README wording grouped several clients under an unqualified
+S3-compatibility promise. This page narrows that promise to the operation and
+write-format rows below, with the tests and release evidence required for each
+client. It does not cover every AWS S3 feature.
 
 ADR-003 §4 (2026-07-18) once contradicted that: the interim implementation
 enforced sequential part arrival and rejected concurrent or out-of-order
@@ -15,7 +30,7 @@ cycles ago** and is no longer in the code:
 |---|---|---|
 | 2026-07-19 | [ADR-015](adr/015-out-of-order-multipart-uniform-part-size.md) — uniform-part-size contract; CTR offset derived from part number, not arrival history | Out-of-order and concurrent part uploads accepted; `InvalidPartOrder` removed from the error surface |
 | 2026-07-19 (amendment) | P pinned **only** from part 1; earlier arrivals deferred with retryable `503 SlowDown` | AWS CLI / SDK defaults (where the short final part completes first) work unmodified |
-| 2026-08-07 | [ADR-011](adr/011-barman-stays-on-armor-non-uniform-multipart.md) — part-1/final-part alignment exemptions + non-uniform part mode | Misaligned, differently-sized parts (barman's `chunk_size + N×512`) accepted; verified in production 2026-08-27 |
+| 2026-08-07 | [ADR-011](adr/011-barman-stays-on-armor-non-uniform-multipart.md) — part-1/final-part alignment exemptions + non-uniform part mode | Misaligned, differently-sized parts (barman's `chunk_size + N×512`) are covered by the repository matrix; the historical production observation is not current release evidence |
 | 2026-08-31 | Format v3 multipart layout ([ADR-016](adr/016-multipart-metadata-finalization.md)); `ARMOR_FORMAT_VERSION` now defaults to `3` | Per-part independent counters — no part-order or part-size contract at all |
 
 ADR-003 §4's body text is retained as the historical record of the interim
@@ -62,7 +77,7 @@ are idempotent.
 | **SDK, serial / low-level in-order** | ✅ | ✅ | |
 | **litestream** (multipart snapshots; no serial knob exposed) | ✅ unmodified | ✅ unmodified | litestream is the client that motivated ADR-015 — it cannot be configured serial |
 | **rclone** (`--s3-upload-concurrency`, default 4) | ✅ unmodified | ✅ unmodified | `--s3-chunk-size` tuning optional on v2, not required |
-| **barman-cloud-backup** (tar-aligned `chunk_size + N×512` parts) | ✅ unmodified | ✅ | v2: ADR-011 non-uniform mode; single-part backups verified in production 2026-08-27 (ADR-011 §Verification) |
+| **barman-cloud-backup** (tar-aligned `chunk_size + N×512` parts) | ✅ matrix-covered | ✅ matrix-covered | v2: ADR-011 non-uniform mode; the historical single-part observation is not a current release proof (ADR-011 §Verification) |
 | **DuckDB / pyiceberg / readers** | read-only | read-only | GET / Range / HEAD only; single-PUT writers are unaffected by any of this |
 
 There is **no client configuration required** on the default format. On v2
@@ -180,8 +195,9 @@ environment variable).
 - barman's tar-aligned part sizes (`chunk_size + N×512`, never
   block-aligned) — switched to ADR-011 non-uniform mode on v2, no contract at
   all on v3 (`TestMultipartSuspectPatterns/U8_non_block_aligned_regular_part_accepted_under_adr011`).
-- Single-part base backups (a small database fits one flush) — verified in
-  production 2026-08-27 (ADR-011 §Verification);
+- Single-part base backups (a small database fits one flush) — covered by the
+  repository matrix; the 2026-08-27 production observation is historical
+  (ADR-011 §Verification);
   `TestMultipartLonePartByteVerification` is the in-suite twin.
 
 **Rejected:**
@@ -213,8 +229,8 @@ go test -short ./tests/aws-cli-compatibility/
 | Serial, both formats | `TestMultipartClientCompat_Serial/{format_v3,format_v2}`; `TestMultipartFullCycleByteVerification` (9-part serial with range checks); `TestMultipartLonePartByteVerification` (single-part barman shape) |
 | v3 no-contract semantics | `TestMultipartV3ConcurrentOutOfOrder`, `TestMultipartV3NoSlowDown`, `TestMultipartV3DistinctPartsReachBackendConcurrently`, `TestMultipartV3IndependentPartCounter` |
 | Real client binaries | `TestAWSCLI_*`, `TestRclone_*`, `TestBoto3_*`, `TestDuckDB_*`, `TestLitestream_*`, and `TestBarmanCloud_*` in `tests/aws-cli-compatibility/`; endpoint-mode CI installs every client and treats a missing client as a failure, while local runs skip absent tools; the `TestVerify_*` SDK twins run always |
-| barman non-uniform parts, v2 | `TestMultipartSuspectPatterns/U8_non_block_aligned_regular_part_accepted_under_adr011` (round-trip verified) |
-| Readers: GET / Range / HEAD, both formats | `TestMultipartClientCompat_Readers/{format_v3,format_v2}` — full GET, a bounded Range straddling the part-1/part-2 boundary, the suffix-Range footer pattern, and HEAD plaintext length, byte-verified on each format |
+| barman non-uniform parts, v2 | `TestMultipartSuspectPatterns/U8_non_block_aligned_regular_part_accepted_under_adr011` (round-trip checked) |
+| Readers: GET / Range / HEAD, both formats | `TestMultipartClientCompat_Readers/{format_v3,format_v2}` — full GET, a bounded Range straddling the part-1/part-2 boundary, the suffix-Range footer pattern, and HEAD plaintext length, byte-checked on each format |
 | 5 MiB non-final minimum (the one remaining rule), both formats | `TestMultipartContract_MinPartSizeBackstop/{format_v3,format_v2}` — a two-part upload below the minimum is rejected `InvalidPartSize` (400) at `CompleteMultipartUpload` and stores no object; `/single_part_below_minimum_completes` pins the B2-matching lone-part exemption on each format |
 | v2 contract violations poison loudly | `TestMultipartADR015Acceptance/second_short_part_poisons_no_object` in `multipart_routing_test.go` — a genuine contract contradiction (two short parts) is 400'd, the upload id is poisoned so `CompleteMultipartUpload` fails, and no object is stored |
 

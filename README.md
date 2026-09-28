@@ -6,23 +6,17 @@
 
 ARMOR is an S3-compatible proxy server that encrypts data before storing it in
 [Backblaze B2](https://www.backblaze.com/cloud-storage) and serves downloads
-through Cloudflare for zero-egress cost. Standard S3 clients work without
-modification within the contract ARMOR actually tests — not a guarantee about
-every client that ever spoke S3. That tested contract: SigV4 authentication
-(valid credentials accepted; wrong secret, unknown key, and unsigned requests
-rejected with the standard S3 error codes), plain reads and byte-range reads,
-listing with prefix scoping, wholesale overwrite, idempotent deletion, and
-single-PUT writes; multipart writers run with their default concurrency on the
-default write format (v3), whose only multipart rule is B2's own ≥ 5 MiB
-non-final-part minimum, while the legacy v2 format keeps a uniform-part-size
-contract that stock client retry behavior already covers. The contract is
-pinned on every test run by the protocol conformance suite in
-`tests/aws-cli-compatibility/` (SigV4 accept/reject, range, list, overwrite,
-delete, multipart, concurrent transfers — no external binaries needed), and
-CI additionally runs real AWS CLI, rclone, boto3, DuckDB/httpfs, litestream,
-and barman legs against each built image. Per-client behavior, tested
-configuration fixtures, and the behaviors each format rejects:
-[docs/multipart-client-compatibility.md](docs/multipart-client-compatibility.md).
+through Cloudflare for zero-egress cost. ARMOR exposes a tested S3 protocol
+surface, not a guarantee about every client or every AWS S3 operation. The
+current in-tree contract covers SigV4 authentication, plain and byte-range
+reads, prefix-scoped listing, overwrite, deletion, single-PUT writes, and the
+documented multipart cases. The protocol suite pins those behaviors on every
+test run; the image compatibility gate additionally exercises the configured
+AWS CLI, rclone, boto3, DuckDB/httpfs, litestream, and barman legs when it
+builds a release image. The release and deployment evidence boundary, known
+limitations, and per-client matrix are in
+[release status](docs/release-status.md) and
+[multipart compatibility](docs/multipart-client-compatibility.md).
 
 - **Zero-knowledge encryption** — data is encrypted before it leaves ARMOR; B2 only ever stores ciphertext (guaranteed for envelope v2/v3 objects; legacy v1 objects must be migrated first — see [Security model](#security-model))
 - **Zero egress fees** — downloads route through Cloudflare via the Bandwidth Alliance
@@ -37,6 +31,19 @@ private Forgejo instance at `git.ardenone.com/jedarden/ARMOR`; the GitHub
 repository `jedarden/ARMOR` is a read-only mirror updated on every commit.
 File issues on GitHub (the public surface); code changes land through Forgejo.
 Build, test, work-tracking and release conventions: [AGENTS.md](AGENTS.md).
+
+## Release status and known limitations
+
+`VERSION` identifies the source release currently described by this checkout;
+it does not prove that every fleet deployment runs that image. Repository
+tests cover the fingerprinted-DEK, v3 multipart, SigV4, presigned/share, and
+range paths, but release-image and live DR evidence is still required before
+those capabilities are accepted for an operator workflow. Named-key
+reads, wrapped-DEK decoding, multipart sidecar preservation, and presigned GET
+have historical failure records, while range-read performance remains open
+work. Do not infer a full AWS S3 contract from the tested operation matrix.
+See the [release-status and known-limitations register](docs/release-status.md)
+for the exact boundary and promotion evidence.
 
 ## Install
 
@@ -286,11 +293,12 @@ crash-recovery state and canary objects (`.armor/chain/`, `.armor/manifest/`,
 
 ## Multipart upload constraints
 
-With format version 3 (the default write format) there is no part-order or
-part-size contract: parts are encrypted in independent counter namespaces, so
-any part sizes work (no block alignment), out-of-order and concurrent part
-uploads are fully supported, retries are idempotent, and the only remaining
-rule is B2's own — non-final parts must be at least 5 MiB.
+With format version 3 (the default write format) the repository's multipart
+tests cover independent counter namespaces, arbitrary part ordering, concurrent
+uploads, and idempotent retries. The B2 rule still applies: non-final parts
+must be at least 5 MiB. Treat this as the tested v3 contract for the exact
+release image, not as fleet-wide or full-S3 release verification; see the
+[status register](docs/release-status.md).
 
 Format version 2 (legacy, `ARMOR_FORMAT_VERSION=2`) keeps
 [ADR-015](docs/adr/015-out-of-order-multipart-uniform-part-size.md)'s

@@ -1,0 +1,110 @@
+{
+  "schema": 1,
+  "status_document": "docs/release-status.md",
+  "operator_documents": [
+    "README.md",
+    "AGENTS.md",
+    "docs/cli-reference.md",
+    "docs/companion-cli-reference.md",
+    "docs/disaster-recovery.md",
+    "docs/multipart-client-compatibility.md"
+  ],
+  "capabilities": [
+    {
+      "id": "named-key-read",
+      "status": "release-pending",
+      "tokens": ["named key", "named-key"],
+      "forbidden_claims": [
+        "release[- ]verified",
+        "\\b(?:is|are|was|were|as)\\s+(?:fully\\s+)?verified\\b",
+        "verified in production",
+        "fully supported",
+        "works without modification"
+      ]
+    },
+    {
+      "id": "wrapped-dek-decoding",
+      "status": "release-pending",
+      "tokens": ["wrapped dek", "wrapped-dek"],
+      "forbidden_claims": [
+        "release[- ]verified",
+        "\\b(?:is|are|was|were|as)\\s+(?:fully\\s+)?verified\\b",
+        "verified in production",
+        "fully supported",
+        "works without modification"
+      ]
+    },
+    {
+      "id": "multipart-hmac-read",
+      "status": "release-pending",
+      "tokens": ["hmac sidecar", "multipart hmac", "multipart sidecar"],
+      "forbidden_claims": [
+        "release[- ]verified",
+        "\\b(?:is|are|was|were|as)\\s+(?:fully\\s+)?verified\\b",
+        "verified in production",
+        "fully supported",
+        "works without modification"
+      ]
+    },
+    {
+      "id": "v3-multipart-verification",
+      "status": "release-pending",
+      "tokens": ["v3 multipart", "multipart v3"],
+      "forbidden_claims": [
+        "release[- ]verified",
+        "\\b(?:is|are|was|were|as)\\s+(?:fully\\s+)?verified\\b",
+        "verified in production",
+        "fully supported",
+        "works without modification"
+      ]
+    },
+    {
+      "id": "sigv4-authentication",
+      "status": "release-pending",
+      "tokens": ["sigv4"],
+      "forbidden_claims": [
+        "release[- ]verified",
+        "\\b(?:is|are|was|were|as)\\s+(?:fully\\s+)?verified\\b",
+        "verified in production",
+        "fully supported",
+        "works without modification"
+      ]
+    },
+    {
+      "id": "presigned-get",
+      "status": "release-pending",
+      "tokens": ["presigned get", "presign", "share get"],
+      "forbidden_claims": [
+        "release[- ]verified",
+        "\\b(?:is|are|was|were|as)\\s+(?:fully\\s+)?verified\\b",
+        "verified in production",
+        "fully supported",
+        "works without modification"
+      ]
+    },
+    {
+      "id": "range-reads",
+      "status": "repository-tested",
+      "tokens": ["range read", "range reads", "byte-range"],
+      "forbidden_claims": [
+        "release[- ]verified",
+        "\\b(?:is|are|was|were|as)\\s+(?:fully\\s+)?verified\\b",
+        "verified in production",
+        "fully supported",
+        "works without modification"
+      ]
+    },
+    {
+      "id": "s3-operation-surface",
+      "status": "scope-limited",
+      "tokens": ["full s3", "s3-compatible clients", "standard s3 clients"],
+      "forbidden_claims": [
+        "release[- ]verified",
+        "\\b(?:is|are|was|were|as)\\s+(?:fully\\s+)?verified\\b",
+        "verified in production",
+        "fully supported",
+        "works without modification"
+      ]
+    }
+  ]
+}

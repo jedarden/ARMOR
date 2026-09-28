@@ -29,6 +29,11 @@ fi
 # content before anything is built from it.
 ./scripts/prohibited-constructs-gate.sh
 
+# Documentation status (armor-abff8d6e): operator pages may describe
+# repository-tested behavior, but cannot promote pending capabilities to
+# release-verified or fully supported without the evidence update.
+./scripts/documentation-status-gate.sh
+
 # Dockerfile image contract (armor-33bc86b9): an untargeted build publishes
 # the LAST Dockerfile stage as ronaldraygun/armor, so that stage must be
 # the armor server (ENTRYPOINT ["/armor"], no CMD) and the companion

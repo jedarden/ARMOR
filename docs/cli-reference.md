@@ -24,6 +24,18 @@ and token values through every documented key source (`-mek`, `-mek-file`,
 pin that the binary never echoes a credential value into stdout or stderr —
 so this page cannot silently drift from the code.
 
+## Release status and known limitations
+
+This reference describes the source-tree command contract. It does not certify
+the behavior of an arbitrary published image or deployment. `armor verify` and
+`armor decrypt` have repository tests for fingerprinted wrapped DEKs and v3
+multipart manifests/sidecars, while named-key reads, wrapped-DEK decoding in
+DR inputs, multipart sidecar preservation, SigV4, presigned GET, and range
+performance still need release-image or live evidence for the exact rollout.
+Run the focused command against the pinned image and record its result before
+calling an operator workflow complete. The canonical status and limitation
+register is [release-status.md](release-status.md).
+
 ## Global behavior
 
 - `armor` with no subcommand runs `serve` — the container entry point relies on
@@ -140,8 +152,9 @@ Verify a deployment's live configuration and connectivity. Read-only.
 
 Decrypt one ARMOR-encrypted object offline — break-glass recovery with no
 running server. Reads single-PUT envelopes (any envelope version) and
-multipart objects (headerless ciphertext plus HMAC sidecar) identically to the
-server's read path.
+multipart objects (headerless ciphertext plus HMAC sidecar) through the same
+format rules as the server's read path. A successful repository test is not a
+substitute for a DR drill against the published image and its escrow package.
 
 | Flag | Meaning |
 |------|---------|
@@ -186,7 +199,7 @@ server's read path.
   sensitive. Prefer `-mek-file` or `ARMOR_MEK` over `-mek`: a command-line key
   lands in shell history and `ps`. An escrow file is every secret at once —
   keep it mode 600 and delete it after the recovery. Integrity: single-PUT
-  objects are verified against the header's whole-object SHA-256; multipart
+  objects are checked against the header's whole-object SHA-256; multipart
   objects declare no whole-object digest (ADR-003 gap), so per-block HMACs are
   the guarantee there.
 

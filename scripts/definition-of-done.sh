@@ -10,13 +10,14 @@
 # (scripts/compose-version-parity.sh), the prohibited deployment constructs
 # gate (scripts/prohibited-constructs-gate.sh), the Dockerfile image
 # contract gate (scripts/image-contract-gate.sh), the Go build and vet, and
+# the documentation status gate (scripts/documentation-status-gate.sh), and
 # the Python scripts test suite (tests/test_drift_check.py,
 # tests/test_toolchain_parity.py, tests/test_compose_version_parity.py,
 # tests/test_image_contract_gate.py, tests/test_cut_release.py,
 # tests/test_restore_verifier_inventory.py,
 # tests/test_restore_verifier_scope_validation.py,
 # tests/test_prohibited_constructs.py, tests/test_gate_inventory.py,
-# tests/test_publish_release.py). The
+# tests/test_documentation_status.py, tests/test_publish_release.py). The
 # default mode adds `go test ./... -short` and the Agentation browser mount
 # smoke (scripts/verify-agentation-mount.sh): every web UI entry point loads
 # in a headless Chromium and must show #agentation-root mounted in the
@@ -60,9 +61,10 @@ run ./scripts/toolchain-parity.sh
 run ./scripts/compose-version-parity.sh
 run ./scripts/prohibited-constructs-gate.sh
 run ./scripts/image-contract-gate.sh
+run ./scripts/documentation-status-gate.sh
 run "$GO" build "${go_build_flags[@]}" ./...
 run "$GO" vet "${go_build_flags[@]}" ./...
-run "$PY" -m pytest tests/test_drift_check.py tests/test_toolchain_parity.py tests/test_compose_version_parity.py tests/test_image_contract_gate.py tests/test_cut_release.py tests/test_restore_verifier_inventory.py tests/test_restore_verifier_scope_validation.py tests/test_prohibited_constructs.py tests/test_gate_inventory.py tests/test_publish_release.py -q
+run "$PY" -m pytest tests/test_drift_check.py tests/test_toolchain_parity.py tests/test_compose_version_parity.py tests/test_image_contract_gate.py tests/test_cut_release.py tests/test_restore_verifier_inventory.py tests/test_restore_verifier_scope_validation.py tests/test_prohibited_constructs.py tests/test_gate_inventory.py tests/test_documentation_status.py tests/test_publish_release.py -q
 
 if [ "$fast" = 0 ]; then
   run "$GO" test ./... -short

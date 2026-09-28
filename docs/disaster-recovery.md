@@ -2,6 +2,19 @@
 
 This document covers disaster recovery procedures for ARMOR deployments, including MEK backup/escrow, restore drills, offline decryption with `armor decrypt`, key rotation failure recovery, and data recovery limitations.
 
+## Release status and known limitations
+
+This runbook is a procedure, not proof that a current release can recover every
+object. The source tree tests fingerprinted wrapped-DEK decoding, v3 multipart
+manifest/sidecar reads, and direct-only DR paths, but the exact published image,
+MEK/ring escrow, B2 metadata, and `.armor/` sidecars must still be exercised.
+Named-key reads, historical wrapped-DEK and multipart sidecar failures, old
+restore-verifier metadata gaps, presigned GET, SigV4, and range-read behavior
+have separate status boundaries; do not promote a test result to release
+evidence without the image and object-shape record. See
+[release-status.md](release-status.md) for the current register and tracking
+references.
+
 ## TL;DR Critical Points
 
 1. **The MEK (Master Encryption Key) is the single point of failure** — losing it means losing all data. Never rotate the MEK without first exporting and escrowing the current MEK.
@@ -15,7 +28,7 @@ This document covers disaster recovery procedures for ARMOR deployments, includi
 
 1. [MEK Backup and Escrow](#mek-backup-and-escrow)
 2. [Restore Drill: Recovering from Complete Deployment Loss](#restore-drill-recovering-from-complete-deployment-loss)
-3. [Offline Decryption Without ARMOR](#offline-decryption-without-armor-verified-2026-08-08)
+3. [Offline Decryption Without ARMOR](#offline-decryption-without-armor-repository-tested-2026-08-08)
 4. [Key Rotation Failure Recovery](#key-rotation-failure-recovery)
 5. [Multipart Upload Recovery](#multipart-upload-recovery)
 6. [B2 Account or Bucket Gone: Provider-Outage Recovery](#b2-account-or-bucket-gone-provider-outage-recovery)
@@ -550,7 +563,7 @@ go test -v -tags=integration ./...
 
 ---
 
-## Offline Decryption Without ARMOR (verified 2026-08-08)
+## Offline Decryption Without ARMOR (repository-tested 2026-08-08)
 
 The fastest recovery path does **not** involve redeploying ARMOR. `armor decrypt`
 reads objects straight from B2 and decrypts them locally, needing only the MEK,
@@ -690,7 +703,8 @@ in B2. Download it separately and provide it to `armor decrypt`.
 Run on a host outside the protected cluster, with the MEK read from a
 *different* cluster's secret store:
 
-- 12,225,178-byte object decrypted in **3 seconds**, plaintext SHA-256 verified
+- 12,225,178-byte object decrypted in **3 seconds**, with its plaintext
+  SHA-256 checked
 - Output was a valid gzip tarball; `git fsck --connectivity-only` passed
 - Recovered repository HEAD matched live production **exactly** (`af0e37cbac8d`)
 - MEK in escrow confirmed identical to the live cluster's by SHA-256 comparison
@@ -1535,7 +1549,7 @@ armor decrypt \
 - [ARMOR README](../README.md) — Project overview and quick start
 - [ARMOR Plan](plan/plan.md) — Comprehensive implementation details (see §8.13 for MEK key ring)
 - [Admin API Endpoints](../README.md#admin-api) — Full admin API reference
-- [Offline Decrypt CLI](#offline-decryption-without-armor-verified-2026-08-08) — Decrypt tool documentation (in this document)
+- [Offline Decrypt CLI](#offline-decryption-without-armor-repository-tested-2026-08-08) — Decrypt tool documentation (in this document)
 - [Envelope Encryption Format](plan/plan.md#encryption-scheme) — Cryptographic design
 - [Key Rotation Runbook](key-rotation-runbook.md) — Rotation procedure with MEK key ring (v0.1.1922+)
 - [ADR-006: Dual-Backend Async Replication](adr/006-dual-backend-replication.md) — Design and tradeoffs behind the secondary backend and this section's recovery procedure
