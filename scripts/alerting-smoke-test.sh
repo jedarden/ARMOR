@@ -422,9 +422,15 @@ except (KeyError, OSError, ValueError) as exc:
 def identity(alert):
     labels = alert.get("labels", {})
     return tuple((key, labels.get(key, ""))
-                 for key in ("alertname", "component", "bucket"))
+                 for key in ("alertname", "component", "bucket", "instance"))
 
-source = vm.get("data", {}).get("alerts", [])
+if vm.get("status") != "success" or not isinstance(vm.get("data", {}).get("alerts"), list):
+    print("vmalert alert API did not return a successful alerts list")
+    sys.exit(2)
+if not isinstance(am, list):
+    print("Alertmanager alert API did not return an alerts list")
+    sys.exit(2)
+source = vm["data"]["alerts"]
 source = [a for a in source if a.get("state") in ("pending", "firing")]
 received = {
     identity(a) for a in am
