@@ -285,7 +285,11 @@ func verifierBinary(t *testing.T) string {
 			goBin = filepath.Join(runtime.GOROOT(), "bin", "go")
 		}
 		bin := filepath.Join(dir, "restore-verifier")
-		build := exec.Command(goBin, "build", "-o", bin, ".")
+		// The test suite also runs from git archives, where there is no .git
+		// directory for VCS stamping. The production gates already use this
+		// flag, and the reference binary's behavior does not depend on build
+		// metadata.
+		build := exec.Command(goBin, "build", "-buildvcs=false", "-o", bin, ".")
 		build.Dir = filepath.Join(repoRoot, "cmd", "restore-verifier")
 		if out, buildErr := build.CombinedOutput(); buildErr != nil {
 			verifierBinErr = fmt.Errorf("build reference binary: %w\n%s", buildErr, out)
