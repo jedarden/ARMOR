@@ -1,5 +1,6 @@
 // Package agentation wires the Agentation visual-feedback toolbar into
-// ARMOR's web surfaces (the proxy dashboard and the fleet console).
+// ARMOR's web surfaces (the proxy dashboard, demo dashboard, and fleet
+// console).
 //
 // Agentation is the workspace-standard UI feedback tool: it adds a toolbar
 // that turns clicks, text selections, and drag-selects into structured

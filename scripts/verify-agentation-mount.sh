@@ -6,8 +6,9 @@
 # nothing.
 #
 # Drives a real headless Chromium (or any browser via AGENTATION_BROWSER)
-# against the two entry points served from the real route tables:
+# against every entry point served from the real route tables:
 #   - the proxy dashboard  (internal/dashboard, /dashboard)
+#   - the demo dashboard   (armor demo, admin /dashboard)
 #   - the fleet console    (cmd/armor-fleet, /)
 #
 # The underlying tests skip when no browser is found or esm.sh is
@@ -21,9 +22,9 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-echo "== Agentation browser mount smoke: proxy dashboard + fleet console =="
-output="$(go test ./internal/dashboard ./cmd/armor-fleet \
-    -run 'TestDashboardAgentationMountsInBrowser|TestFleetAgentationMountsInBrowser' \
+echo "== Agentation browser mount smoke: proxy dashboard + demo dashboard + fleet console =="
+output="$(go test ./internal/dashboard ./cmd/armor ./cmd/armor-fleet \
+    -run 'TestDashboardAgentationMountsInBrowser|TestDemoAgentationMountsInBrowser|TestFleetAgentationMountsInBrowser' \
     -count=1 -v "$@")" || {
   printf '%s\n' "$output"
   echo "FAIL: go test exited non-zero" >&2

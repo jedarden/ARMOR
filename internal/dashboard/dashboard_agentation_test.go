@@ -12,8 +12,8 @@ import (
 	"github.com/jedarden/armor/internal/metrics"
 )
 
-// The dashboard page is one of ARMOR's two HTML entry points (the other is
-// the fleet console). Per the workspace Agentation rule it must load the
+// The dashboard page is one of ARMOR's three UI entry points (the other two
+// are the demo dashboard and fleet console). Per the workspace Agentation rule it must load the
 // toolbar with its import map and be verified by mounting, not by grepping
 // the tag. These tests pin the page assembly and the module endpoint; the
 // production route registration is pinned in internal/server, and the real

@@ -341,11 +341,11 @@ journalctl --user -u armor-starvation-watch.service -n 20
 
 ### verify-agentation-mount.sh
 
-Browser smoke test for the Agentation toolbar on ARMOR's two web UI entry
-points (proxy dashboard and fleet console). The workspace rule is verify by
+Browser smoke test for the Agentation toolbar on ARMOR's three web UI entry
+points (proxy dashboard, demo dashboard, and fleet console). The workspace rule is verify by
 mounting, never by grepping the tag — a page with the module tag but no
 import map renders perfectly while the toolbar never mounts — so this script
-drives a real headless Chromium against both pages served from their real
+drives a real headless Chromium against every page served from its real
 route tables and requires `#agentation-root` in the rendered DOM with the
 toolbar inside. Exits non-zero if a mount check fails OR if every check
 skipped (no browser, `esm.sh` unreachable): a skip means nothing was
@@ -354,7 +354,9 @@ before the mount check, module endpoint serving the vendored module) run
 always, in `go test` and the definition of done; the browser leg needs this
 script, which the full definition of done (no `--fast`) runs as a gate leg —
 `--fast` omits it because it needs a Chromium-family browser and esm.sh
-reachability, so it is neither deterministic nor quick.
+reachability, so it is neither deterministic nor quick. The inventory and
+per-page test names are pinned by `internal/agentation/enumeration_test.go`,
+so adding a UI entry point without adding its mount check fails the Go suite.
 
 ```bash
 ./scripts/verify-agentation-mount.sh

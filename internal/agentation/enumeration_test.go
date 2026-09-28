@@ -9,9 +9,9 @@ import (
 	"testing"
 )
 
-// The per-page tests in internal/dashboard and cmd/armor-fleet pin the pages
-// that exist today. They cannot see a page that does not exist yet: a new
-// HTML page assembled without the Agentation wiring passes every one of them
+// The per-page tests in internal/dashboard, cmd/armor, and cmd/armor-fleet pin
+// the pages that exist today. They cannot see a page that does not exist yet:
+// a new HTML page assembled without the Agentation wiring passes every one of them
 // and ships exactly the tag-without-map blind spot this package exists to
 // prevent. This file is the enumeration regression check — it sweeps every
 // production Go file in the repository, treats each page head ("</head>")
@@ -145,6 +145,54 @@ func TestEveryPageHeadCarriesAgentationWiring(t *testing.T) {
 			continue
 		}
 		t.Logf("page: %s (%d head(s), %d wired)", rel, p.heads, p.wired)
+	}
+}
+
+func TestUIEntryPointInventoryIsCompleteAndGated(t *testing.T) {
+	root := "../.."
+	if _, err := os.Stat(filepath.Join(root, "go.mod")); err != nil {
+		t.Fatalf("scan root %s is not the repository root (no go.mod): %v", root, err)
+	}
+
+	entries := UIEntryPoints()
+	if len(entries) != 3 {
+		t.Fatalf("UI inventory has %d entries, want the proxy dashboard, demo dashboard, and fleet console", len(entries))
+	}
+
+	script, err := os.ReadFile(filepath.Join(root, "scripts", "verify-agentation-mount.sh"))
+	if err != nil {
+		t.Fatalf("read browser mount gate: %v", err)
+	}
+	gate := string(script)
+	seenKinds := make(map[string]bool, len(entries))
+	seenTests := make(map[string]bool, len(entries))
+	for _, entry := range entries {
+		if entry.Name == "" || entry.Kind == "" || entry.Source == "" || entry.Route == "" || entry.TestPackage == "" || entry.MountTest == "" {
+			t.Errorf("incomplete UI inventory entry: %+v", entry)
+		}
+		if seenKinds[entry.Kind] {
+			t.Errorf("duplicate UI inventory kind %q", entry.Kind)
+		}
+		seenKinds[entry.Kind] = true
+		if seenTests[entry.MountTest] {
+			t.Errorf("duplicate UI mount test %q", entry.MountTest)
+		}
+		seenTests[entry.MountTest] = true
+		if _, err := os.Stat(filepath.Join(root, entry.Source)); err != nil {
+			t.Errorf("UI inventory source %q is missing: %v", entry.Source, err)
+		}
+		if !strings.Contains(gate, entry.TestPackage) {
+			t.Errorf("browser gate does not run package %q for %s", entry.TestPackage, entry.Name)
+		}
+		if !strings.Contains(gate, entry.MountTest) {
+			t.Errorf("browser gate does not run mount test %q for %s", entry.MountTest, entry.Name)
+		}
+		t.Logf("UI entry point: %s (%s) %s", entry.Name, entry.Source, entry.Route)
+	}
+	for _, want := range []string{"dashboard", "demo", "html"} {
+		if !seenKinds[want] {
+			t.Errorf("UI inventory has no %s entry point", want)
+		}
 	}
 }
 

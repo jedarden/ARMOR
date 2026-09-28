@@ -11,9 +11,9 @@ import (
 	"github.com/jedarden/armor/internal/agentation/agentationsmoke"
 )
 
-// The fleet console is one of ARMOR's two HTML entry points (the other is
-// the proxy dashboard). These tests pin its Agentation wiring and the module
-// endpoint on the real route table; the browser mount check runs via
+// The fleet console is one of ARMOR's three UI entry points. These tests pin
+// its Agentation wiring and the module endpoint on the real route table; the
+// browser mount check runs via
 // scripts/verify-agentation-mount.sh.
 
 // TestFleetPageAgentationWiring pins the assembled page head: import map,

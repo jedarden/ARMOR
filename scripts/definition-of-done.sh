@@ -21,8 +21,9 @@
 # tests/test_prohibited_constructs.py, tests/test_gate_inventory.py,
 # tests/test_documentation_status.py, tests/test_publish_release.py). The
 # default mode adds `go test ./... -short` and the Agentation browser mount
-# smoke (scripts/verify-agentation-mount.sh): every web UI entry point loads
-# in a headless Chromium and must show #agentation-root mounted in the
+# smoke (scripts/verify-agentation-mount.sh): the proxy dashboard, demo
+# dashboard, and fleet console each load in a headless Chromium and must show
+# #agentation-root mounted in the
 # rendered DOM. That leg needs a browser binary and esm.sh reachability and
 # deliberately fails — never silently skips — without them, because an
 # unverified mount is exactly what this gate exists to catch; it lives in
