@@ -1,6 +1,6 @@
 # ADR-003: Multipart object layout, read-path dispatch, and hard-fail part validation
 
-**Status:** Accepted (documents the design as implemented July 2026); **§4's sequential-only enforcement is superseded by [ADR-015](015-out-of-order-multipart-uniform-part-size.md)** (uniform-part-size contract — out-of-order support shipped 2026-07-19); **§5's part-acceptance rules are amended by [ADR-011](011-barman-stays-on-armor-non-uniform-multipart.md)** (alignment exemptions, non-uniform parts) **and scoped by format** (the default v3 format has no part-order or part-size contract at all); **§3's metadata-replace finalization was replaced by [ADR-016](016-multipart-metadata-finalization.md)'s manifest write** (2026-08-31). The client-facing compatibility contract is documented — with the executable test matrix — in the [multipart client-concurrency compatibility matrix](../multipart-client-compatibility.md). The consolidated, authoritative statement of the *current* layout and read path — prefix composition, sidecar naming and lifecycle, the ADR-016 object manifest, and the dispatch algorithm every reader must implement — is the [multipart layout and read-path contract](../multipart-layout-and-read-path.md); where this ADR and that contract disagree on current behavior, the contract is normative.
+**Status:** Accepted (documents the design as implemented July 2026); **§4's sequential-only enforcement is superseded by [ADR-015](015-out-of-order-multipart-uniform-part-size.md)** (uniform-part-size contract — out-of-order support shipped 2026-07-19); **§5's part-acceptance rules are amended by [ADR-011](011-barman-stays-on-armor-non-uniform-multipart.md)** (alignment exemptions, non-uniform parts) **and scoped by format** (the default v3 format has no part-order or part-size contract at all). The original §3 metadata-replace finalization and its placement of `x-amz-meta-armor-multipart` on the ciphertext object are historical; **[ADR-016](016-multipart-metadata-finalization.md) replaced them with manifest-first finalization on 2026-08-31**. The client-facing compatibility contract is documented — with the executable test matrix — in the [multipart client-concurrency compatibility matrix](../multipart-client-compatibility.md). The consolidated, authoritative statement of the *current* layout and read path — prefix composition, sidecar naming and lifecycle, the ADR-016 object manifest, and the dispatch algorithm every reader must implement — is the [multipart layout and read-path contract](../multipart-layout-and-read-path.md); where this ADR and that contract disagree on current behavior, the contract is normative.
 **Date:** 2026-07-18 (amended 2026-07-19)
 
 ## Context
@@ -11,11 +11,26 @@ The original plan called for multipart objects to carry an envelope header with 
 
 ## Decision
 
-Multipart-completed objects use a distinct on-B2 layout, and the read path dispatches on an explicit metadata marker:
+Multipart-completed objects use a distinct on-B2 layout. The current finalization
+and read-path contract is [ADR-016](016-multipart-metadata-finalization.md) and
+the [multipart layout and read-path contract](../multipart-layout-and-read-path.md);
+the summary below is not a replacement for those normative documents.
 
 1. **Layout:** the stored object is raw concatenated part ciphertext. No envelope header, no embedded HMAC table. Plaintext offset N corresponds to ciphertext offset N.
 2. **Sidecar HMAC table:** per-block HMACs are stored as a JSON sidecar object at `.armor/hmac/<sha256-of-object-key>`, written at `CompleteMultipartUpload` from the per-part HMACs accumulated in the multipart state object (`.armor/multipart/<upload-id>.state`).
-3. **Dispatch marker:** `CompleteMultipartUpload` sets `x-amz-meta-armor-multipart: true` in object metadata (via the metadata-replace step that also writes the standard `x-amz-meta-armor-*` fields). Both the full-GET and Range paths check this marker (`internal/server/handlers/handlers.go`) and switch to: load sidecar HMAC table, read data from offset 0, use absolute block indices for HMAC verification. Since [ADR-016](016-multipart-metadata-finalization.md) (2026-08-31) the finalization step writes those fields to a `<key>.armor-manifest` manifest object instead of metadata-replacing the ciphertext object — B2 caps CopyObject at 5 GB and the replace left a corruption window between assembly and stamping — and readers consult the manifest first, falling back to object metadata for objects completed before the manifest existed. Since bf-1v2ehf the manifest also declares the true whole-object plaintext SHA-256, assembled from the per-part digests.
+3. **Manifest-first finalization and dispatch:** after B2 assembles the
+   ciphertext, `CompleteMultipartUpload` writes the sidecar and then the
+   `<key>.armor-manifest` object. The manifest metadata carries
+   `x-amz-meta-armor-multipart: true` and the other ARMOR fields; the ciphertext
+   object is not metadata-replaced or stamped. Readers resolve the manifest
+   first, then fall back to ciphertext metadata only for objects completed
+   before ADR-016. Once the marker is found, full-GET and Range paths load the
+   sidecar, read data from offset 0, and use absolute block indices for HMAC
+   verification. The manifest also declares the true whole-object plaintext
+   SHA-256, assembled from the per-part digests. See the [current layout and
+   read-path contract](../multipart-layout-and-read-path.md) for the complete
+   dispatch order, freshness gate, and legacy fallback.
+
 4. **(Superseded by [ADR-015](015-out-of-order-multipart-uniform-part-size.md); the compatibility contract that replaced this behavior is documented, client by client with the test matrix, in [docs/multipart-client-compatibility.md](../multipart-client-compatibility.md). Historical text follows — nothing in this clause is normative.)** **CTR derivation from cumulative part sizes, sequential-only enforced:** `UploadPart` computes a part's starting block index from the cumulative sizes of all lower-numbered parts recorded in multipart state. Because a part's counter offset cannot be known until every lower-numbered part's size is known, **the shipped implementation enforces sequential part upload**: a part arriving before all lower-numbered parts is rejected with `InvalidPartOrder` ("Expected part 1, got part 7. ARMOR does not support out-of-order or concurrent part uploads…"). Verified empirically 2026-07-18: `aws s3 cp` with default concurrency is rejected; with `max_concurrent_requests = 1` a 50 MB multipart round-trip through HEAD is byte-identical (SHA-256 verified). **Consequence: standard concurrent S3 clients — aws cli defaults, litestream, most SDKs — cannot multipart-upload through ARMOR until configured for serial parts.** Whether to build true out-of-order support (e.g. uniform-part-size negotiation) or standardize on documented client configuration is the open decision tracked in bf-59unr3.
 5. **Hard-fail part validation:** any part pattern ARMOR cannot encrypt correctly is rejected at request time rather than stored corrupted. The principle is current — ADR-015 inherits it verbatim — but the specific rejections below are the 2026-07-18 set; each is annotated with what governs today:
    - Part arriving out of sequence → `InvalidPartOrder` (see above). *(Superseded: ADR-015 removed sequential enforcement. On v2 a part numbered >1 arriving before part 1 is deferred with a retryable `503 SlowDown` and accepted transparently on retry; on v3 parts carry independent counters and any order is accepted outright. `InvalidPartOrder` no longer exists in the error surface.)*
@@ -24,12 +39,25 @@ Multipart-completed objects use a distinct on-B2 layout, and the read path dispa
 
    Rationale: the 2026-06 incident class (ADR-002) was silent corruption — writes reported success while storing wrong bytes. "Reject loudly" is a hard requirement for every path where correct encryption cannot be guaranteed. The deployed 0.1.42 fleet predates this enforcement: it silently mis-encrypted concurrent-part uploads. Confirmed 2026-07-18 on the freshest `ord-devimprint` litestream snapshot (written that day by 0.1.42): unreadable at HEAD (block-512 HMAC failure), ciphertext 65 MiB larger than the declared plaintext, and `x-amz-meta-armor-plaintext-sha256` set to the empty-string SHA — the stored objects are **corrupt at rest**, and no read-path fix can recover them. Remediation requires deploying fixed ARMOR, reconfiguring writers for sequential parts, forcing fresh backup baselines, and auditing the multipart-era objects (plan.md Phases 5–6).
 
+### Historical pre-ADR-016 finalization (not an implementation instruction)
+
+Before ADR-016, `CompleteMultipartUpload` used a same-source/same-destination
+`CopyObject` with metadata replacement to put
+`x-amz-meta-armor-multipart: true` and the other ARMOR fields on the assembled
+ciphertext object. That design is retained here only to explain the metadata
+on pre-ADR-016 objects. It is superseded: new completions must write the
+manifest described by [ADR-016](016-multipart-metadata-finalization.md), and
+all readers must follow the manifest-first algorithm in the [multipart
+layout and read-path contract](../multipart-layout-and-read-path.md). Do not
+restore the metadata-replace step or treat ciphertext-object metadata as the
+primary source for a manifest-era object.
+
 ## Consequences
 
-- Any reader of ARMOR data — the server, `armor decrypt`, the restore-verifier — **must** check the multipart marker before assuming envelope layout. A reader that ignores it fails on every multipart object (this is exactly what bf-24sxh7 was).
-- Reading a multipart object costs one extra sidecar GET (cacheable at the Cloudflare edge like any other object).
-- Deleting or copying a multipart object must account for the sidecar (`.armor/hmac/<sha256(key)>`) or it leaks/breaks; CopyObject of multipart objects inherits this constraint.
-- Clients with non-block-aligned part sizes get hard 400s instead of silent corruption; the error message documents the fix (choose an aligned part size).
+- Any reader of ARMOR data — the server, `armor decrypt`, the restore-verifier — **must** resolve the manifest first, then check the multipart marker before assuming envelope layout. A reader that ignores that order fails on manifest-era multipart objects (the current dispatch algorithm is in the [multipart layout and read-path contract](../multipart-layout-and-read-path.md)).
+- Reading a manifest-era multipart object requires the manifest and sidecar metadata paths; both are cacheable at the Cloudflare edge like any other object. Legacy pre-ADR-016 objects use the ciphertext metadata fallback.
+- Deleting or copying a multipart object must account for the ciphertext, sidecar (`.armor/hmac/<sha256(key)>`), and manifest. `CopyObject` does not consult or copy the multipart manifest or sidecar, so it is not a multipart metadata-finalization mechanism.
+- Legacy v2 uploads with a non-block-aligned uniform part size get hard 400s instead of silent corruption; the default v3 format has no part-size alignment rule. The format-specific rules are defined by [ADR-011](011-barman-stays-on-armor-non-uniform-multipart.md), [ADR-015](015-out-of-order-multipart-uniform-part-size.md), and the [layout contract](../multipart-layout-and-read-path.md).
 - Residual gap closed (bf-1v2ehf): `CompleteMultipartUpload` now assembles the true whole-object plaintext SHA-256 from the per-part digests (`backend.CombinePartPlaintextSHAs`) and declares it in the manifest metadata. Objects completed before that fix still carry the empty-string placeholder; verifiers treat the placeholder as declaring no digest rather than as a checksum failure.
 - The plan's earlier reserved-byte-flag description is superseded by this ADR.
 

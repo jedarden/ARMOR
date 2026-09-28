@@ -124,3 +124,64 @@ func TestADR005VersionClaimsAreCurrent(t *testing.T) {
 		}
 	}
 }
+
+// TestADR003MultipartFinalizationClaimsAreCurrent keeps the original
+// metadata-replace design from becoming an accidental implementation
+// instruction again. ADR-003 remains useful historical context for the
+// headerless layout, but ADR-016 and the multipart layout contract own the
+// current manifest-first finalization and dispatch order.
+func TestADR003MultipartFinalizationClaimsAreCurrent(t *testing.T) {
+	root := repoRoot(t)
+	raw, err := os.ReadFile(filepath.Join(root, "docs", "adr", "003-multipart-object-layout-and-read-path.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	adr := string(raw)
+
+	for _, want := range []string{
+		"016-multipart-metadata-finalization.md",
+		"../multipart-layout-and-read-path.md",
+		"manifest-first finalization",
+		"ciphertext\n   object is not metadata-replaced or stamped",
+	} {
+		if !strings.Contains(adr, want) {
+			t.Errorf("ADR-003 is missing current multipart-finalization claim %q", want)
+		}
+	}
+	if !strings.Contains(strings.Join(strings.Fields(adr), " "), "Readers resolve the manifest first") {
+		t.Error("ADR-003 does not state that readers resolve the manifest first")
+	}
+
+	const historicalHeading = "### Historical pre-ADR-016 finalization (not an implementation instruction)"
+	historicalStart := strings.Index(adr, historicalHeading)
+	if historicalStart < 0 {
+		t.Fatalf("ADR-003 is missing the explicit historical-finalization section")
+	}
+	decisionStart := strings.Index(adr, "## Decision")
+	if decisionStart < 0 || historicalStart <= decisionStart {
+		t.Fatalf("ADR-003 historical-finalization section is not inside the decision narrative")
+	}
+	decision := adr[decisionStart:historicalStart]
+	historical := adr[historicalStart:]
+
+	for _, want := range []string{
+		"metadata replacement",
+		"x-amz-meta-armor-multipart: true",
+		"CopyObject",
+		"pre-ADR-016 objects",
+	} {
+		if !strings.Contains(historical, want) {
+			t.Errorf("ADR-003 historical section is missing %q", want)
+		}
+	}
+
+	for _, stale := range []string{
+		"sets `x-amz-meta-armor-multipart: true` in object metadata",
+		"via the metadata-replace step",
+		"CopyObject with `REPLACE` to set final metadata",
+	} {
+		if strings.Contains(decision, stale) {
+			t.Errorf("ADR-003 decision narrative still presents superseded multipart behavior as current: %q", stale)
+		}
+	}
+}
