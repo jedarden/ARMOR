@@ -302,7 +302,7 @@ func buildContractBinary(t *testing.T) string {
 	}
 
 	bin := filepath.Join(t.TempDir(), "armor")
-	cmd := exec.Command(goTool, "build", "-o", bin, ".")
+	cmd := exec.Command(goTool, "build", "-buildvcs=false", "-o", bin, ".")
 	cmd.Dir = pkgDir
 	out, err := cmd.CombinedOutput()
 	if err != nil {
