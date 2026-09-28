@@ -901,8 +901,11 @@ func TestDecryptLoadEscrowWithCFDomain(t *testing.T) {
 	testEscrowFile := filepath.Join(tmpDir, "escrow.json")
 
 	mekHex := "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	ringMEKHex := "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210"
+	ringMEK, _ := hex.DecodeString(ringMEKHex)
 	escrowData := fmt.Sprintf(`{
 		"mek": %q,
+		"ring_keys": [{"mek": %q, "fingerprint": %q}],
 		"b2": {
 			"region": "us-west-004",
 			"endpoint": "https://s3.us-west-004.backblazeb2.com",
@@ -911,7 +914,7 @@ func TestDecryptLoadEscrowWithCFDomain(t *testing.T) {
 			"bucket": "test-bucket",
 			"cf_domain": "cdn.example.com"
 		}
-	}`, mekHex)
+	}`, mekHex, ringMEKHex, crypto.MEKFingerprint(ringMEK))
 
 	if err := os.WriteFile(testEscrowFile, []byte(escrowData), 0644); err != nil {
 		t.Fatalf("write escrow file: %v", err)
@@ -934,7 +937,7 @@ func TestDecryptLoadEscrowWithCFDomain(t *testing.T) {
 
 	// Set the global escrowFile variable to point to our test file
 	escrowFile = testEscrowFile
-	mek, _, err := loadEscrow()
+	mek, ringKeys, err := loadEscrow()
 	if err != nil {
 		t.Fatalf("loadEscrow: %v", err)
 	}
@@ -943,6 +946,16 @@ func TestDecryptLoadEscrowWithCFDomain(t *testing.T) {
 	expectedMEK, _ := hex.DecodeString(mekHex)
 	if !bytes.Equal(mek, expectedMEK) {
 		t.Errorf("MEK mismatch: got %x, want %x", mek, expectedMEK)
+	}
+	if len(ringKeys) != 1 {
+		t.Fatalf("ring key count = %d, want 1", len(ringKeys))
+	}
+	expectedRingMEK, _ := hex.DecodeString(ringMEKHex)
+	if !bytes.Equal(ringKeys[0].MEK, expectedRingMEK) {
+		t.Error("ring key MEK does not match the escrow response")
+	}
+	if ringKeys[0].Fingerprint != crypto.MEKFingerprint(expectedRingMEK) {
+		t.Errorf("ring key fingerprint = %q, want %q", ringKeys[0].Fingerprint, crypto.MEKFingerprint(expectedRingMEK))
 	}
 
 	// Verify ARMOR_CF_DOMAIN was set from escrow

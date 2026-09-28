@@ -1372,8 +1372,8 @@ func (s *Server) handleMigrationProgress(w http.ResponseWriter, r *http.Request)
 	json.NewEncoder(w).Encode(state)
 }
 
-// exportKey exports the current MEK along with B2 credentials and configuration
-// for self-contained break-glass recovery.
+// exportKey exports the current MEK and its retired ring along with B2
+// credentials and configuration for self-contained break-glass recovery.
 func (s *Server) exportKey(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -1387,6 +1387,14 @@ func (s *Server) exportKey(w http.ResponseWriter, r *http.Request) {
 
 	// Export the default MEK as hex-encoded string
 	defaultKey := s.keyManager.DefaultKey()
+	ring := s.keyManager.Ring(defaultKey.Name)
+	ringKeys := make([]map[string]string, 0, len(ring))
+	for _, ringKey := range ring {
+		ringKeys = append(ringKeys, map[string]string{
+			"fingerprint": crypto.MEKFingerprint(ringKey.MEK),
+			"mek":         hex.EncodeToString(ringKey.MEK),
+		})
+	}
 
 	// Compute MEK hash for provenance tracking
 	exportedMEKHashBytes := sha256.Sum256(defaultKey.MEK)
@@ -1404,7 +1412,9 @@ func (s *Server) exportKey(w http.ResponseWriter, r *http.Request) {
 	// Export complete escrow package: MEK + B2 credentials + B2 config
 	// This ensures recovery is self-contained without relying on K8s ConfigMaps
 	escrowPackage := map[string]interface{}{
-		"mek": hex.EncodeToString(defaultKey.MEK),
+		"mek":                    hex.EncodeToString(defaultKey.MEK),
+		"active_key_fingerprint": crypto.MEKFingerprint(defaultKey.MEK),
+		"ring_keys":              ringKeys,
 		"b2": map[string]string{
 			"region":     s.config.B2Region,
 			"endpoint":   s.config.B2Endpoint,

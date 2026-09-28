@@ -32,8 +32,8 @@ The MEK is the cryptographic root of trust for all encrypted objects. Without it
 
 The ARMOR admin API provides a `/admin/key/export` endpoint — `GET`, requiring
 `?confirm=yes` and the admin bearer token — that returns a self-contained
-break-glass escrow package: the **default** MEK in hex **plus the live B2
-credentials and bucket configuration**.
+break-glass escrow package: the **default** MEK and all retired keys in its
+ring, in hex, **plus the live B2 credentials and bucket configuration**.
 
 ```bash
 # Export the default MEK (escrow package includes B2 credentials)
@@ -45,7 +45,14 @@ curl -s -H "Authorization: Bearer $ARMOR_ADMIN_TOKEN" \
 
 ```json
 {
-  "mek": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+  "mek": "<64-hex active MEK>",
+  "active_key_fingerprint": "<16-hex active fingerprint>",
+  "ring_keys": [
+    {
+      "fingerprint": "<16-hex ring fingerprint>",
+      "mek": "<64-hex retired ring MEK>"
+    }
+  ],
   "b2": {
     "region": "us-west-002",
     "endpoint": "https://s3.us-west-002.backblazeb2.com",
@@ -65,15 +72,18 @@ not. Anyone holding this response needs no MEK at all to read or destroy the
 bucket. Treat it as a top-tier credential: never log it, never paste it into a
 ticket or chat, pipe it straight into escrow storage.
 
-**Scope:** the export covers the **default key only**. It carries no key
-fingerprint and no ring keys — the next section explains where ring material
-actually lives.
+**Scope:** the export covers the active default key and its retired ring. Named
+MEKs and their rings still must be escrowed separately from their secret-store
+paths.
 
-### The MEK Ring (v0.1.1922+) — Where the Material Actually Lives
+### The MEK Ring (v0.1.1922+) — Escrowed by the Export
 
-There is **no admin endpoint that exports ring key material.** Ring keys are
-configured through the deployment's secret store, and that is where you escrow
-them from:
+The `ring_keys` entries are the complete retired ring for the default key. Each
+entry pairs the 64-hex MEK with its 16-hex `crypto.MEKFingerprint` value, and
+`active_key_fingerprint` identifies the active `mek`. Store the complete export
+response as the escrow unit; do not split or log it.
+
+The deployment's secret store remains the source for named-key rings:
 
 - `ARMOR_MEK_RING` — comma-separated hex MEKs retired from the default key
 - `ARMOR_MEK_<NAME>_RING` — the same, for a named key
@@ -83,8 +93,7 @@ them from:
 kubectl get secret armor-secrets -o jsonpath='{.data.mek_ring}' | base64 -d
 ```
 
-Two API endpoints exist for **verification** — neither returns key material and
-neither takes `confirm`:
+Two other API endpoints exist for **verification** and neither takes `confirm`:
 
 - `GET /admin/key/ring` — per-key census: `active_fp`, `ring_fps[]` (16-hex
   fingerprints) and an `objects_by_fp` object-count histogram. Add
@@ -92,9 +101,10 @@ neither takes `confirm`:
   confirm which fingerprints the live ring actually holds.
 - `GET /admin/key/verify` — canary-based confirmation that the active MEK works.
 
-**Escrow format:** `armor decrypt -escrow <file>` consumes a self-contained
-escrow package — the same shape the `/admin/key/export` response has, plus an
-optional ring array:
+**Escrow format:** `armor decrypt -escrow <file>` consumes the
+`/admin/key/export` response directly. It also accepts the older `mek_ring`
+field for escrow files assembled before the export endpoint included ring
+material:
 
 ```json
 {
@@ -112,13 +122,9 @@ optional ring array:
 }
 ```
 
-Each `mek_ring` entry pairs a 64-hex MEK with its 16-hex fingerprint.
-Assemble the package from the exported MEK, the ring values pulled from the
-secret store, and the fingerprints read off `/admin/key/ring` — comparing them
-is how you confirm the ring you escrowed is the ring the cluster loaded.
-The `/admin/key/export` response is itself a valid escrow file for the default
-key (its `b2` block is already filled in), but it has no `mek_ring`: if the
-deployment uses the ring, add that array yourself.
+Each ring entry pairs a 64-hex MEK with its 16-hex fingerprint. The
+`/admin/key/ring` census remains useful for verifying that the live deployment
+holds the same fingerprints, but it never returns key material.
 
 ### Exporting Named MEKs (Multi-Key Deployments)
 
@@ -173,20 +179,19 @@ Before rotating the MEK, you MUST:
    # Verify checksums
    sha256sum /secure/path/mek-backup-*.json
 
-   # Pull the ring key material from the secret store (no API export exists)
-   kubectl get secret armor-secrets -o jsonpath='{.data.mek_ring}' \
-     | base64 -d > /secure/path/mek-ring-$(date +%Y%m%d).hex
+   # Verify the active key and every exported ring key by fingerprint
+   jq -e '.active_key_fingerprint and (.ring_keys | type == "array")' \
+     /secure/path/mek-backup-*.json
 
-   # Record the fingerprints the live ring actually holds
+   # Record the fingerprints the live ring actually holds (no key material)
    kubectl exec deploy/armor -n <namespace> -- \
      curl -s -H "Authorization: Bearer $ARMOR_ADMIN_TOKEN" \
        "http://localhost:9001/admin/key/ring" | jq .
    ```
 
 2. **Escrow the MEK ring as a unit** in your secure location of choice.
-   The escrow must include both the active MEK and all ring keys — as a
-   `armor decrypt -escrow` package (see [The MEK Ring](#the-mek-ring-v011922--where-the-material-actually-lives))
-   or as the raw secret-store values plus the export file.
+   The escrow must include both the active MEK and all ring keys as the complete
+   `/admin/key/export` response (see [The MEK Ring](#the-mek-ring-v011922--escrowed-by-the-export)).
 
 3. **Verify the escrow** by retrieving it and comparing the ring fingerprints
    against the live census (the census endpoint returns no key material, so
@@ -1428,18 +1433,19 @@ aws secretsmanager create-secret \
 
 ### Export and Escrow MEK Ring (v0.1.1922+)
 
-The admin API cannot export ring key material — `/admin/key/ring` is a
-fingerprint census only. Pull the material from the secret store and record the
-census alongside it for verification:
+The admin API exports the active default MEK and its complete retired ring as a
+single escrow response. Save the complete response, including the B2 block, in
+the approved secret escrow:
 
 ```bash
-# Ring key material — from the secret store, not the API
-kubectl get secret armor-secrets -o jsonpath='{.data.mek_ring}' \
-  | base64 -d > mek-ring-backup-$(date +%Y%m%d).hex
+# Export the active MEK and every default-key ring key as one unit
+curl -s -H "Authorization: Bearer $ARMOR_ADMIN_TOKEN" \
+  "http://localhost:9001/admin/key/export?confirm=yes" \
+  > mek-ring-backup-$(date +%Y%m%d).json
 
-# Verify it parses as comma-separated 64-hex MEKs
-jq -R 'split(",") | all(length == 64 and test("^[0-9a-fA-F]+$"))' \
-  mek-ring-backup-*.hex
+# Verify the response carries the active fingerprint and ring array
+jq -e '.mek and .active_key_fingerprint and (.ring_keys | type == "array")' \
+  mek-ring-backup-*.json
 
 # Record which fingerprints the live ring holds (no key material in this output)
 kubectl exec deploy/armor -n <namespace> -- \
@@ -1447,12 +1453,12 @@ kubectl exec deploy/armor -n <namespace> -- \
     "http://localhost:9001/admin/key/ring" | jq . > mek-ring-census-$(date +%Y%m%d).json
 
 # Verify checksums
-sha256sum mek-ring-backup-*.hex mek-ring-census-*.json
+sha256sum mek-ring-backup-*.json mek-ring-census-*.json
 
 # Escrow (example: AWS Secrets Manager)
 aws secretsmanager create-secret \
   --name armor-mek-ring-prod-$(date +%Y%m%d) \
-  --secret-string file://mek-ring-backup-$(date +%Y%m%d).hex
+  --secret-string file://mek-ring-backup-$(date +%Y%m%d).json
 aws secretsmanager create-secret \
   --name armor-mek-ring-census-prod-$(date +%Y%m%d) \
   --secret-string file://mek-ring-census-$(date +%Y%m%d).json

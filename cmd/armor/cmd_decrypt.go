@@ -255,6 +255,10 @@ type escrowPackage struct {
 		MEK         string `json:"mek"`
 		Fingerprint string `json:"fingerprint"` // 16 hex chars (first 8 bytes of SHA-256(MEK))
 	} `json:"mek_ring"`
+	RingKeys []struct {
+		MEK         string `json:"mek"`
+		Fingerprint string `json:"fingerprint"` // 16 hex chars (first 8 bytes of SHA-256(MEK))
+	} `json:"ring_keys"`
 	B2 struct {
 		Region    string `json:"region"`
 		Endpoint  string `json:"endpoint"`
@@ -290,9 +294,15 @@ func loadEscrow() ([]byte, []crypto.RingKeyEntry, error) {
 		return nil, nil, fmt.Errorf("invalid MEK length in escrow: got %d bytes, expected 32", len(mek))
 	}
 
-	// Build ring keys from escrow mek_ring array
+	// Build ring keys from the export response's ring_keys array. Keep accepting
+	// mek_ring for escrow files written before /admin/key/export included the
+	// ring, and for the documented offline escrow format.
+	ringEntries := pkg.RingKeys
+	if len(ringEntries) == 0 {
+		ringEntries = pkg.MEKRing
+	}
 	var ringKeys []crypto.RingKeyEntry
-	for _, rk := range pkg.MEKRing {
+	for _, rk := range ringEntries {
 		if rk.MEK == "" || rk.Fingerprint == "" {
 			continue
 		}
