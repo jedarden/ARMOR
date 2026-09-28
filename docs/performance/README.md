@@ -16,8 +16,10 @@ run) as current production throughput**; re-run the harness.
 | `tests/performance/matrix.go` | The bounded scenario matrix, metrics, verification, `results.json` / `results.md` output |
 | `tests/performance/harness_test.go` | CI-safe deterministic tests (request counts, tail-block selectivity, one-PUT-per-part, overlap detector, compressed-path boundary) |
 | `tests/performance/baseline_test.go` | `TestRecordedBaseline` — the opt-in measurement run |
+| `tests/performance/large_range_test.go` | `TestLargeObjectRangeReadBaseline` — focused large-object range latency and backend-byte measurement |
 | `tests/performance/remote_test.go` | Opt-in remote targets: real ARMOR service, Cloudflare read path, labeled direct-backend comparison |
 | [small-object-get-baseline.md](small-object-get-baseline.md) | The small-object full-GET baseline (armor-50a36688): per-GET backend request counts pinned by tests, the latency-injected matrix, and the in-cluster `armor-get-probe` production numbers |
+| [large-object-range-read-baseline.md](large-object-range-read-baseline.md) | The focused large-object range baseline: exact plaintext verification, warm-metadata latency, backend fetch counts/bytes, and interpretation limits |
 
 ## What is measured
 
@@ -41,6 +43,13 @@ Scenario families (all against the v3 envelope, 64 KiB blocks, AES-GCM):
 - **Object sizes** — 64 KiB (one block), 1 MiB, 64 MiB by default. 1 GiB is
   opt-in only (`ARMOR_PERF_SIZES=…,1GiB`) to keep the default run bounded.
 
+The focused large-object range run uses one 64 MiB object by default and
+measures a block-aligned 64 KiB read, an unaligned 32 KiB read, aligned 1 MiB
+and 8 MiB reads, and a 64 KiB suffix. It warms each range once, compares every
+sample with the exact plaintext slice, and writes
+`large-range-results.{json,md}`. Set `ARMOR_PERF_LARGE_OBJECT=1GiB` to make the
+same run exercise a 1 GiB object.
+
 Per scenario the harness records: payload MB/s (aggregate, p50, p95),
 time-to-first-byte p50/p95, completion latency p50/p95, backend
 GET/range + PUT/part request counts and bytes (deltas), max in-flight
@@ -57,6 +66,9 @@ temp filesystem backend (honors `TMPDIR`):
 ```bash
 # bounded default matrix (~15 s): 64KiB/1MiB/64MiB, writes verified via service read-back
 ARMOR_PERF_RUN=1 go test ./tests/performance/ -run TestRecordedBaseline -v -timeout 40m
+
+# focused large-object range report (default: one 64 MiB object, five samples)
+ARMOR_PERF_RUN=1 go test ./tests/performance/ -run TestLargeObjectRangeReadBaseline -v -timeout 40m
 
 # results (JSON + markdown) land in:
 #   $ARMOR_PERF_OUT/results.{json,md}   (default: <os.TempDir>()/armor-perf-results)
@@ -115,6 +127,14 @@ keys the run created. Results go to `$ARMOR_PERF_OUT/remote-results.json`.
 
 Credentials travel only as environment references. No secret value, and no
 unpublished object identifier, is ever written to results or logs.
+
+## Focused large-object range baseline
+
+The measured focused baseline and its limits are in
+[large-object-range-read-baseline.md](large-object-range-read-baseline.md).
+It is intentionally separate from the full read/write matrix because range
+work is dominated by the requested span, block alignment, metadata/table
+fetches, and backend round trips rather than whole-object throughput.
 
 ## Recorded baseline — 2026-09-18
 

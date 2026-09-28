@@ -40,8 +40,11 @@ tests cover the fingerprinted-DEK, v3 multipart, SigV4, presigned/share, and
 range paths, but release-image and live DR evidence is still required before
 those capabilities are accepted for an operator workflow. Named-key
 reads, wrapped-DEK decoding, multipart sidecar preservation, and presigned GET
-have historical failure records, while range-read performance remains open
-work. Do not infer a full AWS S3 contract from the tested operation matrix.
+have historical failure records. Range correctness is repository-tested and a
+repeatable local large-object performance baseline is recorded in the
+[large-object range-read baseline](docs/performance/large-object-range-read-baseline.md);
+production B2/Cloudflare performance remains unmeasured. Do not infer a full
+AWS S3 contract from the tested operation matrix.
 See the [release-status and known-limitations register](docs/release-status.md)
 for the exact boundary and promotion evidence.
 

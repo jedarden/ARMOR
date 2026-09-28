@@ -29,7 +29,7 @@ pages link here so their examples do not silently become release claims.
 | V3 multipart verification in CLI and DR | `release-pending` | `armor verify`, `armor decrypt`, and restore-verifier tests cover manifest fallback, sidecar HMACs, part counters, and digest outcomes. | Prove it against the published image and a real v3 multipart object; old completed objects with empty B2 metadata were not visible to the verifier. Historical incident: `armor-86a90341`. |
 | SigV4 authentication | `release-pending` | The protocol suite and request-shape tests cover accepted and rejected credentials, including AWS CLI and barman-shaped requests. | Run the real AWS CLI against the release image and inspect the server-side denial class. A live rejection remains a release/endpoint concern: `armor-a3b04ef2`. |
 | Presigned/share GET | `release-pending` | Enabled-harness tests cover share GETs and range/error responses. | `ARMOR_PRESIGN_ENABLED`, absolute base URL, and the dedicated secret must be configured; test the enabled route, not only the admin URL. Historical 403 harness failure: `armor-0163fb32`. |
-| Byte-range reads | `repository-tested` | Protocol and handler tests cover unaligned, suffix, multipart-boundary, prefix, and corruption cases. | Correctness evidence is not a performance guarantee. Coalesced fetches and bounded streaming remain open work (`armor-73564f97`, `armor-5694713b`, `armor-272299ca`). |
+| Byte-range reads | `repository-tested` | Protocol and handler tests cover unaligned, suffix, multipart-boundary, prefix, and corruption cases; the focused [large-object range baseline](performance/large-object-range-read-baseline.md) records local latency and backend-byte shape. | The baseline is loopback + filesystem only, not B2/Cloudflare production evidence. Coalesced fetches, bounded streaming, and production-shaped performance remain open work (`armor-73564f97`, `armor-5694713b`, `armor-272299ca`). |
 | S3 operation surface | `scope-limited` | The documented matrix covers authentication, reads, ranges, listing, overwrite/delete, and multipart where a client supports it. | ARMOR is not a claim of full AWS S3 API compatibility. Use the matrix and the image-gate client run for the exact release under evaluation. |
 
 ## Known limitations
@@ -49,8 +49,11 @@ pages link here so their examples do not silently become release claims.
   route returns an authorization/configuration failure; that is not evidence
   about the ordinary SigV4 S3 route.
 - **Range correctness and range performance are different contracts.** The
-  current tests protect byte and status semantics, while the open read-ahead
-  work concerns request count, first-byte latency, and bounded memory.
+  current tests protect byte and status semantics, while the focused local
+  baseline measures request count, backend bytes, and latency for representative
+  large-object spans. It does not measure B2, Cloudflare, production network
+  tails, or bounded-memory behavior; the open read-ahead work still concerns
+  those limits.
 - **Compatibility is scoped.** The supported examples are the operations in
   the compatibility matrix, against the tested image and configuration. Do not
   generalize them to untested S3 features or to a deployment whose image or
