@@ -1,14 +1,16 @@
 // Package docsindex validates that docs/README.md stays a complete and
 // accurate index of the documentation tree, and that the configuration
-// reference (docs/configuration.md) stays in parity with internal/config.
+// reference (docs/configuration.md) stays in parity with the code that reads
+// its variables — internal/config and the ARMOR_* consumers outside it.
 //
 // The index promises that every file under docs/ (excluding archive/ and the
 // index itself) is linked exactly once and that every link resolves. This
 // package turns that promise into a checkable report so the index cannot
 // silently drift as documents are added. The configuration reference promises
-// the same about variables: every ARMOR_* variable internal/config reads has
-// a row there, and each row's default and validation anchors agree with the
-// code (see configref.go).
+// the same about variables: every ARMOR_* variable internal/config or a
+// consumer (the companion binaries, the packages reading ARMOR_* settings
+// directly) reads has a row there, and each row's default and validation
+// anchors agree with the code (see configref.go and consumerref.go).
 package docsindex
 
 import (

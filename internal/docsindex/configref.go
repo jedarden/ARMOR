@@ -16,10 +16,11 @@ import (
 // CodeDefaults and ValidationRules extract what internal/config actually
 // does, and ConfigRefProblems reports every place the two disagree.
 
-// CodeDefault is a default value internal/config declares mechanically, as
-// extracted from the source: the second argument of a getEnv/getEnvInt call,
-// or a bool env flag compared against "true", either inline or through the
-// local the env read was assigned to.
+// CodeDefault is a default value the code declares mechanically, as extracted
+// from the source: the second argument of a getEnv/getEnvInt call, a helper
+// fallback of the form parseInt(os.Getenv("ARMOR_X"), 16), or a bool env flag
+// compared against "true", either inline or through the local the env read
+// was assigned to.
 type CodeDefault struct {
 	Var   string // the ARMOR_* variable name
 	Kind  string // "string", "int" or "bool"
@@ -47,12 +48,19 @@ type ConfigRefRow struct {
 
 var (
 	// goStringBody matches the inside of a double-quoted Go string literal,
-	// escapes included.
-	goStringBody = `(?:[^"\\]|\\.)*`
+	// escapes included. A newline is excluded — an interpreted string cannot
+	// span lines, and allowing one let a match run from one string's closing
+	// quote across the comments and code between it and a later string's
+	// opening quote, turning that prose into a phantom rule.
+	goStringBody = `(?:[^"\\\n]|\\.)*`
 	// envStringDefault matches getEnv("ARMOR_X", "default").
 	envStringDefault = regexp.MustCompile(`getEnv\(\s*"(ARMOR_[A-Z0-9_]+)"\s*,\s*"(` + goStringBody + `)"\s*\)`)
 	// envIntDefault matches getEnvInt("ARMOR_X", 100).
 	envIntDefault = regexp.MustCompile(`getEnvInt\(\s*"(ARMOR_[A-Z0-9_]+)"\s*,\s*(\d+)\s*\)`)
+	// envIntFallback matches parseInt(os.Getenv("ARMOR_X"), 16) — any helper
+	// whose second argument is the value used when the variable is unset or
+	// unparseable, as the companion binaries wire flag defaults.
+	envIntFallback = regexp.MustCompile(`[A-Za-z_][A-Za-z0-9_]*\(\s*os\.Getenv\(\s*"(ARMOR_[A-Z0-9_]+)"\s*\)\s*,\s*(\d+)\s*\)`)
 	// envBoolFlag matches os.Getenv("ARMOR_X") == "true".
 	envBoolFlag = regexp.MustCompile(`os\.Getenv\(\s*"(ARMOR_[A-Z0-9_]+)"\s*\)\s*==\s*"true"`)
 	// envBoolAssign matches `name := os.Getenv("ARMOR_X")` — the first half of
@@ -109,38 +117,17 @@ func forEachConfigSource(configDir string, visit func(src []byte) error) error {
 }
 
 // CodeDefaults extracts, sorted by variable, every default internal/config
-// declares in a mechanically recognizable way. Variables whose default is
-// computed (derived from the hostname, a tri-state string, ...) are simply
-// absent: parity is enforced only where the code itself states a literal.
+// declares in a mechanically recognizable way: the second argument of a
+// getEnv/getEnvInt call, a helper fallback of the form
+// parseInt(os.Getenv("ARMOR_X"), 16), or a bool env flag compared against
+// "true", either inline or through the local the env read was assigned to.
+// Variables whose default is computed (derived from the hostname, a tri-state
+// string, ...) are simply absent: parity is enforced only where the code
+// itself states a literal.
 func CodeDefaults(configDir string) ([]CodeDefault, error) {
 	seen := make(map[string]CodeDefault)
 	err := forEachConfigSource(configDir, func(src []byte) error {
-		text := string(src)
-		for _, m := range envStringDefault.FindAllStringSubmatch(text, -1) {
-			seen[m[1]] = CodeDefault{Var: m[1], Kind: "string", Value: m[2]}
-		}
-		for _, m := range envIntDefault.FindAllStringSubmatch(text, -1) {
-			seen[m[1]] = CodeDefault{Var: m[1], Kind: "int", Value: m[2]}
-		}
-		for _, m := range envBoolFlag.FindAllStringSubmatch(text, -1) {
-			seen[m[1]] = CodeDefault{Var: m[1], Kind: "bool", Value: "false"}
-		}
-		// The two-line boolean idiom: the local assigned from the env read is
-		// the thing later compared against "true". Both halves must be in the
-		// same file for the pairing to be trusted.
-		assigned := make(map[string]string)
-		compared := make(map[string]bool)
-		for _, m := range envBoolAssign.FindAllStringSubmatch(text, -1) {
-			assigned[m[1]] = m[2]
-		}
-		for _, m := range envTrueCmp.FindAllStringSubmatch(text, -1) {
-			compared[m[1]] = true
-		}
-		for local, v := range assigned {
-			if compared[local] {
-				seen[v] = CodeDefault{Var: v, Kind: "bool", Value: "false"}
-			}
-		}
+		extractDefaults(src, seen)
 		return nil
 	})
 	if err != nil {
@@ -154,6 +141,41 @@ func CodeDefaults(configDir string) ([]CodeDefault, error) {
 	return defaults, nil
 }
 
+// extractDefaults records into seen every default a source declares in a
+// mechanically recognizable way. Shared by the config-side and consumer-side
+// scans (see consumerref.go).
+func extractDefaults(src []byte, seen map[string]CodeDefault) {
+	text := string(src)
+	for _, m := range envStringDefault.FindAllStringSubmatch(text, -1) {
+		seen[m[1]] = CodeDefault{Var: m[1], Kind: "string", Value: m[2]}
+	}
+	for _, m := range envIntDefault.FindAllStringSubmatch(text, -1) {
+		seen[m[1]] = CodeDefault{Var: m[1], Kind: "int", Value: m[2]}
+	}
+	for _, m := range envIntFallback.FindAllStringSubmatch(text, -1) {
+		seen[m[1]] = CodeDefault{Var: m[1], Kind: "int", Value: m[2]}
+	}
+	for _, m := range envBoolFlag.FindAllStringSubmatch(text, -1) {
+		seen[m[1]] = CodeDefault{Var: m[1], Kind: "bool", Value: "false"}
+	}
+	// The two-line boolean idiom: the local assigned from the env read is
+	// the thing later compared against "true". Both halves must be in the
+	// same file for the pairing to be trusted.
+	assigned := make(map[string]string)
+	compared := make(map[string]bool)
+	for _, m := range envBoolAssign.FindAllStringSubmatch(text, -1) {
+		assigned[m[1]] = m[2]
+	}
+	for _, m := range envTrueCmp.FindAllStringSubmatch(text, -1) {
+		compared[m[1]] = true
+	}
+	for local, v := range assigned {
+		if compared[local] {
+			seen[v] = CodeDefault{Var: v, Kind: "bool", Value: "false"}
+		}
+	}
+}
+
 // ValidationRules extracts, sorted by variable, the checkable constraints
 // internal/config's validation errors state. Rules whose message carries no
 // anchor token (pure prose like "must be a relative path") are dropped:
@@ -161,37 +183,49 @@ func CodeDefaults(configDir string) ([]CodeDefault, error) {
 func ValidationRules(configDir string) ([]ValidationRule, error) {
 	tokensByKey := make(map[string]map[string]bool)
 	err := forEachConfigSource(configDir, func(src []byte) error {
-		for _, lit := range goStringLiteral.FindAllString(string(src), -1) {
-			unquoted, uerr := strconv.Unquote(lit)
-			if uerr != nil {
-				unquoted = lit[1 : len(lit)-1]
-			}
-			if !strings.Contains(unquoted, "ARMOR_") || !ruleWords.MatchString(unquoted) {
-				continue
-			}
-			ruleText := unquoted
-			for _, t := range ruleTruncators {
-				if i := strings.Index(ruleText, t); i >= 0 {
-					ruleText = ruleText[:i]
-				}
-			}
-			tokens := ruleTokens(ruleText)
-			if len(tokens) == 0 {
-				continue
-			}
-			key := ruleKey.FindString(unquoted)
-			if tokensByKey[key] == nil {
-				tokensByKey[key] = make(map[string]bool)
-			}
-			for _, t := range tokens {
-				tokensByKey[key][t] = true
-			}
-		}
+		extractRules(src, tokensByKey)
 		return nil
 	})
 	if err != nil {
 		return nil, err
 	}
+	return rulesFrom(tokensByKey), nil
+}
+
+// extractRules records into tokensByKey the anchor tokens of every validation
+// statement a source carries. Shared by the config-side and consumer-side
+// scans (see consumerref.go); see ValidationRules for what counts.
+func extractRules(src []byte, tokensByKey map[string]map[string]bool) {
+	for _, lit := range goStringLiteral.FindAllString(string(src), -1) {
+		unquoted, uerr := strconv.Unquote(lit)
+		if uerr != nil {
+			unquoted = lit[1 : len(lit)-1]
+		}
+		if !strings.Contains(unquoted, "ARMOR_") || !ruleWords.MatchString(unquoted) {
+			continue
+		}
+		ruleText := unquoted
+		for _, t := range ruleTruncators {
+			if i := strings.Index(ruleText, t); i >= 0 {
+				ruleText = ruleText[:i]
+			}
+		}
+		tokens := ruleTokens(ruleText)
+		if len(tokens) == 0 {
+			continue
+		}
+		key := ruleKey.FindString(unquoted)
+		if tokensByKey[key] == nil {
+			tokensByKey[key] = make(map[string]bool)
+		}
+		for _, t := range tokens {
+			tokensByKey[key][t] = true
+		}
+	}
+}
+
+// rulesFrom flattens a token map into sorted ValidationRules.
+func rulesFrom(tokensByKey map[string]map[string]bool) []ValidationRule {
 	rules := make([]ValidationRule, 0, len(tokensByKey))
 	for key, toks := range tokensByKey {
 		tokens := make([]string, 0, len(toks))
@@ -202,7 +236,7 @@ func ValidationRules(configDir string) ([]ValidationRule, error) {
 		rules = append(rules, ValidationRule{Var: key, Tokens: tokens})
 	}
 	sort.Slice(rules, func(i, j int) bool { return rules[i].Var < rules[j].Var })
-	return rules, nil
+	return rules
 }
 
 // ruleTokens returns the anchor tokens a rule statement requires the
@@ -358,7 +392,18 @@ func docText(s string) string {
 }
 
 // ConfigRefProblems reports every way a configuration reference fails to
-// document vars with their defaults and validation rules, sorted:
+// document vars with their defaults and validation rules, sorted. It is the
+// internal/config half of the parity check; see refProblems for the problem
+// classes and ConsumerRefProblems (consumerref.go) for the half covering the
+// ARMOR_* consumers outside internal/config.
+func ConfigRefProblems(vars []string, defaults []CodeDefault, rules []ValidationRule, rows []ConfigRefRow) []string {
+	return refProblems("internal/config", vars, defaults, rules, rows)
+}
+
+// refProblems is the shared core of both parity checks. It reports every way a
+// configuration reference fails to document vars with their defaults and
+// validation rules, sorted, naming source in the messages that attribute an
+// extraction:
 //
 //   - a variable read by the code with no reference table row at all;
 //   - a non-family variable spread over several rows;
@@ -368,9 +413,9 @@ func docText(s string) string {
 //   - a variable's row missing an anchor its validation rule requires;
 //   - a validation rule naming a variable the code never reads.
 //
-// Rows claiming no variable from vars are left alone: they document
-// variables other packages read, which this package does not check.
-func ConfigRefProblems(vars []string, defaults []CodeDefault, rules []ValidationRule, rows []ConfigRefRow) []string {
+// Rows claiming no variable from vars are left alone: they document variables
+// the caller did not offer, whether read elsewhere or not read at all.
+func refProblems(source string, vars []string, defaults []CodeDefault, rules []ValidationRule, rows []ConfigRefRow) []string {
 	// claims maps each variable to the rows whose Variable cell names it;
 	// claimedBy is the per-row inverse.
 	claims := make(map[string][]int)
@@ -430,8 +475,8 @@ func ConfigRefProblems(vars []string, defaults []CodeDefault, rules []Validation
 		}
 		if got := strings.TrimSpace(docText(row.Default)); got != d.Value {
 			problems = append(problems, fmt.Sprintf(
-				"configuration reference line %d states default %q for %s; internal/config declares %s default %q",
-				row.Line, got, d.Var, d.Kind, d.Value))
+				"configuration reference line %d states default %q for %s; %s declares %s default %q",
+				row.Line, got, d.Var, source, d.Kind, d.Value))
 		}
 	}
 
@@ -439,7 +484,7 @@ func ConfigRefProblems(vars []string, defaults []CodeDefault, rules []Validation
 		v := resolveRuleVar(rule.Var, vars)
 		if v == "" {
 			problems = append(problems, fmt.Sprintf(
-				"validation rule names %s, which internal/config does not read", rule.Var))
+				"validation rule names %s, which %s does not read", rule.Var, source))
 			continue
 		}
 		row, ok := bestRow(v)
@@ -455,8 +500,8 @@ func ConfigRefProblems(vars []string, defaults []CodeDefault, rules []Validation
 		}
 		if len(missing) > 0 {
 			problems = append(problems, fmt.Sprintf(
-				"configuration reference line %d does not state the validation rule internal/config enforces on %s (missing %s)",
-				row.Line, v, strings.Join(missing, ", ")))
+				"configuration reference line %d does not state the validation rule %s enforces on %s (missing %s)",
+				row.Line, source, v, strings.Join(missing, ", ")))
 		}
 	}
 

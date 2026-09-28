@@ -72,10 +72,12 @@ make help                            # the rest of the targets
   green run covering the release commit gates the fleet roll.
 - Two tests guard documentation: `internal/docsindex` fails when a file under
   `docs/` is missing from `docs/README.md` (or linked twice, or a link is
-  broken), and when an `ARMOR_*` variable read by `internal/config` lacks a
-  row in `docs/configuration.md` — or its row's `Default` disagrees with the
+  broken), and when an `ARMOR_*` variable read by `internal/config`
+  (`TestConfigReferenceParity`) or consumed by the companion binaries and
+  packages outside it (`TestConsumerReferenceParity`) lacks a row in
+  `docs/configuration.md` — or its row's `Default` disagrees with the
   default the code declares, or the row omits a bound or accepted value the
-  code's validation enforces (`TestConfigReferenceParity`). Add or update the
+  code's validation enforces. Add or update the
   configuration-reference row in the same change as the code.
 - Python: `tests/test_drift_check.py`, `tests/test_toolchain_parity.py`,
   `tests/test_compose_version_parity.py`, `tests/test_cut_release.py`,

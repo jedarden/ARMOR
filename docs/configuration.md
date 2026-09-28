@@ -1,10 +1,11 @@
 # Configuration Reference
 
 ARMOR is configured entirely by environment variables. Every variable read by
-`internal/config` is listed here; a test (`internal/docsindex`) fails when one
-is missing, when a Default column disagrees with the default the code
-declares, or when a row omits a bound or accepted value the code enforces.
-Names in `<angle brackets>` are placeholders.
+`internal/config` — and every `ARMOR_*` variable the companion binaries
+(`cmd/`) and the packages outside `internal/config` consume — is listed here;
+a test (`internal/docsindex`) fails when one is missing, when a Default column
+disagrees with the default the code declares, or when a row omits a bound or
+accepted value the code enforces. Names in `<angle brackets>` are placeholders.
 
 The required minimum for a new deployment is the README's
 [Required configuration](../README.md#required-configuration) table; everything
@@ -123,6 +124,17 @@ need a HEAD per object. It is stored under `.armor/manifest/` in the bucket.
 | `ARMOR_PRESIGN_ENABLED` | No | `false` | Enable pre-signed share URLs (`POST /admin/presign`, `GET /share/`) |
 | `ARMOR_PRESIGN_SECRET` | With presign | — | Signing key (hex, at least 32 bytes = 64 hex characters) |
 | `ARMOR_PRESIGN_BASE_URL` | With presign | — | Absolute base URL for generated share links (`http://` or `https://`) |
+
+## Restore verifier
+
+The restore-verifier companion binary reads the bucket-scope variables above
+(`ARMOR_B2_*`, `ARMOR_MEK`, `ARMOR_PREFIX`, ...) for its verification runs;
+its own `VERIFIER_*` settings are documented in the
+[deployment guide](restore-verifier-deployment-guide.md).
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `ARMOR_DEPLOYMENT` | No | — | Deployment identity recorded in escalation bead bodies (e.g. `iad-ci/armor`). Feeds the verifier's `-escalation-deployment` flag |
 
 ## Secondary backend (async replication, [ADR-006](adr/006-dual-backend-replication.md))
 
