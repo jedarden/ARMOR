@@ -24,9 +24,20 @@ type recordingFiler struct {
 	mu    sync.Mutex
 	filed []BeadPayload
 	err   error // when non-nil, File returns it instead of recording
+	block chan struct{}
+	start chan struct{}
 }
 
 func (f *recordingFiler) File(_ context.Context, p BeadPayload) (string, error) {
+	if f.start != nil {
+		select {
+		case f.start <- struct{}{}:
+		default:
+		}
+	}
+	if f.block != nil {
+		<-f.block
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.err != nil {
@@ -173,6 +184,48 @@ func TestEscalator_DistinctFailuresFileSeparately(t *testing.T) {
 
 	if got, want := f.count(), 3; got != want {
 		t.Fatalf("distinct failures filed %d beads, want %d", got, want)
+	}
+}
+
+func TestEscalator_ConcurrentSameFailureFilesOnce(t *testing.T) {
+	f := &recordingFiler{block: make(chan struct{}), start: make(chan struct{}, 1)}
+	e := NewEscalator(EscalatorConfig{Filer: f})
+	r := vr("obj-concurrent", StatusRestoreError, PathARMOR)
+
+	firstDone := make(chan struct{})
+	go func() {
+		defer close(firstDone)
+		if _, err := e.EscalateFailure(context.Background(), r, Provenance{}); err != nil {
+			t.Errorf("first concurrent filing failed: %v", err)
+		}
+	}()
+	select {
+	case <-f.start:
+	case <-time.After(time.Second):
+		t.Fatal("first filing did not reach the filer")
+	}
+
+	secondDone := make(chan struct{})
+	go func() {
+		defer close(secondDone)
+		id, err := e.EscalateFailure(context.Background(), r, Provenance{})
+		if err != nil {
+			t.Errorf("concurrent dedupe returned an error: %v", err)
+		}
+		if id != "" {
+			t.Errorf("concurrent dedupe returned bead id %q", id)
+		}
+	}()
+	select {
+	case <-secondDone:
+	case <-time.After(time.Second):
+		t.Fatal("same-failure concurrent call did not dedupe while filing was in flight")
+	}
+
+	close(f.block)
+	<-firstDone
+	if got := f.count(); got != 1 {
+		t.Fatalf("concurrent same failure filed %d beads, want 1", got)
 	}
 }
 

@@ -269,7 +269,10 @@ cannot produce a duplicate bead.
    the dedupe state file and the beads workspace
    (`<state dir>/beads-workspace` by default). Persist it with a PVC so the
    dedupe set and the filed beads survive pod restarts; use storage class
-   `sata` on Rackspace/OpenStack clusters.
+   `sata` on Rackspace/OpenStack clusters, and size it **5Gi or more** — the
+   Rackspace Spot Cinder proxy rejects volume sizes below 5
+   (`'size' parameter must be between 5 and 20`), and the class disallows
+   expansion, so a smaller claim never binds.
 
 At startup with escalation enabled the verifier validates both: it looks up
 the CLI, runs `bead --version`, probes the workspace directory writable,

@@ -333,18 +333,27 @@ func main() {
 			UniqueRefNamespace: *escalRefNamespace,
 			ExecTimeout:        *escalExecTimeout,
 		}
+		var escalationFiler restoreverifier.BeadFiler = filer
+		startupValidated := true
 		if err := filer.ValidateStartup(context.Background()); err != nil {
 			log.Printf("ESCALATION FILING DISABLED — startup validation failed: %v", err)
-			log.Printf("Escalation remains configured on; the verifier runs without bead filing until the prerequisite above is fixed.")
+			log.Printf("Escalation remains configured but filing is disabled; the verifier runs without bead filing until the prerequisite above is fixed.")
+			startupValidated = false
+			// Do not leave a filer that is known to be unusable installed in the
+			// scheduler. Apart from producing noisy errors on every tick, doing so
+			// would contradict the explicit disabled state in the startup log.
+			escalationFiler = restoreverifier.NoopFiler()
 		}
 		cfg.Escalator = restoreverifier.NewEscalator(restoreverifier.EscalatorConfig{
-			Filer:           filer,
+			Filer:           escalationFiler,
 			Deployment:      *escalDeployment,
 			FreshnessWindow: *escalFreshness,
 			StatePath:       *escalStatePath,
 		})
-		log.Printf("Escalation enabled: deployment=%q freshness=%s state=%s workspace=%s binary=%s unique-ref-ns=%q (storm-proof: one bead per distinct failure)",
-			orDefault(*escalDeployment, "(unset)"), *escalFreshness, *escalStatePath, workspace, *escalBinary, *escalRefNamespace)
+		if startupValidated {
+			log.Printf("Escalation enabled: deployment=%q freshness=%s state=%s workspace=%s binary=%s unique-ref-ns=%q (storm-proof: one bead per distinct failure)",
+				orDefault(*escalDeployment, "(unset)"), *escalFreshness, *escalStatePath, workspace, *escalBinary, *escalRefNamespace)
+		}
 	} else {
 		log.Printf("Escalation disabled (VERIFIER_ESCALATION=false); failures surface via metrics only")
 	}

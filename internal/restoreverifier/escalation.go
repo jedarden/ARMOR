@@ -271,6 +271,11 @@ type Escalator struct {
 	// staleness is the persisted per-bucket last-escalation timestamp. A
 	// staleness bead is filed at most once per freshness window.
 	staleness map[string]time.Time
+	// filing prevents concurrent verification results for the same identity
+	// from both reaching the external filer before either one is persisted.
+	// It is deliberately not persisted: an in-flight call cannot survive a
+	// process restart, and the store-level --unique-ref handles that case.
+	filing map[string]bool
 }
 
 // EscalatorConfig configures an Escalator.
@@ -303,6 +308,7 @@ func NewEscalator(cfg EscalatorConfig) *Escalator {
 		now:        now,
 		failures:   make(map[string]bool),
 		staleness:  make(map[string]time.Time),
+		filing:     make(map[string]bool),
 	}
 	if cfg.StatePath != "" {
 		e.load()
@@ -332,22 +338,26 @@ func (e *Escalator) EscalateFailure(ctx context.Context, r VerificationResult, p
 	}
 
 	e.mu.Lock()
-	if e.failures[key.String()] {
+	identity := "failure\x1f" + key.String()
+	if e.failures[key.String()] || e.filing[identity] {
 		e.mu.Unlock()
 		return "", nil // already escalated this active failure
 	}
+	e.filing[identity] = true
 	e.mu.Unlock()
 
 	payload := e.failurePayload(r, prov)
 	id, err := e.filer.File(ctx, payload)
+	e.mu.Lock()
+	delete(e.filing, identity)
 	if err != nil {
+		e.mu.Unlock()
 		// Do NOT record the key: the next tick may make one further bounded
 		// attempt. This is the only re-attempt path and it is rate-limited by
 		// the schedule cadence — never a retry loop.
 		return "", fmt.Errorf("escalation file failed for %s: %w", key, err)
 	}
 
-	e.mu.Lock()
 	e.failures[key.String()] = true
 	e.persistLocked()
 	e.mu.Unlock()
@@ -393,10 +403,12 @@ func (e *Escalator) EscalateStaleness(ctx context.Context, bucket string, lastSu
 
 	e.mu.Lock()
 	last := e.staleness[bucket]
-	if !last.IsZero() && now.Sub(last) < e.window {
+	identity := fmt.Sprintf("staleness\x1f%s\x1f%d", bucket, now.Truncate(e.window).Unix())
+	if (!last.IsZero() && now.Sub(last) < e.window) || e.filing[identity] {
 		e.mu.Unlock()
 		return "", nil // already escalated in this window
 	}
+	e.filing[identity] = true
 	e.mu.Unlock()
 
 	payload := BeadPayload{
@@ -408,11 +420,13 @@ func (e *Escalator) EscalateStaleness(ctx context.Context, bucket string, lastSu
 		Detected:            now,
 	}
 	id, err := e.filer.File(ctx, payload)
+	e.mu.Lock()
+	delete(e.filing, identity)
 	if err != nil {
+		e.mu.Unlock()
 		return "", fmt.Errorf("staleness escalation file failed for %s: %w", bucket, err)
 	}
 
-	e.mu.Lock()
 	e.staleness[bucket] = now
 	e.persistLocked()
 	e.mu.Unlock()
