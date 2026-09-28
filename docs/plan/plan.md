@@ -1562,16 +1562,14 @@ work that depends on one waits.
    scrape job and a `vmalert` Deployment evaluates the shipped rule group
    (Alertmanager → ntfy). The other clusters still have no evaluator; the
    proposed fleet-wide shape remains an estate decision outside this repo.
-   **Update (2026-09-26, armor-cb731b20):** the estate decision is made and
-   deployed — every ARMOR cluster now evaluates the shipped rule group in
-   the form its estate already runs. Verifier clusters without a store
-   (rs-manager, iad-kalshi, ord-devimprint) run the iad-ci shape
-   (VictoriaMetrics store + vmalert + Alertmanager, armor job only);
-   kube-prometheus-stack clusters (apexalgo-iad, ardenone-cluster) scrape
-   via ServiceMonitor and evaluate via a live PrometheusRule — no second
-   store, no vmagent, and the inert `.disabled` CR manifests stay disabled.
-   All clusters deliver to the one shared ntfy topic with the cluster named
-   on every page. Activation history lives in the alerting runbook.
+   **Update (2026-09-28, ARMOR workspace):** iad-ci is the only verified live
+   evaluator. Its VictoriaMetrics + vmalert + Alertmanager path is covered by
+   `scripts/alerting-smoke-test.sh`, including correlation of active vmalert
+   alerts with Alertmanager. The other verifier clusters still need their
+   GitOps monitoring integration deployed and a passing per-cluster smoke test;
+   the recipe is in the alerting runbook. The `.disabled` CR manifests remain
+   inert until a compatible Prometheus Operator is actually installed and
+   selecting them.
 4. **Fleet console placement (8.8).** Whether `armor-fleet`'s page is folded
    into `dashboard.ardenone.com` (and via which publisher) or stays on its own
    Traefik route. Proposed: keep its own route until the dashboard's

@@ -13,9 +13,11 @@
 #                      multipart health) are active exactly when their
 #                      expression says they should be on the live data —
 #                      both directions, without forcing any state.
-#   4. delivery      — Alertmanager is ready and its rendered config carries
-#                      the ntfy webhook receiver. The config is fetched but
-#                      never printed: it embeds the ntfy URL bearer token.
+#   4. delivery      — Alertmanager is ready, its rendered config carries the
+#                      ntfy webhook receiver, and every currently pending or
+#                      firing vmalert alert is visible in Alertmanager. The
+#                      config and alert payloads are fetched but never
+#                      printed: they can contain delivery credentials.
 #
 # Route prerequisites (k8s/iad-ci/traefik/armor-alerting-vpn-ingressroute.yml
 # in jedarden/declarative-config): the three *-iad-ci-ts.ardenone.com:8444
@@ -43,6 +45,15 @@
 #                               counters fresh; 0 where the canary is
 #                               disabled by config and its families are
 #                               dropped at scrape (apexalgo-iad).
+#     ARMOR_EXPECT_CANARY_TIMESTAMP 0 (default) leaves the optional diagnostic
+#                               unix-seconds timestamp unchecked. Set to 1
+#                               after rolling an image that exports it; it is
+#                               not an input to any shipped alert.
+#     ALERTING_REQUIRE_ACTIVE   0 (default) accepts a quiet stack after the
+#                               evaluator, receiver, and delivery API pass.
+#                               Set to 1 in a controlled drill that stages a
+#                               pending/firing alert; no alert is synthesized
+#                               by this read-only smoke test.
 #   On the kube-prometheus-stack clusters (apexalgo-iad, ardenone-cluster)
 #   VM_BASE and VMALERT_BASE are BOTH the cluster's Prometheus (it serves the
 #   same /api/v1/query, /api/v1/rules and /api/v1/alerts shapes this script
@@ -58,6 +69,8 @@ ARMOR_JOB_REGEX="${ARMOR_JOB_REGEX:-armor}"
 ARMOR_EXPECT_SERVER_TARGETS="${ARMOR_EXPECT_SERVER_TARGETS:-1}"
 ARMOR_EXPECT_VERIFIER="${ARMOR_EXPECT_VERIFIER:-1}"
 ARMOR_EXPECT_CANARY="${ARMOR_EXPECT_CANARY:-1}"
+ARMOR_EXPECT_CANARY_TIMESTAMP="${ARMOR_EXPECT_CANARY_TIMESTAMP:-0}"
+ALERTING_REQUIRE_ACTIVE="${ALERTING_REQUIRE_ACTIVE:-0}"
 
 for tool in curl python3; do
     command -v "$tool" >/dev/null 2>&1 || { echo "FATAL: $tool not on PATH" >&2; exit 2; }
@@ -191,7 +204,9 @@ if [ "$ARMOR_EXPECT_CANARY" = "1" ]; then
     check_fresh_series 'armor_multipart_canary_healthy'         'armor canary'
     check_fresh_series 'armor_canary_checks_total'              'armor canary'
     check_fresh_series 'armor_multipart_canary_checks_total'    'armor canary'
-    check_fresh_series 'armor_multipart_canary_last_check_timestamp' 'armor canary'
+    if [ "$ARMOR_EXPECT_CANARY_TIMESTAMP" = "1" ]; then
+        check_fresh_series 'armor_multipart_canary_last_check_timestamp' 'armor canary diagnostic'
+    fi
 fi
 
 # Cardinality guard: this job sits on a size-capped store (20Gi on iad-ci,
@@ -359,7 +374,7 @@ fi
 note ""
 
 # ------------------------------------------------------------------- delivery
-note "-- Phase 4: delivery (Alertmanager readiness + ntfy receiver present)"
+note "-- Phase 4: delivery (Alertmanager readiness, receiver, and alert handoff)"
 
 AM_READY="$(curl -sS --max-time 15 -fsS "$AM_BASE/-/ready" 2>/dev/null || true)"
 if [ "$AM_READY" = "OK" ]; then
@@ -378,6 +393,61 @@ sys.exit(0 if "name: ntfy" in cfg and "webhook_configs" in cfg else 1)' 2>/dev/n
     ok "Alertmanager active config routes to the ntfy webhook receiver (config not printed — it embeds the delivery token)"
 else
     bad "Alertmanager active config lacks the ntfy webhook receiver — alerts would fire but never page"
+fi
+
+# A healthy receiver configuration is necessary but not sufficient: when an
+# alert is already pending/firing, Alertmanager must have received the same
+# alert. Compare a small label identity only; never print either response
+# because annotations and rendered config can carry sensitive delivery data.
+VMALERT_ALERTS_FILE="$(mktemp)"
+AM_ALERTS_FILE="$(mktemp)"
+trap 'rm -f "$VMALERT_ALERTS_FILE" "$AM_ALERTS_FILE"' EXIT
+if curl_json "$VMALERT_BASE" /api/v1/alerts >"$VMALERT_ALERTS_FILE" 2>/dev/null \
+   && curl_json "$AM_BASE" /api/v2/alerts >"$AM_ALERTS_FILE" 2>/dev/null; then
+    DELIVERY_CHECK="$(VMALERT_ALERTS_FILE="$VMALERT_ALERTS_FILE" \
+        AM_ALERTS_FILE="$AM_ALERTS_FILE" \
+        ALERTING_REQUIRE_ACTIVE="$ALERTING_REQUIRE_ACTIVE" \
+        python3 -c '
+import json, os, sys
+
+try:
+    with open(os.environ["VMALERT_ALERTS_FILE"], encoding="utf-8") as handle:
+        vm = json.load(handle)
+    with open(os.environ["AM_ALERTS_FILE"], encoding="utf-8") as handle:
+        am = json.load(handle)
+except (KeyError, OSError, ValueError) as exc:
+    print(f"unreadable alert API response: {exc}")
+    sys.exit(2)
+
+def identity(alert):
+    labels = alert.get("labels", {})
+    return tuple((key, labels.get(key, ""))
+                 for key in ("alertname", "component", "bucket"))
+
+source = vm.get("data", {}).get("alerts", [])
+source = [a for a in source if a.get("state") in ("pending", "firing")]
+received = {
+    identity(a) for a in am
+    if a.get("status", {}).get("state") in ("active", "pending")
+}
+missing = [identity(a) for a in source if identity(a) not in received]
+if missing:
+    print(f"{len(missing)} pending/firing vmalert alert(s) absent from Alertmanager")
+    sys.exit(1)
+if source:
+    print(f"Alertmanager received all {len(source)} pending/firing vmalert alert(s)")
+elif os.environ.get("ALERTING_REQUIRE_ACTIVE") == "1":
+    print("no pending/firing vmalert alert available for the required delivery drill")
+    sys.exit(1)
+else:
+    print("no pending/firing alert to correlate; receiver and delivery APIs are healthy")' )"
+    if [ "$?" -eq 0 ]; then
+        ok "$DELIVERY_CHECK"
+    else
+        bad "$DELIVERY_CHECK"
+    fi
+else
+    bad "could not read both vmalert and Alertmanager alert APIs"
 fi
 
 note ""

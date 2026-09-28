@@ -382,24 +382,29 @@ Live end-to-end verification of the activated alerting stack on iad-ci: collecti
 (VictoriaMetrics scraping the armor server `:9001` admin mux and the restore-verifier
 `:9002` listener, numeric `armor_*` series fresh — including the unix-seconds
 `*_last_check_timestamp` gauges the former string-valued diagnostics were converted
-into), evaluation (vmalert carrying the
+into when the deployed image exports them), evaluation (vmalert carrying the
 five shipped rules, expressions matching the contract, no eval errors), consistency
 (staleness and
 multipart alerts active exactly when their expression says so — both directions), and
-delivery (Alertmanager ready, ntfy receiver present; the rendered config embeds the
-delivery token and is never printed). Routes through the stack's tailnet-only
-hostnames, so it must run from inside the tailnet.
+delivery (Alertmanager ready, ntfy receiver present, and any pending/firing vmalert
+alert present in Alertmanager; the rendered config and alert payloads are never
+printed). A quiet stack is valid by default; `ALERTING_REQUIRE_ACTIVE=1` makes a
+controlled drill require an already-active alert without synthesizing one. Routes
+through the stack's tailnet-only hostnames, so it must run from inside the tailnet.
 
 ```bash
 ./scripts/alerting-smoke-test.sh
 VM_BASE=... VMALERT_BASE=... AM_BASE=... ./scripts/alerting-smoke-test.sh
+# Require the optional diagnostic timestamp after its image rollout:
+ARMOR_EXPECT_CANARY_TIMESTAMP=1 ./scripts/alerting-smoke-test.sh
+# Require correlation of a deliberately staged pending/firing alert:
+ALERTING_REQUIRE_ACTIVE=1 ./scripts/alerting-smoke-test.sh
 ```
 
-Fleet-wide since armor-cb731b20: the shape knobs (`ARMOR_JOB_REGEX`,
-`ARMOR_EXPECT_SERVER_TARGETS`, `ARMOR_EXPECT_VERIFIER`, `ARMOR_EXPECT_CANARY`)
-adapt the same checks to the kube-prometheus-stack clusters and to armor
-servers without a verifier; the alerting runbook's §2 carries the
-per-cluster invocation lines.
+The shape knobs (`ARMOR_JOB_REGEX`, `ARMOR_EXPECT_SERVER_TARGETS`,
+`ARMOR_EXPECT_VERIFIER`, `ARMOR_EXPECT_CANARY`) also support a future
+per-cluster rollout to kube-prometheus-stack clusters and ARMOR servers
+without a verifier; the activation recipe is in §6 of the alerting runbook.
 
 ### test-armor-endpoints.sh
 
