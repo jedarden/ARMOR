@@ -311,7 +311,9 @@ The S3 listener (`ARMOR_LISTEN`, default `:9000`) serves `/healthz` (liveness),
 `ARMOR_CANARY_DISABLED=true`), `/version` (version JSON; every response carries
 `Server: ARMOR/<version>`) and `/share/<token>` (decrypted content for a
 pre-signed URL, `ARMOR_PRESIGN_ENABLED=true`); everything else is the
-SigV4-authenticated S3 API.
+SigV4-authenticated S3 API. See the [HTTP API Reference](docs/http-api-reference.md)
+for the complete operation, authentication, status, prefix, and safe-use
+contract.
 
 ### Admin API
 
