@@ -4,7 +4,7 @@ This directory contains operational, testing, and monitoring scripts for ARMOR d
 
 ## definition-of-done.sh
 
-Local verification gate. `scripts/definition-of-done.sh --fast` runs the toolchain parity gate (`scripts/toolchain-parity.sh`), the compose.yaml ↔ VERSION parity gate (`scripts/compose-version-parity.sh`), the prohibited deployment constructs gate (`scripts/prohibited-constructs-gate.sh`), `go build ./...`, `go vet ./...`, and the Python scripts test suite (`tests/test_drift_check.py`, `tests/test_toolchain_parity.py`, `tests/test_compose_version_parity.py`, `tests/test_cut_release.py`, `tests/test_restore_verifier_inventory.py`, `tests/test_restore_verifier_scope_validation.py`, `tests/test_prohibited_constructs.py`, `tests/test_gate_inventory.py`, `tests/test_publish_release.py`); without `--fast` it additionally runs `go test ./... -short`. Exits non-zero if any leg fails. `tests/test_gate_inventory.py` pins this list — and the copies in AGENTS.md, the script's own header, and the `tests/README.md` table — to the invocation in the script, so the documented suites cannot drift from the ones executed.
+Local verification gate. `scripts/definition-of-done.sh --fast` runs the toolchain parity gate (`scripts/toolchain-parity.sh`), the compose.yaml ↔ VERSION parity gate (`scripts/compose-version-parity.sh`), the prohibited deployment constructs gate (`scripts/prohibited-constructs-gate.sh`), `go build ./...`, `go vet ./...`, and the Python scripts test suite (`tests/test_drift_check.py`, `tests/test_toolchain_parity.py`, `tests/test_compose_version_parity.py`, `tests/test_cut_release.py`, `tests/test_restore_verifier_inventory.py`, `tests/test_restore_verifier_scope_validation.py`, `tests/test_prohibited_constructs.py`, `tests/test_gate_inventory.py`, `tests/test_publish_release.py`); without `--fast` it additionally runs `go test ./... -short` and the Agentation browser mount smoke (`scripts/verify-agentation-mount.sh`), which loads every web UI entry point in a headless Chromium and requires `#agentation-root` in the rendered DOM — failing, not skipping, when no browser is present or esm.sh is unreachable. Exits non-zero if any leg fails. `tests/test_gate_inventory.py` pins this list — and the copies in AGENTS.md, the script's own header, and the `tests/README.md` table — to the invocation in the script, so the documented suites cannot drift from the ones executed.
 
 ## release-gate.sh
 
@@ -335,8 +335,10 @@ toolbar inside. Exits non-zero if a mount check fails OR if every check
 skipped (no browser, `esm.sh` unreachable): a skip means nothing was
 verified. The structural wiring pins (import map before the module tag
 before the mount check, module endpoint serving the vendored module) run
-always, in `go test` and the definition of done; only the browser leg needs
-this script.
+always, in `go test` and the definition of done; the browser leg needs this
+script, which the full definition of done (no `--fast`) runs as a gate leg —
+`--fast` omits it because it needs a Chromium-family browser and esm.sh
+reachability, so it is neither deterministic nor quick.
 
 ```bash
 ./scripts/verify-agentation-mount.sh

@@ -103,9 +103,10 @@ func TestDashboardAgentationModuleEndpoint(t *testing.T) {
 // TestDashboardAgentationMountsInBrowser is the mounting half of the
 // verification rule: it loads the real page from a real server in a real
 // browser and requires #agentation-root in the rendered DOM with the
-// toolbar inside. It is skipped under -short (the definition of done runs
-// short) and when no browser or esm.sh is available — run it explicitly
-// with scripts/verify-agentation-mount.sh.
+// toolbar inside. It is skipped under -short (the fast definition-of-done
+// lane runs short) and when no browser or esm.sh is available — the full
+// definition of done runs it via scripts/verify-agentation-mount.sh, which
+// treats an all-skip run as a failure so the mount cannot go unverified.
 func TestDashboardAgentationMountsInBrowser(t *testing.T) {
 	if testing.Short() {
 		t.Skip("browser smoke runs without -short; see scripts/verify-agentation-mount.sh")

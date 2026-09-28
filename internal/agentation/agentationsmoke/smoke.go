@@ -13,9 +13,10 @@
 // environmental reasons: no browser binary is available (set
 // AGENTATION_BROWSER to point at one) or esm.sh is unreachable (the page
 // imports React from there, so a mount assertion would fail for the wrong
-// reason). scripts/verify-agentation-mount.sh runs it explicitly and
-// surfaces the skips; anything short of a genuine loaded-page assertion
-// would re-create the tag-without-map blind spot.
+// reason). scripts/verify-agentation-mount.sh — a leg of the full
+// definition of done — drives these tests and surfaces the skips, treating
+// an all-skip run as a failure; anything short of a genuine loaded-page
+// assertion would re-create the tag-without-map blind spot.
 package agentationsmoke
 
 import (

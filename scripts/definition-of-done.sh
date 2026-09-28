@@ -15,7 +15,14 @@
 # tests/test_restore_verifier_scope_validation.py,
 # tests/test_prohibited_constructs.py, tests/test_gate_inventory.py,
 # tests/test_publish_release.py). The
-# default mode adds `go test ./... -short`. CI (iad-ci armor-build) runs the
+# default mode adds `go test ./... -short` and the Agentation browser mount
+# smoke (scripts/verify-agentation-mount.sh): every web UI entry point loads
+# in a headless Chromium and must show #agentation-root mounted in the
+# rendered DOM. That leg needs a browser binary and esm.sh reachability and
+# deliberately fails — never silently skips — without them, because an
+# unverified mount is exactly what this gate exists to catch; it lives in
+# the full mode only because it is neither deterministic nor quick. CI
+# (iad-ci armor-build) runs the
 # containerized build/lint legs; this script is the local gate. The pytest
 # entry point is `python3 -m pytest` rather than the `pytest` shim, whose
 # shebang is stale on NixOS hosts.
@@ -56,6 +63,10 @@ run "$PY" -m pytest tests/test_drift_check.py tests/test_toolchain_parity.py tes
 
 if [ "$fast" = 0 ]; then
   run "$GO" test ./... -short
+  # Runtime Agentation smoke: load every UI entry point in a real browser
+  # and require the toolbar to have mounted (see the header note for why
+  # this is a full-mode leg).
+  run ./scripts/verify-agentation-mount.sh
 fi
 
 exit "$fail"

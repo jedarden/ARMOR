@@ -94,7 +94,9 @@ func TestFleetAgentationModuleEndpoint(t *testing.T) {
 // verification rule: it loads the real page from the real route table in a
 // real browser and requires #agentation-root in the rendered DOM with the
 // toolbar inside. Skipped under -short and when no browser or esm.sh is
-// available — run it explicitly with scripts/verify-agentation-mount.sh.
+// available — the full definition of done runs it via
+// scripts/verify-agentation-mount.sh, which treats an all-skip run as a
+// failure so the mount cannot go unverified.
 func TestFleetAgentationMountsInBrowser(t *testing.T) {
 	if testing.Short() {
 		t.Skip("browser smoke runs without -short; see scripts/verify-agentation-mount.sh")
