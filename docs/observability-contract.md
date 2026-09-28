@@ -18,10 +18,11 @@ contract tests in the same change. The contract tests live in:
 
 - `internal/canary/contract_test.go` — status API shape and state transitions
 - `internal/server/canary_endpoint_contract_test.go` — the `/armor/canary`
-  endpoint's HTTP behavior: the not-configured shape, 405 on non-GET, and
+  endpoint's HTTP behavior: healthy, failed, stale, disabled, and
   multipart-failure reporting independent of the small-object status
 - `internal/metrics/observability_contract_test.go` — emitted series and
-  gauge/counter transitions
+  gauge/counter transitions, freshness derivation, and the scrape HTTP method
+  contract
 - `internal/metrics/alert_rules_contract_test.go` — the shipped alert-rule
   set (expressions, hold durations, severities, component labels, scrape
   targets) against the in-repo copy of the declarative-config manifest, and
@@ -55,18 +56,18 @@ cluster-internal only; do not publish it through an ingress.
 ## Canary status API — `GET /armor/canary`
 
 Returns HTTP 200 with the canary `Result` JSON (an unauthenticated GET; other
-methods get 405). When the canary monitor is disabled or not configured, the
-endpoint still returns 200 with:
-
-```json
-{"status":"unknown","error":"canary monitor not configured"}
-```
+methods get 405 and `Allow: GET`). When the monitor is disabled, it returns
+`{"status":"unknown","error":"canary monitor disabled"}`. When no monitor
+was configured, it returns `{"status":"unknown","error":"canary monitor not
+configured"}`. Both are deliberate HTTP 200 responses: an unavailable status
+document must not turn a probe/scrape into a transport failure, and the
+`error` value distinguishes an operator-disabled check from a missing wiring.
 
 ### Response fields
 
 | Field | Type | Meaning |
 |---|---|---|
-| `status` | string | Small-object canary status: `healthy`, `unhealthy`, or `unknown` |
+| `status` | string | Small-object canary status: `healthy`, `unhealthy`, `stale`, or `unknown` |
 | `last_check` | RFC3339 time | Last small-object check attempt (zero value until the first attempt) |
 | `last_success` | — | **Not present in this response.** See `MarshalJSON` below |
 | `consecutive_success` / `consecutive_failures` | — | **Not present in this response** |
@@ -74,12 +75,12 @@ endpoint still returns 200 with:
 | `upload_latency_ms`, `download_latency_ms` | int | Latencies of the last completed check's upload and download phases |
 | `decrypt_verified`, `hmac_verified` | bool | Pipeline stages that were exercised and passed on the last completed check |
 | `cloudflare_cache_hit` | bool | `CF-Cache-Status` was `HIT`, `STALE`, or `REVALIDATED` on the last download |
-| `multipart_healthy_status` | string | Multipart canary status: `healthy`, `unhealthy`, or `unknown` |
+| `multipart_healthy_status` | string | Multipart canary status: `healthy`, `unhealthy`, `stale`, or `unknown` |
 | `multipart_healthy` | bool | Boolean projection of `multipart_healthy_status` (`true` iff `healthy`) |
 | `multipart_last_check` | RFC3339 time | Last multipart check attempt |
 | `multipart_consecutive_fails` | int | Consecutive failed multipart checks since the last success |
 | `multipart_last_error` | string | Error from the last failed multipart check; omitted when healthy/never run |
-| `secondary_healthy_status` | string | Secondary-backend canary status (ADR-006); `unknown` when no secondary is configured |
+| `secondary_healthy_status` | string | Secondary-backend canary status (ADR-006): `healthy`, `unhealthy`, `stale`, or `unknown`; `unknown` when no secondary is configured |
 | `secondary_healthy` | bool | Boolean projection of `secondary_healthy_status` |
 | `secondary_last_check` | RFC3339 time | Last secondary-backend check attempt |
 | `secondary_consecutive_fails` | int | Consecutive failed secondary checks since the last success |
@@ -99,8 +100,9 @@ serialized except the three `*_last_error` fields, which are `omitempty`.
 
 All three canary families follow the same transition rules:
 
-- **`unknown`** — the state of a freshly constructed monitor. A check that
-  has never completed (in either direction) leaves the status `unknown`.
+- **`unknown`** — the state of a freshly constructed, disabled, or unconfigured
+  monitor. A check that has never completed (in either direction) leaves the
+  status `unknown`; it is not treated as stale.
 - **`healthy`** — a check attempt completed end-to-end: upload → download →
   HMAC verify → decrypt → plaintext-SHA verify. A success sets `last_check`
   (and `last_success`), increments `consecutive_success`, resets
@@ -110,6 +112,14 @@ All three canary families follow the same transition rules:
   A failure increments `consecutive_failures`, resets `consecutive_success`
   to 0, and records `last_error`. **One transient backend error never flips
   the status** — the retries absorb it.
+- **`stale`** — a family was previously healthy, but its `last_check` is older
+  than twice its configured cadence (`10m` for the default 5m small-object
+  check, `2h` for the default 1h multipart check, and `10m` for the default
+  secondary check). Staleness is derived when status is read, so a wedged
+  scheduler cannot leave an old success looking current. It has no
+  `last_error`, its boolean health projection is `false`, and a subsequent
+  successful check returns it to `healthy`. An exhausted failure remains
+  `unhealthy` rather than being relabeled stale.
 
 The small-object canary writes/reads/deletes a unique ~1 KiB object every
 `interval` (default 5m) through the full envelope pipeline. The multipart
@@ -142,7 +152,9 @@ falls back to the manifest writer's flush recency.
 ## Canary metric series
 
 Emitted by `internal/metrics.Metrics.PrometheusFormat` on the ARMOR admin
-`/metrics` endpoint. All names are prefixed `armor_`. The canary family is
+`/metrics` endpoint. It is an unauthenticated `GET` returning HTTP 200 with
+`Content-Type: text/plain; version=0.0.4`; other methods return 405 and
+`Allow: GET`. All names are prefixed `armor_`. The canary family is
 exactly the twelve numeric series below (plus the multipart histogram) — the
 contract test in `internal/metrics` pins this set:
 
@@ -154,11 +166,11 @@ contract test in `internal/metrics` pins this set:
 | `armor_multipart_canary_checks_total` | counter | — | As above, multipart family |
 | `armor_multipart_canary_check_failures_total` | counter | — | As above, multipart family |
 | `armor_multipart_canary_last_check_timestamp` | gauge | — | Unix seconds of the last multipart check attempt; same header-always/sample-after-first-check rule |
-| `armor_multipart_canary_healthy` | gauge | — | `1` after a passing multipart check, `0` after a failed one; `0` also before the first completed check |
+| `armor_multipart_canary_healthy` | gauge | — | `1` after a passing and fresh multipart check; `0` after a failed or stale one, and `0` before the first completed check |
 | `armor_secondary_canary_checks_total` | counter | — | Secondary-backend family (ADR-006) |
 | `armor_secondary_canary_check_failures_total` | counter | — | Secondary-backend family |
 | `armor_secondary_canary_last_check_timestamp` | gauge | — | Unix seconds of the last secondary-backend check attempt; same header-always/sample-after-first-check rule |
-| `armor_secondary_canary_healthy` | gauge | — | `1`/`0`; stays `0` when no secondary backend is configured |
+| `armor_secondary_canary_healthy` | gauge | — | `1` after a passing and fresh secondary check; `0` after a failed or stale one, and `0` when no secondary backend is configured |
 | `armor_multipart_canary_upload_duration_seconds` | histogram | `operation` (`upload`\|`verify`), `status` (`success`\|`failure`) | `_sum`, `_count`, and `_last` per label pair; a label pair's series appear only once it has at least one observation |
 
 **Numeric-only exposition rule.** Every sample in the exposition is numeric —
@@ -181,6 +193,16 @@ carried by `/armor/canary`'s `status` field and by `/readyz`; only the
 multipart and secondary families have health gauges. (An earlier revision of
 [metrics.md](metrics.md) documented `armor_canary_healthy`; that series has
 never been exported and the entry has been removed.)
+
+Staleness is scrape-time derived for the multipart gauge from
+`armor_multipart_canary_last_check_timestamp`: a timestamp older than `2h`
+sets the gauge to `0`, even if the last completed check recorded healthy.
+The ordinary canary has no boolean gauge by design; consumers use its
+`armor_canary_last_check_timestamp` with the `10m` freshness bound or read
+`GET /armor/canary`, whose `status` becomes `stale`. A disabled or never-run
+monitor has no last-check timestamp sample and its multipart health gauge is
+`0`, avoiding a false epoch-1970 freshness signal. The secondary gauge uses
+the same rule with the default `10m` freshness bound.
 
 ## Restore-verifier status APIs
 

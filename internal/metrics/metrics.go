@@ -110,6 +110,7 @@ type Metrics struct {
 	MultipartCanaryLastCheckTime  *expvar.String
 	MultipartCanaryLastCheckError *expvar.String
 	MultipartCanaryHealthy        *expvar.Int
+	multipartCanaryStaleAfterNs   atomic.Int64
 
 	// Secondary backend canary metrics (ADR-006)
 	SecondaryCanaryChecksTotal    *expvar.Int
@@ -117,6 +118,7 @@ type Metrics struct {
 	SecondaryCanaryLastCheckTime  *expvar.String
 	SecondaryCanaryLastCheckError *expvar.String
 	SecondaryCanaryHealthy        *expvar.Int
+	secondaryCanaryStaleAfterNs   atomic.Int64
 
 	// Multipart histogram metrics (bucketed by operation and status)
 	MultipartUploadBuckets       *expvar.Map // Histogram buckets: upload operation, keyed by latency
@@ -227,6 +229,11 @@ func NewMetrics() *Metrics {
 	m := &Metrics{
 		startTime: time.Now(),
 	}
+	// These defaults match the canary's default 5-minute and 1-hour cadences. The
+	// exporter derives stale health from its last-check timestamp so a process
+	// that stops advancing checks cannot remain green forever.
+	m.secondaryCanaryStaleAfterNs.Store((10 * time.Minute).Nanoseconds())
+	m.multipartCanaryStaleAfterNs.Store((2 * time.Hour).Nanoseconds())
 
 	// Request metrics
 	m.RequestsTotal = new(expvar.Int)
@@ -602,6 +609,13 @@ func (m *Metrics) SetMultipartCanaryLastError(err string) {
 	m.MultipartCanaryLastCheckError.Set(err)
 }
 
+// SetMultipartCanaryStaleAfter configures the freshness window used by the
+// multipart health gauge. A non-positive duration disables the derived stale
+// check.
+func (m *Metrics) SetMultipartCanaryStaleAfter(d time.Duration) {
+	m.multipartCanaryStaleAfterNs.Store(d.Nanoseconds())
+}
+
 // SetMultipartCanaryHealthy sets the multipart canary health status (1 = healthy, 0 = unhealthy).
 func (m *Metrics) SetMultipartCanaryHealthy(healthy bool) {
 	if healthy {
@@ -629,6 +643,13 @@ func (m *Metrics) SetSecondaryCanaryLastCheck(t time.Time) {
 // SetSecondaryCanaryLastError sets the last secondary canary error.
 func (m *Metrics) SetSecondaryCanaryLastError(err string) {
 	m.SecondaryCanaryLastCheckError.Set(err)
+}
+
+// SetSecondaryCanaryStaleAfter configures the freshness window used by the
+// secondary health gauge. A non-positive duration disables the derived stale
+// check.
+func (m *Metrics) SetSecondaryCanaryStaleAfter(d time.Duration) {
+	m.secondaryCanaryStaleAfterNs.Store(d.Nanoseconds())
 }
 
 // SetSecondaryCanaryHealthy sets the secondary canary health status (1 = healthy, 0 = unhealthy).
@@ -824,6 +845,18 @@ func (m *Metrics) PrometheusFormat() string {
 			fmt.Fprintf(&sb, "armor_%s %d\n", name, t.Unix())
 		}
 	}
+	canaryTimestampStale := func(v *expvar.String, afterNs int64) bool {
+		if afterNs <= 0 {
+			return false
+		}
+		t, err := time.Parse(time.RFC3339, v.Value())
+		return err == nil && !t.IsZero() && time.Since(t) > time.Duration(afterNs)
+	}
+	writeGaugeValue := func(name, help string, value int64) {
+		fmt.Fprintf(&sb, "# HELP armor_%s %s\n", name, help)
+		fmt.Fprintf(&sb, "# TYPE armor_%s gauge\n", name)
+		fmt.Fprintf(&sb, "armor_%s %d\n", name, value)
+	}
 
 	// Request metrics
 	writeMetric("requests_total", "Total number of requests", "counter", m.RequestsTotal)
@@ -943,13 +976,21 @@ func (m *Metrics) PrometheusFormat() string {
 	writeMetric("multipart_canary_checks_total", "Total number of multipart canary checks", "counter", m.MultipartCanaryChecksTotal)
 	writeMetric("multipart_canary_check_failures_total", "Total number of multipart canary check failures", "counter", m.MultipartCanaryCheckFailures)
 	writeTimestampGauge("multipart_canary_last_check_timestamp", "Unix seconds of the last multipart canary check", m.MultipartCanaryLastCheckTime)
-	writeMetric("multipart_canary_healthy", "Multipart canary health status (1=healthy, 0=unhealthy)", "gauge", m.MultipartCanaryHealthy)
+	multipartHealthy := m.MultipartCanaryHealthy.Value()
+	if canaryTimestampStale(m.MultipartCanaryLastCheckTime, m.multipartCanaryStaleAfterNs.Load()) {
+		multipartHealthy = 0
+	}
+	writeGaugeValue("multipart_canary_healthy", "Multipart canary health status (1=healthy, 0=unhealthy, or stale)", multipartHealthy)
 
 	// Secondary backend canary metrics (ADR-006)
 	writeMetric("secondary_canary_checks_total", "Total number of secondary backend canary checks", "counter", m.SecondaryCanaryChecksTotal)
 	writeMetric("secondary_canary_check_failures_total", "Total number of secondary backend canary check failures", "counter", m.SecondaryCanaryCheckFailures)
 	writeTimestampGauge("secondary_canary_last_check_timestamp", "Unix seconds of the last secondary backend canary check", m.SecondaryCanaryLastCheckTime)
-	writeMetric("secondary_canary_healthy", "Secondary backend canary health status (1=healthy, 0=unhealthy)", "gauge", m.SecondaryCanaryHealthy)
+	secondaryHealthy := m.SecondaryCanaryHealthy.Value()
+	if canaryTimestampStale(m.SecondaryCanaryLastCheckTime, m.secondaryCanaryStaleAfterNs.Load()) {
+		secondaryHealthy = 0
+	}
+	writeGaugeValue("secondary_canary_healthy", "Secondary backend canary health status (1=healthy, 0=unhealthy, or stale)", secondaryHealthy)
 
 	// Multipart metrics
 	writeMetric("active_multipart_uploads", "Number of in-progress multipart uploads", "gauge", m.ActiveMultipartUploads)
@@ -1170,6 +1211,11 @@ func (m *Metrics) PrometheusFormat() string {
 // Handler returns an HTTP handler for Prometheus metrics.
 func (m *Metrics) Handler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			w.Header().Set("Allow", http.MethodGet)
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
 		w.Header().Set("Content-Type", "text/plain; version=0.0.4")
 		w.Write([]byte(m.PrometheusFormat()))
 	}
@@ -1187,6 +1233,11 @@ func (m *Metrics) Handler() http.HandlerFunc {
 // series that can never be true there.
 func (m *Metrics) VerifierMetricsHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			w.Header().Set("Allow", http.MethodGet)
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
 		w.Header().Set("Content-Type", "text/plain; version=0.0.4")
 		w.Write([]byte(verifierExposition(m.PrometheusFormat())))
 	}

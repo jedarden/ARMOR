@@ -5,6 +5,7 @@ import (
 	cryptoRand "crypto/rand"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -37,6 +38,17 @@ func (b *multipartFailBackend) CreateMultipartUpload(_ context.Context, _, _ str
 	return "", fmt.Errorf("forced multipart failure: CreateMultipartUpload rejected")
 }
 
+// smallFailBackend keeps the multipart path working while making the
+// ordinary single-object canary fail. This makes the two health families
+// independently observable at the HTTP surface.
+type smallFailBackend struct {
+	*countingBackend
+}
+
+func (b *smallFailBackend) Put(context.Context, string, string, io.Reader, int64, map[string]string) error {
+	return fmt.Errorf("forced small-object failure: Put rejected")
+}
+
 // TestCanaryEndpointNotConfiguredShape pins the body a disabled monitor
 // serves: HTTP 200 with the documented literal, so a missing canary is
 // "unknown" rather than a scrape error.
@@ -52,6 +64,25 @@ func TestCanaryEndpointNotConfiguredShape(t *testing.T) {
 	}
 	if got, want := rec.Body.String(), `{"status":"unknown","error":"canary monitor not configured"}`; got != want {
 		t.Errorf("not-configured body = %q, want %q", got, want)
+	}
+}
+
+// TestCanaryEndpointDisabledShape pins the explicit disabled state. Disabled
+// readiness is intentionally still HTTP 200, but the status body must tell an
+// operator that no integrity check is being performed.
+func TestCanaryEndpointDisabledShape(t *testing.T) {
+	m := canary.NewMonitor(canary.Config{})
+	s := &Server{canary: m, canaryDisabled: true}
+
+	req := httptest.NewRequest(http.MethodGet, "/armor/canary", nil)
+	rec := httptest.NewRecorder()
+	s.canaryHandler(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("disabled GET returned %d, want 200", rec.Code)
+	}
+	if got, want := rec.Body.String(), `{"status":"unknown","error":"canary monitor disabled"}`; got != want {
+		t.Errorf("disabled body = %q, want %q", got, want)
 	}
 }
 
@@ -78,6 +109,155 @@ func TestCanaryEndpointRejectsNonGET(t *testing.T) {
 		if rec.Code != http.StatusMethodNotAllowed {
 			t.Errorf("%s /armor/canary returned %d, want 405", method, rec.Code)
 		}
+		if got := rec.Header().Get("Allow"); got != http.MethodGet {
+			t.Errorf("%s /armor/canary Allow = %q, want GET", method, got)
+		}
+	}
+}
+
+// TestCanaryEndpointHealthyAndFailedStates pins the ordinary endpoint's
+// status codes and diagnostic fields for a successful check and an exhausted
+// retry budget. Both are status responses, so the endpoint remains 200; the
+// JSON status is the health signal and /readyz is the readiness gate.
+func TestCanaryEndpointHealthyAndFailedStates(t *testing.T) {
+	testCases := []struct {
+		name       string
+		monitor    *canary.Monitor
+		wantStatus canary.Status
+		wantError  string
+	}{
+		{
+			name: "healthy",
+			monitor: canary.NewMonitor(canary.Config{
+				Backend:           newCountingBackend(),
+				Bucket:            "test-bucket",
+				MEK:               makeTestMEK(t),
+				BlockSize:         65536,
+				CanarySize:        512,
+				MultipartSize:     4096,
+				Interval:          time.Hour,
+				MultipartInterval: time.Hour,
+				MaxRetries:        1,
+			}),
+		},
+		{
+			name: "failed",
+			monitor: canary.NewMonitor(canary.Config{
+				Backend:           &smallFailBackend{newCountingBackend()},
+				Bucket:            "test-bucket",
+				MEK:               makeTestMEK(t),
+				BlockSize:         65536,
+				CanarySize:        512,
+				MultipartSize:     4096,
+				Interval:          time.Hour,
+				MultipartInterval: time.Hour,
+				MaxRetries:        1,
+			}),
+			wantStatus: canary.StatusUnhealthy,
+			wantError:  "forced small-object failure",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			m := tc.monitor
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			m.Start(ctx)
+			defer m.Stop()
+
+			deadline := time.Now().Add(5 * time.Second)
+			for {
+				status := m.GetStatus()
+				if (tc.wantStatus == "" && status.Status == canary.StatusHealthy) || status.Status == tc.wantStatus {
+					break
+				}
+				if time.Now().After(deadline) {
+					t.Fatalf("monitor status = %q, want %q", status.Status, tc.wantStatus)
+				}
+				time.Sleep(10 * time.Millisecond)
+			}
+
+			s := &Server{canary: m}
+			rec := httptest.NewRecorder()
+			s.canaryHandler(rec, httptest.NewRequest(http.MethodGet, "/armor/canary", nil))
+			if rec.Code != http.StatusOK {
+				t.Fatalf("GET /armor/canary returned %d, want 200", rec.Code)
+			}
+			var body map[string]any
+			if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+				t.Fatalf("decode response: %v", err)
+			}
+			wantStatus := tc.wantStatus
+			if wantStatus == "" {
+				wantStatus = canary.StatusHealthy
+			}
+			if got := body["status"]; got != string(wantStatus) {
+				t.Errorf("status = %v, want %q", got, wantStatus)
+			}
+			if tc.wantError != "" && !strings.Contains(body["last_error"].(string), tc.wantError) {
+				t.Errorf("last_error = %v, want substring %q", body["last_error"], tc.wantError)
+			}
+		})
+	}
+}
+
+func makeTestMEK(t *testing.T) []byte {
+	t.Helper()
+	mek := make([]byte, 32)
+	if _, err := cryptoRand.Read(mek); err != nil {
+		t.Fatalf("read MEK: %v", err)
+	}
+	return mek
+}
+
+// TestCanaryEndpointStaleState pins that a previously healthy but overdue
+// monitor returns "stale" and remains a non-ready health signal, rather than
+// silently presenting its old success as current.
+func TestCanaryEndpointStaleState(t *testing.T) {
+	m := canary.NewMonitor(canary.Config{
+		Backend:           newCountingBackend(),
+		Bucket:            "test-bucket",
+		MEK:               makeTestMEK(t),
+		BlockSize:         65536,
+		CanarySize:        512,
+		MultipartSize:     4096,
+		Interval:          time.Hour,
+		MultipartInterval: time.Hour,
+		StaleAfter:        time.Nanosecond,
+		MaxRetries:        1,
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	m.Start(ctx)
+	defer m.Stop()
+
+	deadline := time.Now().Add(5 * time.Second)
+	for m.GetStatus().Status != canary.StatusStale {
+		if time.Now().After(deadline) {
+			t.Fatalf("monitor status = %q, want stale", m.GetStatus().Status)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	s := &Server{canary: m, canaryStarted: true}
+	rec := httptest.NewRecorder()
+	s.canaryHandler(rec, httptest.NewRequest(http.MethodGet, "/armor/canary", nil))
+	var body map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode stale response: %v", err)
+	}
+	if body["status"] != string(canary.StatusStale) {
+		t.Errorf("stale endpoint status = %v, want stale", body["status"])
+	}
+
+	ready := httptest.NewRecorder()
+	s.readyz(ready, httptest.NewRequest(http.MethodGet, "/readyz", nil))
+	if ready.Code != http.StatusServiceUnavailable {
+		t.Errorf("stale /readyz returned %d, want 503", ready.Code)
+	}
+	if !strings.Contains(ready.Body.String(), "canary check stale") {
+		t.Errorf("stale /readyz body = %q, want stale reason", ready.Body.String())
 	}
 }
 

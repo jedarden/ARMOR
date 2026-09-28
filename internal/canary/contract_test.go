@@ -125,9 +125,9 @@ func TestCanaryMarshalJSONDiagnosticShape(t *testing.T) {
 
 // TestCanaryStatusTransitions drives the state update paths directly and
 // asserts the published transition rules: unknown -> healthy on success,
-// healthy -> unhealthy only after the retry budget is exhausted, counter
-// reset semantics, and the boolean projections following their status
-// strings.
+// healthy -> unhealthy only after the retry budget is exhausted, stale after
+// the freshness window, counter reset semantics, and the boolean projections
+// following their status strings.
 func TestCanaryStatusTransitions(t *testing.T) {
 	m := NewMonitor(Config{})
 
@@ -180,6 +180,47 @@ func TestCanaryStatusTransitions(t *testing.T) {
 	}
 	if m.state.ConsecutiveFailures != 0 {
 		t.Errorf("after recovery: consecutive_failures = %d, want 0", m.state.ConsecutiveFailures)
+	}
+}
+
+// TestCanaryStalenessContract pins the derived stale state. Staleness is not
+// a backend failure: it is emitted only for a previously healthy family whose
+// last check is older than its freshness window. Unknown (never checked) and
+// unhealthy (an exhausted retry budget) remain distinct states.
+func TestCanaryStalenessContract(t *testing.T) {
+	m := NewMonitor(Config{
+		StaleAfter:          time.Millisecond,
+		MultipartStaleAfter: time.Millisecond,
+		SecondaryStaleAfter: time.Millisecond,
+	})
+
+	if got := m.GetStatus().Status; got != StatusUnknown {
+		t.Fatalf("never-checked status = %q, want unknown", got)
+	}
+
+	old := time.Now().Add(-time.Second)
+	m.updateStateSuccess(&Result{Status: StatusHealthy, LastCheck: old})
+	m.updateMultipartStateSuccess(&Result{Status: StatusHealthy, LastCheck: old})
+	m.updateSecondaryStateSuccess(&Result{Status: StatusHealthy, LastCheck: old}, 0, 0)
+	status := m.GetStatus()
+	if status.Status != StatusStale {
+		t.Errorf("old healthy small-object status = %q, want stale", status.Status)
+	}
+	if status.MultipartHealthy != StatusStale || status.MultipartHealthyBool {
+		t.Errorf("old healthy multipart status = %q bool=%v, want stale/false", status.MultipartHealthy, status.MultipartHealthyBool)
+	}
+	if status.SecondaryHealthy != StatusStale || status.SecondaryHealthyBool {
+		t.Errorf("old healthy secondary status = %q bool=%v, want stale/false", status.SecondaryHealthy, status.SecondaryHealthyBool)
+	}
+
+	m.updateStateFailure(errFake("backend unavailable"))
+	if got := m.GetStatus().Status; got != StatusUnhealthy {
+		t.Errorf("failed status = %q, want unhealthy even after freshness window", got)
+	}
+
+	m.updateStateSuccess(&Result{Status: StatusHealthy, LastCheck: time.Now()})
+	if got := m.GetStatus().Status; got != StatusHealthy {
+		t.Errorf("fresh recovery status = %q, want healthy", got)
 	}
 }
 

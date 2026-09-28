@@ -706,7 +706,7 @@ deduplication — is [observability-contract.md](observability-contract.md).
 ### `armor_multipart_canary_healthy`
 
 **Type:** Gauge  
-**Description:** Multipart canary health status (1 = healthy, 0 = unhealthy or canary disabled/not running). Independent, longer-interval multipart write/read/verify check — distinct from `armor_canary_healthy` so a small-object-only regression cannot mask a multipart one (ADR-002)  
+**Description:** Multipart canary health status (1 = healthy and fresh, 0 = unhealthy, stale, disabled, or not yet run). Independent, longer-interval multipart write/read/verify check — distinct from `armor_canary_healthy` so a small-object-only regression cannot mask a multipart one (ADR-002). The default freshness bound is twice the one-hour multipart cadence; see [the observability contract](observability-contract.md) for the exact HTTP/Prometheus state rules.
 **Labels:** None
 
 ## Testing Metrics

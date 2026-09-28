@@ -803,13 +803,17 @@ func (s *Server) readyz(w http.ResponseWriter, r *http.Request) {
 		multipartHealthy := status.MultipartHealthy == "healthy"
 
 		if !s.canary.IsHealthy() {
+			reason := "Not ready - canary check failed"
+			if status.Status == canary.StatusStale {
+				reason = "Not ready - canary check stale"
+			}
 			w.WriteHeader(http.StatusServiceUnavailable)
 			json.NewEncoder(w).Encode(readyzResponse{
 				Ready:                  false,
 				CanaryAgeS:             canaryAge,
 				MultipartCanaryHealthy: multipartHealthy,
 				ManifestFlushedS:       0,
-				Reason:                 "Not ready - canary check failed",
+				Reason:                 reason,
 			})
 			return
 		}
@@ -1465,18 +1469,27 @@ func (s *Server) handleListCreds(w http.ResponseWriter, r *http.Request) {
 // canaryHandler returns the canary status.
 func (s *Server) canaryHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
+		w.Header().Set("Allow", http.MethodGet)
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
-	if s.canary == nil {
+	w.Header().Set("Content-Type", "application/json")
+	writeUnknown := func(reason string) {
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"status":"unknown","error":"canary monitor not configured"}`))
+		_, _ = w.Write([]byte(fmt.Sprintf(`{"status":"unknown","error":%q}`, reason)))
+	}
+
+	if s.canaryDisabled {
+		writeUnknown("canary monitor disabled")
+		return
+	}
+	if s.canary == nil {
+		writeUnknown("canary monitor not configured")
 		return
 	}
 
 	status := s.canary.GetStatus()
-	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(status)
 }

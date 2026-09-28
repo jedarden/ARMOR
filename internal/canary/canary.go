@@ -31,6 +31,7 @@ type Status string
 const (
 	StatusHealthy   Status = "healthy"
 	StatusUnhealthy Status = "unhealthy"
+	StatusStale     Status = "stale"
 	StatusUnknown   Status = "unknown"
 )
 
@@ -116,13 +117,16 @@ type Monitor struct {
 	state CanaryState
 
 	// Configuration
-	interval          time.Duration
-	canarySize        int
-	maxRetries        int
-	retryDelay        time.Duration
-	multipartInterval time.Duration
-	multipartSize     int
-	secondaryInterval time.Duration
+	interval            time.Duration
+	staleAfter          time.Duration
+	canarySize          int
+	maxRetries          int
+	retryDelay          time.Duration
+	multipartInterval   time.Duration
+	multipartStaleAfter time.Duration
+	multipartSize       int
+	secondaryInterval   time.Duration
+	secondaryStaleAfter time.Duration
 
 	// Control
 	stopCh chan struct{}
@@ -131,29 +135,35 @@ type Monitor struct {
 
 // Config holds configuration for the canary monitor.
 type Config struct {
-	Backend            backend.Backend
-	SecondaryBackend   backend.Backend // Secondary backend for replication health check (ADR-006)
-	SecondaryBucket    string          // Optional fixed bucket for the secondary target
-	ReplicationQueue   interface{}     // Replication queue for lag metrics (interface{} to avoid import cycle)
-	Bucket             string
-	Prefix             string // ADR-001 shared-bucket prefix, prepended to every canary key
-	MEK                []byte
-	BlockSize          int
-	InstanceID         string
-	FormatWriteVersion int           // Format version to write (2 or 3)
-	Interval           time.Duration // Check interval (default 5 minutes)
-	CanarySize         int           // Size of canary content (default 1024 bytes)
-	MaxRetries         int           // Max retries on failure (default 3)
-	RetryDelay         time.Duration // Delay between retries (default 10s)
-	MultipartInterval  time.Duration // Multipart check interval (default 1 hour)
-	MultipartSize      int           // Size of multipart canary (default 6MB)
-	SecondaryInterval  time.Duration // Secondary backend check interval (default 5 minutes)
+	Backend             backend.Backend
+	SecondaryBackend    backend.Backend // Secondary backend for replication health check (ADR-006)
+	SecondaryBucket     string          // Optional fixed bucket for the secondary target
+	ReplicationQueue    interface{}     // Replication queue for lag metrics (interface{} to avoid import cycle)
+	Bucket              string
+	Prefix              string // ADR-001 shared-bucket prefix, prepended to every canary key
+	MEK                 []byte
+	BlockSize           int
+	InstanceID          string
+	FormatWriteVersion  int           // Format version to write (2 or 3)
+	Interval            time.Duration // Check interval (default 5 minutes)
+	StaleAfter          time.Duration // Healthy status becomes stale after this age (default 2*Interval)
+	CanarySize          int           // Size of canary content (default 1024 bytes)
+	MaxRetries          int           // Max retries on failure (default 3)
+	RetryDelay          time.Duration // Delay between retries (default 10s)
+	MultipartInterval   time.Duration // Multipart check interval (default 1 hour)
+	MultipartStaleAfter time.Duration // Multipart healthy status becomes stale after this age (default 2*MultipartInterval)
+	MultipartSize       int           // Size of multipart canary (default 6MB)
+	SecondaryInterval   time.Duration // Secondary backend check interval (default 5 minutes)
+	SecondaryStaleAfter time.Duration // Secondary healthy status becomes stale after this age (default 2*SecondaryInterval)
 }
 
 // NewMonitor creates a new canary monitor.
 func NewMonitor(cfg Config) *Monitor {
 	if cfg.Interval == 0 {
 		cfg.Interval = 5 * time.Minute
+	}
+	if cfg.StaleAfter == 0 {
+		cfg.StaleAfter = 2 * cfg.Interval
 	}
 	if cfg.CanarySize == 0 {
 		cfg.CanarySize = 1024
@@ -167,6 +177,9 @@ func NewMonitor(cfg Config) *Monitor {
 	if cfg.MultipartInterval == 0 {
 		cfg.MultipartInterval = 1 * time.Hour
 	}
+	if cfg.MultipartStaleAfter == 0 {
+		cfg.MultipartStaleAfter = 2 * cfg.MultipartInterval
+	}
 	if cfg.MultipartSize == 0 {
 		// Two canary parts so the multipart path is exercised with at least one
 		// non-final part subject to B2's 5 MiB minimum. For the default 64 KiB
@@ -175,6 +188,9 @@ func NewMonitor(cfg Config) *Monitor {
 	}
 	if cfg.SecondaryInterval == 0 {
 		cfg.SecondaryInterval = 5 * time.Minute
+	}
+	if cfg.SecondaryStaleAfter == 0 {
+		cfg.SecondaryStaleAfter = 2 * cfg.SecondaryInterval
 	}
 	if cfg.FormatWriteVersion == 0 {
 		cfg.FormatWriteVersion = 2 // Default to version 2
@@ -192,25 +208,28 @@ func NewMonitor(cfg Config) *Monitor {
 	}
 
 	return &Monitor{
-		backend:            cfg.Backend,
-		secondaryBackend:   cfg.SecondaryBackend,
-		secondaryBucket:    cfg.SecondaryBucket,
-		replicationQueue:   cfg.ReplicationQueue,
-		bucket:             cfg.Bucket,
-		prefix:             cfg.Prefix,
-		mek:                cfg.MEK,
-		blockSize:          cfg.BlockSize,
-		instanceID:         instanceID,
-		formatWriteVersion: cfg.FormatWriteVersion,
-		interval:           cfg.Interval,
-		canarySize:         cfg.CanarySize,
-		maxRetries:         cfg.MaxRetries,
-		retryDelay:         cfg.RetryDelay,
-		multipartInterval:  cfg.MultipartInterval,
-		multipartSize:      cfg.MultipartSize,
-		secondaryInterval:  cfg.SecondaryInterval,
-		stopCh:             make(chan struct{}),
-		doneCh:             make(chan struct{}),
+		backend:             cfg.Backend,
+		secondaryBackend:    cfg.SecondaryBackend,
+		secondaryBucket:     cfg.SecondaryBucket,
+		replicationQueue:    cfg.ReplicationQueue,
+		bucket:              cfg.Bucket,
+		prefix:              cfg.Prefix,
+		mek:                 cfg.MEK,
+		blockSize:           cfg.BlockSize,
+		instanceID:          instanceID,
+		formatWriteVersion:  cfg.FormatWriteVersion,
+		interval:            cfg.Interval,
+		staleAfter:          cfg.StaleAfter,
+		canarySize:          cfg.CanarySize,
+		maxRetries:          cfg.MaxRetries,
+		retryDelay:          cfg.RetryDelay,
+		multipartInterval:   cfg.MultipartInterval,
+		multipartStaleAfter: cfg.MultipartStaleAfter,
+		multipartSize:       cfg.MultipartSize,
+		secondaryInterval:   cfg.SecondaryInterval,
+		secondaryStaleAfter: cfg.SecondaryStaleAfter,
+		stopCh:              make(chan struct{}),
+		doneCh:              make(chan struct{}),
 		state: CanaryState{
 			Status:           StatusUnknown,
 			MultipartHealthy: StatusUnknown,
@@ -1347,13 +1366,35 @@ func (m *Monitor) updateSecondaryStateFailure(err error, queueDepth, replication
 	m.state.SecondaryReplicationLagMs = replicationLag * 1000 // Convert seconds to ms
 }
 
-// GetStatus returns the current canary status.
+// statusWithFreshness preserves a terminal failure until a successful check
+// recovers it, while making a previously healthy family stale when its last
+// check is older than the configured freshness window. Unknown means the
+// family has never completed a check; it is not converted into stale because
+// a disabled or freshly starting monitor must remain distinguishable.
+func statusWithFreshness(status Status, lastCheck time.Time, staleAfter time.Duration, now time.Time) Status {
+	if status != StatusHealthy || lastCheck.IsZero() || staleAfter <= 0 {
+		return status
+	}
+	if now.Sub(lastCheck) > staleAfter {
+		return StatusStale
+	}
+	return status
+}
+
+// GetStatus returns the current canary status. Freshness is derived at read
+// time, so a stalled monitor cannot remain apparently healthy merely because
+// its last successful check was healthy.
 func (m *Monitor) GetStatus() Result {
 	m.state.mu.RLock()
 	defer m.state.mu.RUnlock()
 
+	now := time.Now()
+	status := statusWithFreshness(m.state.Status, m.state.LastCheck, m.staleAfter, now)
+	multipartStatus := statusWithFreshness(m.state.MultipartHealthy, m.state.MultipartLastCheck, m.multipartStaleAfter, now)
+	secondaryStatus := statusWithFreshness(m.state.SecondaryHealthy, m.state.SecondaryLastCheck, m.secondaryStaleAfter, now)
+
 	return Result{
-		Status:                    m.state.Status,
+		Status:                    status,
 		LastCheck:                 m.state.LastCheck,
 		UploadLatencyMs:           m.state.UploadLatencyMs,
 		DownloadLatencyMs:         m.state.DownloadLatencyMs,
@@ -1361,13 +1402,13 @@ func (m *Monitor) GetStatus() Result {
 		HMACVerified:              m.state.HMACVerified,
 		CFCacheHit:                m.state.CFCacheHit,
 		LastError:                 m.state.LastError,
-		MultipartHealthy:          m.state.MultipartHealthy,
-		MultipartHealthyBool:      m.state.MultipartHealthy == StatusHealthy,
+		MultipartHealthy:          multipartStatus,
+		MultipartHealthyBool:      multipartStatus == StatusHealthy,
 		MultipartLastCheck:        m.state.MultipartLastCheck,
 		MultipartConsecutiveFails: m.state.MultipartConsecutiveFails,
 		MultipartLastError:        m.state.MultipartLastError,
-		SecondaryHealthy:          m.state.SecondaryHealthy,
-		SecondaryHealthyBool:      m.state.SecondaryHealthy == StatusHealthy,
+		SecondaryHealthy:          secondaryStatus,
+		SecondaryHealthyBool:      secondaryStatus == StatusHealthy,
 		SecondaryLastCheck:        m.state.SecondaryLastCheck,
 		SecondaryConsecutiveFails: m.state.SecondaryConsecutiveFails,
 		SecondaryLastError:        m.state.SecondaryLastError,
@@ -1378,14 +1419,64 @@ func (m *Monitor) GetStatus() Result {
 
 // IsHealthy returns true if the canary is healthy.
 func (m *Monitor) IsHealthy() bool {
-	m.state.mu.RLock()
-	defer m.state.mu.RUnlock()
-	return m.state.Status == StatusHealthy
+	return m.GetStatus().Status == StatusHealthy
 }
 
 // MarshalJSON returns the state as JSON.
 func (m *Monitor) MarshalJSON() ([]byte, error) {
 	m.state.mu.RLock()
 	defer m.state.mu.RUnlock()
-	return json.Marshal(&m.state)
+
+	now := time.Now()
+	return json.Marshal(struct {
+		Status                    Status    `json:"status"`
+		LastCheck                 time.Time `json:"last_check"`
+		LastSuccess               time.Time `json:"last_success"`
+		ConsecutiveSuccess        int       `json:"consecutive_success"`
+		ConsecutiveFailures       int       `json:"consecutive_failures"`
+		LastError                 string    `json:"last_error,omitempty"`
+		UploadLatencyMs           int64     `json:"upload_latency_ms"`
+		DownloadLatencyMs         int64     `json:"download_latency_ms"`
+		DecryptVerified           bool      `json:"decrypt_verified"`
+		HMACVerified              bool      `json:"hmac_verified"`
+		CFCacheHit                bool      `json:"cloudflare_cache_hit"`
+		MultipartHealthy          Status    `json:"multipart_healthy"`
+		MultipartLastCheck        time.Time `json:"multipart_last_check"`
+		MultipartLastSuccess      time.Time `json:"multipart_last_success"`
+		MultipartConsecutiveFails int       `json:"multipart_consecutive_fails"`
+		MultipartLastError        string    `json:"multipart_last_error,omitempty"`
+		SecondaryHealthy          Status    `json:"secondary_healthy"`
+		SecondaryLastCheck        time.Time `json:"secondary_last_check"`
+		SecondaryLastSuccess      time.Time `json:"secondary_last_success"`
+		SecondaryConsecutiveFails int       `json:"secondary_consecutive_fails"`
+		SecondaryLastError        string    `json:"secondary_last_error,omitempty"`
+		SecondaryReplicationLagMs int64     `json:"secondary_replication_lag_ms"`
+		SecondaryQueueDepth       int64     `json:"secondary_queue_depth"`
+		InstanceID                string    `json:"instance_id"`
+	}{
+		Status:                    statusWithFreshness(m.state.Status, m.state.LastCheck, m.staleAfter, now),
+		LastCheck:                 m.state.LastCheck,
+		LastSuccess:               m.state.LastSuccess,
+		ConsecutiveSuccess:        m.state.ConsecutiveSuccess,
+		ConsecutiveFailures:       m.state.ConsecutiveFailures,
+		LastError:                 m.state.LastError,
+		UploadLatencyMs:           m.state.UploadLatencyMs,
+		DownloadLatencyMs:         m.state.DownloadLatencyMs,
+		DecryptVerified:           m.state.DecryptVerified,
+		HMACVerified:              m.state.HMACVerified,
+		CFCacheHit:                m.state.CFCacheHit,
+		MultipartHealthy:          statusWithFreshness(m.state.MultipartHealthy, m.state.MultipartLastCheck, m.multipartStaleAfter, now),
+		MultipartLastCheck:        m.state.MultipartLastCheck,
+		MultipartLastSuccess:      m.state.MultipartLastSuccess,
+		MultipartConsecutiveFails: m.state.MultipartConsecutiveFails,
+		MultipartLastError:        m.state.MultipartLastError,
+		SecondaryHealthy:          statusWithFreshness(m.state.SecondaryHealthy, m.state.SecondaryLastCheck, m.secondaryStaleAfter, now),
+		SecondaryLastCheck:        m.state.SecondaryLastCheck,
+		SecondaryLastSuccess:      m.state.SecondaryLastSuccess,
+		SecondaryConsecutiveFails: m.state.SecondaryConsecutiveFails,
+		SecondaryLastError:        m.state.SecondaryLastError,
+		SecondaryReplicationLagMs: m.state.SecondaryReplicationLagMs,
+		SecondaryQueueDepth:       m.state.SecondaryQueueDepth,
+		InstanceID:                m.state.InstanceID,
+	})
 }

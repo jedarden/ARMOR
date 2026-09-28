@@ -1,6 +1,8 @@
 package metrics
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"regexp"
 	"strings"
 	"testing"
@@ -177,6 +179,75 @@ func TestMultipartCanaryHealthyGaugeTransitions(t *testing.T) {
 	m.SetMultipartCanaryHealthy(false)
 	if v, _ := gaugeValue(t, m.PrometheusFormat(), "armor_multipart_canary_healthy"); v != "0" {
 		t.Errorf("after failed check: armor_multipart_canary_healthy = %s, want 0", v)
+	}
+}
+
+// TestCanaryMetricFreshnessAndFailureContract pins the scrape-visible
+// semantics for disabled, failed, stale, and recovered multipart checks. A
+// disabled monitor has no timestamp sample and its health gauge is 0; an
+// old timestamp forces the gauge back to 0 even if the last completed check
+// was healthy; a fresh success restores it to 1.
+func TestCanaryMetricFreshnessAndFailureContract(t *testing.T) {
+	m := NewMetrics()
+
+	dump := m.PrometheusFormat()
+	if v, ok := gaugeValue(t, dump, "armor_multipart_canary_healthy"); !ok || v != "0" {
+		t.Errorf("disabled/never-run multipart gauge = (%q, %v), want (0, true)", v, ok)
+	}
+	if _, ok := gaugeValue(t, dump, "armor_multipart_canary_last_check_timestamp"); ok {
+		t.Error("disabled/never-run multipart check must not export a fake last-check timestamp")
+	}
+
+	m.SetMultipartCanaryHealthy(true)
+	m.SetMultipartCanaryLastCheck(time.Now().Add(-3 * time.Hour))
+	dump = m.PrometheusFormat()
+	if v, ok := gaugeValue(t, dump, "armor_multipart_canary_healthy"); !ok || v != "0" {
+		t.Errorf("stale multipart gauge = (%q, %v), want (0, true)", v, ok)
+	}
+
+	m.SetMultipartCanaryLastCheck(time.Now())
+	dump = m.PrometheusFormat()
+	if v, ok := gaugeValue(t, dump, "armor_multipart_canary_healthy"); !ok || v != "1" {
+		t.Errorf("fresh multipart gauge = (%q, %v), want (1, true)", v, ok)
+	}
+
+	m.IncMultipartCanaryChecks()
+	m.IncMultipartCanaryFailures()
+	m.SetMultipartCanaryHealthy(false)
+	dump = m.PrometheusFormat()
+	if v, ok := gaugeValue(t, dump, "armor_multipart_canary_healthy"); !ok || v != "0" {
+		t.Errorf("failed multipart gauge = (%q, %v), want (0, true)", v, ok)
+	}
+	if v, ok := gaugeValue(t, dump, "armor_multipart_canary_checks_total"); !ok || v != "1" {
+		t.Errorf("multipart checks counter = (%q, %v), want (1, true)", v, ok)
+	}
+	if v, ok := gaugeValue(t, dump, "armor_multipart_canary_check_failures_total"); !ok || v != "1" {
+		t.Errorf("multipart failures counter = (%q, %v), want (1, true)", v, ok)
+	}
+}
+
+// TestMetricsHTTPContract pins the scrape endpoint's transport contract:
+// unauthenticated GET is 200 with Prometheus content type, while mutation
+// methods are rejected rather than being treated as scrapes.
+func TestMetricsHTTPContract(t *testing.T) {
+	h := NewMetrics().Handler()
+
+	get := httptest.NewRecorder()
+	h.ServeHTTP(get, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	if get.Code != http.StatusOK {
+		t.Fatalf("GET /metrics returned %d, want 200", get.Code)
+	}
+	if got := get.Header().Get("Content-Type"); got != "text/plain; version=0.0.4" {
+		t.Errorf("GET /metrics Content-Type = %q, want Prometheus 0.0.4", got)
+	}
+
+	post := httptest.NewRecorder()
+	h.ServeHTTP(post, httptest.NewRequest(http.MethodPost, "/metrics", nil))
+	if post.Code != http.StatusMethodNotAllowed {
+		t.Errorf("POST /metrics returned %d, want 405", post.Code)
+	}
+	if got := post.Header().Get("Allow"); got != http.MethodGet {
+		t.Errorf("POST /metrics Allow = %q, want GET", got)
 	}
 }
 
