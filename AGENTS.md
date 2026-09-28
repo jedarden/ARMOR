@@ -23,7 +23,7 @@ README.md. Full product documentation starts at
 | `cmd/armor` | The server binary and its subcommands (`serve`, `demo`, `check`, `decrypt`, `verify`, `migrate`, `client-config`, `version`, `help`) |
 | `cmd/restore-verifier`, `cmd/armor-fleet` | Companion binaries (restore verification harness, fleet console). The old offline verifier `cmd/verify-objects` was deleted 2026-09-20 — stale against fingerprinted DEKs and v3, and fully folded into `armor verify` (armor-da67956d), which now unwraps fingerprinted DEKs with ring fallback, verifies v3 multipart objects via manifest + sidecar, emits one report row per object, and exits non-zero on any failure |
 | `internal/` | All packages: `server` (S3 + admin handlers), `crypto`, `backend`, `config`, `keymanager`, `manifest`, `acl`, `canary`, `dashboard`, `presign`, `provenance`, `replication`, `restoreverifier`, `metrics`, `logging`, `b2keys`, `docsindex`, `version`, `testutil` |
-| `tests/` | Go test suites outside the package tree: `integration/` (real B2, build-tagged), `aws-cli-compatibility/`, `docker-demo-smoke/`, `fixtures/`; plus the Python gate suites (`test_drift_check.py`, `test_toolchain_parity.py`, `test_compose_version_parity.py`, `test_restore_verifier_inventory.py` — the restore-verifier fleet-inventory doc pin, `test_publish_release.py`) |
+| `tests/` | Go test suites outside the package tree: `integration/` (real B2, build-tagged), `aws-cli-compatibility/`, `docker-demo-smoke/`, `fixtures/`; plus the Python gate suites (`test_drift_check.py`, `test_toolchain_parity.py`, `test_compose_version_parity.py`, `test_restore_verifier_inventory.py` — the restore-verifier fleet-inventory doc pin, `test_restore_verifier_scope_validation.py`, `test_prohibited_constructs.py`, `test_gate_inventory.py` — the documented-inventory parity pin, and `test_publish_release.py`, run by hand) |
 | `scripts/` | Operator tooling: `definition-of-done.sh`, `release-gate.sh`, `cut-release.sh`, drift check, starvation watch. See `scripts/README.md` |
 | `docs/` | ADRs, runbooks, notes, plan. `docs/plan/plan.md` is the architecture and phase record |
 | `config/drift-config.json` | Fleet drift-check configuration |
@@ -78,10 +78,15 @@ make help                            # the rest of the targets
 - Python: `tests/test_drift_check.py`, `tests/test_toolchain_parity.py`,
   `tests/test_compose_version_parity.py`,
   `tests/test_restore_verifier_inventory.py`,
-  `tests/test_restore_verifier_scope_validation.py`, and
-  `tests/test_prohibited_constructs.py` (all run by the definition of
-  done) and `tests/test_publish_release.py`, via `python3 -m pytest` (the
-  `pytest` shim has a stale shebang on NixOS hosts).
+  `tests/test_restore_verifier_scope_validation.py`,
+  `tests/test_prohibited_constructs.py`, and
+  `tests/test_gate_inventory.py` (all run by the definition of done — the
+  last one pins these documented lists, the `scripts/README.md` gate
+  section, the script's own header and the `tests/README.md` table to the
+  pytest invocation in `scripts/definition-of-done.sh`) and
+  `tests/test_publish_release.py` (run by hand after touching the
+  publisher), via `python3 -m pytest` (the `pytest` shim has a stale
+  shebang on NixOS hosts).
 - Prohibited deployment constructs are machine-enforced:
   `scripts/prohibited-constructs-gate.sh` fails the tree on `.github/workflows/*`
   files, real `kind: Job` / `kind: CronJob` manifest lines, `:latest` image

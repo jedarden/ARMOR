@@ -4,7 +4,7 @@ This directory contains operational, testing, and monitoring scripts for ARMOR d
 
 ## definition-of-done.sh
 
-Local verification gate. `scripts/definition-of-done.sh --fast` runs the toolchain parity gate (`scripts/toolchain-parity.sh`), the compose.yaml ↔ VERSION parity gate (`scripts/compose-version-parity.sh`), `go build ./...`, `go vet ./...`, and the Python scripts test suite (`tests/test_drift_check.py`, `tests/test_toolchain_parity.py`, `tests/test_compose_version_parity.py`); without `--fast` it additionally runs `go test ./... -short`. Exits non-zero if any leg fails.
+Local verification gate. `scripts/definition-of-done.sh --fast` runs the toolchain parity gate (`scripts/toolchain-parity.sh`), the compose.yaml ↔ VERSION parity gate (`scripts/compose-version-parity.sh`), the prohibited deployment constructs gate (`scripts/prohibited-constructs-gate.sh`), `go build ./...`, `go vet ./...`, and the Python scripts test suite (`tests/test_drift_check.py`, `tests/test_toolchain_parity.py`, `tests/test_compose_version_parity.py`, `tests/test_restore_verifier_inventory.py`, `tests/test_restore_verifier_scope_validation.py`, `tests/test_prohibited_constructs.py`, `tests/test_gate_inventory.py`); without `--fast` it additionally runs `go test ./... -short`. Exits non-zero if any leg fails. `tests/test_gate_inventory.py` pins this list — and the copies in AGENTS.md, the script's own header, and the `tests/README.md` table — to the invocation in the script, so the documented suites cannot drift from the ones executed.
 
 ## release-gate.sh
 
