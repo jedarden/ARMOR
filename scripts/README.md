@@ -4,7 +4,7 @@ This directory contains operational, testing, and monitoring scripts for ARMOR d
 
 ## definition-of-done.sh
 
-Local verification gate. `scripts/definition-of-done.sh --fast` runs the toolchain parity gate (`scripts/toolchain-parity.sh`), the compose.yaml ↔ VERSION parity gate (`scripts/compose-version-parity.sh`), the prohibited deployment constructs gate (`scripts/prohibited-constructs-gate.sh`), `go build ./...`, `go vet ./...`, and the Python scripts test suite (`tests/test_drift_check.py`, `tests/test_toolchain_parity.py`, `tests/test_compose_version_parity.py`, `tests/test_restore_verifier_inventory.py`, `tests/test_restore_verifier_scope_validation.py`, `tests/test_prohibited_constructs.py`, `tests/test_gate_inventory.py`); without `--fast` it additionally runs `go test ./... -short`. Exits non-zero if any leg fails. `tests/test_gate_inventory.py` pins this list — and the copies in AGENTS.md, the script's own header, and the `tests/README.md` table — to the invocation in the script, so the documented suites cannot drift from the ones executed.
+Local verification gate. `scripts/definition-of-done.sh --fast` runs the toolchain parity gate (`scripts/toolchain-parity.sh`), the compose.yaml ↔ VERSION parity gate (`scripts/compose-version-parity.sh`), the prohibited deployment constructs gate (`scripts/prohibited-constructs-gate.sh`), `go build ./...`, `go vet ./...`, and the Python scripts test suite (`tests/test_drift_check.py`, `tests/test_toolchain_parity.py`, `tests/test_compose_version_parity.py`, `tests/test_cut_release.py`, `tests/test_restore_verifier_inventory.py`, `tests/test_restore_verifier_scope_validation.py`, `tests/test_prohibited_constructs.py`, `tests/test_gate_inventory.py`); without `--fast` it additionally runs `go test ./... -short`. Exits non-zero if any leg fails. `tests/test_gate_inventory.py` pins this list — and the copies in AGENTS.md, the script's own header, and the `tests/README.md` table — to the invocation in the script, so the documented suites cannot drift from the ones executed.
 
 ## release-gate.sh
 
@@ -24,7 +24,7 @@ Cuts a release commit. `scripts/cut-release.sh <MAJOR.MINOR.PATCH>` (or `make re
 
 **Options:** `--dry-run` prints the entry and changes nothing; `--no-push` commits without pushing.
 
-**Refuses to run** off `main`, with staged changes in the index, or with a version that is not newer than the current one.
+**Refuses to run** off `main`, with staged changes in the index, or with a version that is not newer than the current one. Tests: `python3 -m pytest tests/test_cut_release.py -q` — isolated git fixtures seeded with a previous `v*` tag, covering the exactly-three-files release commit, compose parity, changelog generation, version validation, the state gates, `--dry-run` purity, and re-cut refusal.
 
 ## publish_release.py
 

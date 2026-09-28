@@ -11,7 +11,7 @@
 # gate (scripts/prohibited-constructs-gate.sh), the Go build and vet, and the
 # Python scripts test suite (tests/test_drift_check.py,
 # tests/test_toolchain_parity.py, tests/test_compose_version_parity.py,
-# tests/test_restore_verifier_inventory.py,
+# tests/test_cut_release.py, tests/test_restore_verifier_inventory.py,
 # tests/test_restore_verifier_scope_validation.py,
 # tests/test_prohibited_constructs.py, tests/test_gate_inventory.py). The
 # default mode adds `go test ./... -short`. CI (iad-ci armor-build) runs the
@@ -51,7 +51,7 @@ run ./scripts/compose-version-parity.sh
 run ./scripts/prohibited-constructs-gate.sh
 run "$GO" build "${go_build_flags[@]}" ./...
 run "$GO" vet "${go_build_flags[@]}" ./...
-run "$PY" -m pytest tests/test_drift_check.py tests/test_toolchain_parity.py tests/test_compose_version_parity.py tests/test_restore_verifier_inventory.py tests/test_restore_verifier_scope_validation.py tests/test_prohibited_constructs.py tests/test_gate_inventory.py -q
+run "$PY" -m pytest tests/test_drift_check.py tests/test_toolchain_parity.py tests/test_compose_version_parity.py tests/test_cut_release.py tests/test_restore_verifier_inventory.py tests/test_restore_verifier_scope_validation.py tests/test_prohibited_constructs.py tests/test_gate_inventory.py -q
 
 if [ "$fast" = 0 ]; then
   run "$GO" test ./... -short
