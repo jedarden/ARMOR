@@ -128,16 +128,22 @@ imply a verifier, and several proxies have none today.
 | `restore-verifier-acb` | `rs-manager/armor` | bucket `armor-apexalgo` | stand-in for apexalgo-iad while that cluster's ArgoCD sync is broken; direct-to-B2, no co-located proxy for this bucket |
 | `restore-verifier` | `ardenone-cluster/tradegraph-platform` | bucket `nap-dashboard`, prefix `tradegraph-platform/` | co-located with the ARMOR proxy; explicit `-bucket` prefix scoping prevents sampling rs-manager's root scope |
 
+The related release bump list has five primary ARMOR server Deployments:
+`iad-ci/armor`, `iad-ci/armor-test`, `iad-kalshi/armor`,
+`ord-devimprint/devimprint`, and `rs-manager/armor`. Auxiliary manifests that
+consume the ARMOR image, such as sidecars, are not part of that list.
+
 **The authoritative enumeration is mechanical, not this table:**
 `python3 scripts/find-armor-deployments.py ~/declarative-config`, filtered to
 `image_type == armor-restore-verifier`.
 `tests/test_restore_verifier_inventory.py` pins that inventory (golden
-snapshot 2026-09-25) and fails when this ADR, the
+snapshot 2026-09-28), compares it with declarative-config, and fails when this ADR, the
 [deployment guide](../restore-verifier-deployment-guide.md), the
 [alerting runbook](../runbooks/restore-verifier-alerting.md), or plan.md's
-bump list drifts from it. When the fleet changes — scope added, retired, or
-re-homed — update the test's golden inventory and every prose count in the
-same change.
+bump list drifts from it. The same test holds the five primary ARMOR
+Deployments to the release-bump inventory. When either fleet changes — scope
+added, retired, or re-homed — update the test's golden inventory and every
+prose count in the same change.
 
 **Discovery.** Env-driven per
 [ADR-014](014-restore-verifier-discovery-reliability.md): `ARMOR_BUCKET`

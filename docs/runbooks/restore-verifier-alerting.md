@@ -37,6 +37,10 @@ five restore-verifier Deployments today
 "Fleet topology" section; `scripts/find-armor-deployments.py` enumerates it
 mechanically, and `tests/test_restore_verifier_inventory.py` fails if this
 runbook's count drifts from the fleet.
+The related release bump list has five primary ARMOR server Deployments:
+`iad-ci/armor`, `iad-ci/armor-test`, `iad-kalshi/armor`,
+`ord-devimprint/devimprint`, and `rs-manager/armor`; auxiliary ARMOR image
+consumers are outside that list.
 
 ## 1. The pipeline, end to end
 

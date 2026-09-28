@@ -14,8 +14,8 @@ Two things are pinned here:
    an ExternalSecret carrying no image line, and an unexpanded $-placeholder
    tag.
 
-2. The four prose surfaces that describe the fleet (ADR-004, the deployment
-   guide, the alerting runbook, and plan.md's bump list) agree with
+2. The five prose surfaces that describe the fleet (AGENTS.md, ADR-004, the
+   deployment guide, the alerting runbook, and plan.md's bump list) agree with
    GOLDEN_RESTORE_VERIFIER_INVENTORY. The mechanical enumeration —
    `python3 scripts/find-armor-deployments.py ~/declarative-config`, filtered
    to image_type == armor-restore-verifier — is authoritative; this test is
@@ -28,6 +28,7 @@ Run: python3 -m pytest tests/test_restore_verifier_inventory.py -q
 """
 
 import importlib.util
+import os
 import re
 from pathlib import Path
 
@@ -54,19 +55,37 @@ GOLDEN_RESTORE_VERIFIER_INVENTORY = [
     ("rs-manager", "armor", "restore-verifier-acb"),
 ]
 
-# Every prose surface checked below states the fleet size next to
-# "restore-verifier" ("four restore-verifier Deployments", "the **four**
-# restore-verifier Deployments", ...). Derived from the golden length so a
-# fleet-size change fails loudly until the prose catches up.
+# This is the five-Deployment ARMOR server release bump list from plan.md.
+# The declarative-config finder also sees auxiliary ARMOR image consumers
+# (for example sidecars and retired/test estates); those are intentionally not
+# part of this production release list.
+GOLDEN_ARMOR_DEPLOYMENT_INVENTORY = [
+    ("iad-ci", "armor", "armor"),
+    ("iad-ci", "armor-test", "armor-test"),
+    ("iad-kalshi", "armor", "armor"),
+    ("ord-devimprint", "devimprint", "armor"),
+    ("rs-manager", "armor", "armor"),
+]
+
+# Every prose surface checked below states the restore-verifier fleet size
+# next to "restore-verifier" ("five restore-verifier Deployments", "the
+# **five** restore-verifier Deployments", ...). Derived from the golden length
+# so a fleet-size change fails loudly until the prose catches up.
 _SIZE_WORDS = {2: "two", 3: "three", 4: "four", 5: "five", 6: "six", 7: "seven"}
 FLEET_SIZE_WORD = _SIZE_WORDS[len(GOLDEN_RESTORE_VERIFIER_INVENTORY)]
+ARMOR_FLEET_SIZE_WORD = _SIZE_WORDS[len(GOLDEN_ARMOR_DEPLOYMENT_INVENTORY)]
 
 DOC_SURFACES = [
+    REPO_ROOT / "AGENTS.md",
     REPO_ROOT / "docs" / "adr" / "004-continuous-restore-verification.md",
     REPO_ROOT / "docs" / "restore-verifier-deployment-guide.md",
     REPO_ROOT / "docs" / "runbooks" / "restore-verifier-alerting.md",
     REPO_ROOT / "docs" / "plan" / "plan.md",
 ]
+
+# The live declarative-config checkout is normally ~/declarative-config. An
+# override keeps the check useful in CI and in isolated verification jobs.
+DECLARATIVE_CONFIG_ENV = "ARMOR_DECLARATIVE_CONFIG"
 
 _HOWTO = (
     "The mechanical enumeration is `python3 scripts/find-armor-deployments.py "
@@ -330,6 +349,56 @@ def _restore_verifiers(declarations):
     )
 
 
+def _declarative_config_path():
+    configured = os.environ.get(DECLARATIVE_CONFIG_ENV)
+    path = Path(configured).expanduser() if configured else Path.home() / "declarative-config"
+    if not path.is_dir():
+        pytest.skip(
+            f"live declarative-config checkout is unavailable at {path}; "
+            f"set {DECLARATIVE_CONFIG_ENV} to enable inventory parity"
+        )
+    return path
+
+
+def _inventory_tuples(declarations, image_type):
+    return sorted(
+        (d["cluster"], d["namespace"], d["workload_name"])
+        for d in declarations
+        if d["image_type"] == image_type
+    )
+
+
+def _primary_armors(declarations):
+    expected = set(GOLDEN_ARMOR_DEPLOYMENT_INVENTORY)
+    return sorted(
+        (d["cluster"], d["namespace"], d["workload_name"])
+        for d in declarations
+        if d["image_type"] == "armor"
+        and (d["cluster"], d["namespace"], d["workload_name"]) in expected
+    )
+
+
+def test_live_declarative_config_matches_the_golden_inventories():
+    """The checked-in prose and goldens must describe declarative-config."""
+    declarations = find_armor_deployments.find_armor_deployments(
+        str(_declarative_config_path())
+    )
+    assert _inventory_tuples(declarations, "armor-restore-verifier") == sorted(
+        GOLDEN_RESTORE_VERIFIER_INVENTORY
+    ), (
+        "restore-verifier inventory changed in declarative-config; update "
+        "GOLDEN_RESTORE_VERIFIER_INVENTORY and every documented count/list "
+        "in the same change"
+    )
+    assert _primary_armors(declarations) == sorted(
+        GOLDEN_ARMOR_DEPLOYMENT_INVENTORY
+    ), (
+        "the five primary ARMOR deployment list changed in declarative-config; "
+        "update GOLDEN_ARMOR_DEPLOYMENT_INVENTORY and its documented count/list "
+        "in the same change"
+    )
+
+
 def test_finder_enumerates_the_golden_inventory(declarative_config):
     found = _restore_verifiers(
         find_armor_deployments.find_armor_deployments(declarative_config))
@@ -391,3 +460,15 @@ def test_fleet_prose_states_the_fleet_size(surface):
         f"{surface} states no '{FLEET_SIZE_WORD} ... restore-verifier' fleet " \
         f"size matching the golden inventory of " \
         f"{len(GOLDEN_RESTORE_VERIFIER_INVENTORY)}. {_HOWTO}"
+
+
+@pytest.mark.parametrize("surface", DOC_SURFACES,
+                         ids=lambda p: str(p.relative_to(REPO_ROOT)))
+def test_fleet_prose_states_the_primary_armor_size(surface):
+    text = surface.read_text()
+    pattern = rf"\b{ARMOR_FLEET_SIZE_WORD}\b[\s*]+primary ARMOR"
+    assert re.search(pattern, text, re.IGNORECASE), (
+        f"{surface} states no '{ARMOR_FLEET_SIZE_WORD} primary ARMOR' fleet "
+        f"size matching the golden inventory of "
+        f"{len(GOLDEN_ARMOR_DEPLOYMENT_INVENTORY)}. {_HOWTO}"
+    )

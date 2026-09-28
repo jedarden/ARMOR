@@ -37,6 +37,11 @@ bump list disagree with the golden inventory pinned in that test — when the
 fleet changes, update the golden inventory and every prose count in the same
 change.
 
+The related ARMOR release bump list has five primary ARMOR server Deployments:
+`iad-ci/armor`, `iad-ci/armor-test`, `iad-kalshi/armor`,
+`ord-devimprint/devimprint`, and `rs-manager/armor`. Auxiliary ARMOR image
+consumers are outside that list; a proxy Deployment does not imply a verifier.
+
 ### Validating the scope contract
 
 `python3 scripts/validate-restore-verifier-scopes.py` checks the manifests

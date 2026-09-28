@@ -179,12 +179,21 @@ leftover, not something CI pushes.
   and `restore-verifier*.y*ml`. Enumerate the current inventory with
   `python3 scripts/find-armor-deployments.py ~/declarative-config` rather than
   trusting any list in a document.
+- The five primary ARMOR server Deployments in the release bump list are
+  `iad-ci/armor`, `iad-ci/armor-test`, `iad-kalshi/armor`,
+  `ord-devimprint/devimprint`, and `rs-manager/armor`. Auxiliary consumers of
+  the ARMOR image (such as sidecars) are outside that list.
 - Restore-verifier topology is **one Deployment per ARMOR bucket scope**
   (bucket + MEK + B2 credential set), usually co-located with that scope's
   ARMOR proxy and reusing its env sources — never one fleet-wide verifier
-  (ADR-004, Addendum + "Fleet topology"). Four run today.
+  (ADR-004, Addendum + "Fleet topology"). Five restore-verifier Deployments
+  run today:
+  `iad-ci/armor`, `iad-kalshi/armor`, `ord-devimprint/devimprint`,
+  `rs-manager/armor/restore-verifier-acb`, and
+  `ardenone-cluster/tradegraph-platform`.
   `tests/test_restore_verifier_inventory.py` pins the prose to the
-  enumeration above with a golden inventory — change the golden and every
+  enumeration above with a golden inventory and compares it with
+  declarative-config — change the golden, the primary ARMOR list, and every
   prose count in the same change as the fleet.
 - Change desired state only by committing to declarative-config; ArgoCD syncs
   it (`<namespace>-ns-<cluster>` applications). `kubectl` mutations
