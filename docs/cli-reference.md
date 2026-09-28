@@ -7,7 +7,8 @@ summary in the [README](../README.md#subcommands) stays short; this document is
 the per-command contract. Environment variables are referenced by name only —
 the full values reference is [Configuration](configuration.md).
 
-Every claim here is enforced by the smoke tests in
+Every claim here is enforced by the executable parity gate
+(`scripts/cli-contract-gate.sh`) and the smoke tests in
 [`cmd/armor/cli_reference_test.go`](../cmd/armor/cli_reference_test.go) and
 [`cmd/armor/cli_secret_safety_test.go`](../cmd/armor/cli_secret_safety_test.go):
 the command list, every flag name, and the documented help output are checked

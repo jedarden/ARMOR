@@ -45,6 +45,7 @@ go vet ./...
 go test ./... -short                 # unit suite; integration tests skip without credentials
 scripts/definition-of-done.sh --fast # build + vet + python script tests (the local gate)
 scripts/definition-of-done.sh        # --fast plus `go test ./... -short` and the Agentation browser mount smoke
+scripts/cli-contract-gate.sh         # executable CLI/companion contract parity gate
 scripts/release-gate.sh              # the gate CI and the Dockerfile run (crypto, backend, canary, handlers, config, cmd, image contract, publisher contract tests)
 make build                           # every cmd/ binary into bin/ with the version injected
 make help                            # the rest of the targets

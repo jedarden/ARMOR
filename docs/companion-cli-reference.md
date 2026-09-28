@@ -11,7 +11,8 @@ Reference](cli-reference.md). The verifier's deployment topology is the
 (ADR-004: one Deployment per bucket scope); the console's operations are the
 [Fleet Console](fleet-console.md) page.
 
-Every claim here is enforced by the smoke tests beside each binary —
+Every claim here is enforced by the executable parity gate
+(`scripts/cli-contract-gate.sh`) and the smoke tests beside each binary —
 `cmd/restore-verifier/cli_reference_test.go` and
 `cmd/armor-fleet/cli_reference_test.go`: every flag the binary registers
 appears in this document and every flag named here exists in that binary's

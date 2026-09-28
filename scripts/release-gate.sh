@@ -44,6 +44,12 @@ fi
 # itself fails before that can happen again.
 ./scripts/image-contract-gate.sh
 
+# CLI contract parity (armor-a48b2e70): build the real armor,
+# restore-verifier, and armor-fleet binaries and exercise the documented
+# flags, inputs, outputs, exit codes, environment handling, HTTP surfaces,
+# shutdown paths, and secret-safety boundaries.
+./scripts/cli-contract-gate.sh
+
 # Publisher contract tests (armor-562d57c9): the armor-build publish-release
 # step runs scripts/publish_release.py to cut the annotated tag and both
 # releases. These pin its contract — idempotency, version/tag consistency,
