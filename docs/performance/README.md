@@ -17,6 +17,7 @@ run) as current production throughput**; re-run the harness.
 | `tests/performance/harness_test.go` | CI-safe deterministic tests (request counts, tail-block selectivity, one-PUT-per-part, overlap detector, compressed-path boundary) |
 | `tests/performance/baseline_test.go` | `TestRecordedBaseline` — the opt-in measurement run |
 | `tests/performance/remote_test.go` | Opt-in remote targets: real ARMOR service, Cloudflare read path, labeled direct-backend comparison |
+| [small-object-get-baseline.md](small-object-get-baseline.md) | The small-object full-GET baseline (armor-50a36688): per-GET backend request counts pinned by tests, the latency-injected matrix, and the in-cluster `armor-get-probe` production numbers |
 
 ## What is measured
 

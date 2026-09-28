@@ -137,6 +137,7 @@ Contextual notes and temporary documentation:
 - **[Multipart Client-Concurrency Compatibility Matrix](multipart-client-compatibility.md)** — What AWS CLI (serial and default concurrency), SDK transfer managers, rclone, litestream, and barman experience per write format; reconciles the unmodified-client claim with ADR-003 §4's superseded sequential-only era
 - **[Multipart 5 GiB Boundary Tests](testing/multipart-5gb-boundary-tests.md)** — 5 GiB multipart boundary test coverage
 - **[Performance Runbook](performance/README.md)** — Reproducible, bounded read/write throughput baselines (`tests/performance`); supersedes the one-off ADR-013 figures
+- **[Small-Object Full-GET Baseline](performance/small-object-get-baseline.md)** — Backend request counts per small-object GET (pinned by tests), the latency-injected matrix, and the in-cluster `armor-get-probe` production numbers (armor-50a36688)
 
 ## Archive
 
