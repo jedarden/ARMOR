@@ -29,9 +29,10 @@ fi
 # content before anything is built from it.
 ./scripts/prohibited-constructs-gate.sh
 
-# Documentation status (armor-abff8d6e): operator pages may describe
-# repository-tested behavior, but cannot promote pending capabilities to
-# release-verified or fully supported without the evidence update.
+# Documentation status (armor-abff8d6e, armor-749804d5): operator pages may
+# describe repository-tested behavior, but cannot promote pending capabilities
+# to release-verified/fully supported or reduce an active regression to a
+# historical-only note without the evidence update.
 ./scripts/documentation-status-gate.sh
 
 # Dockerfile image contract (armor-33bc86b9): an untargeted build publishes

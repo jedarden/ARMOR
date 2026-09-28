@@ -5,7 +5,9 @@ The repository has useful in-tree tests for several capabilities whose
 published-image or fleet proof is incomplete.  This gate keeps that distinction
 explicit: the canonical status document owns the evidence boundary, every
 operator-facing surface links to it, and pending capabilities may not acquire
-strong release/production claims in those surfaces.
+strong release/production claims in those surfaces.  An active regression must
+also remain visible as current evidence; citing its bead only as historical is
+not an adequate status.
 """
 
 from __future__ import annotations
@@ -15,6 +17,33 @@ import json
 import re
 import sys
 from pathlib import Path
+
+
+HISTORICAL_ONLY = re.compile(
+    r"\bhistorical\s+(?:failure|incident|regression|bug)\b|"
+    r"\b(?:formerly|previously)\s+(?:failed|broken|unreadable)\b",
+    re.IGNORECASE,
+)
+
+
+def capability_tokens(capability: dict) -> list[str]:
+    tokens = capability.get("tokens", [])
+    return [str(token).lower() for token in tokens] if isinstance(tokens, list) else []
+
+
+def active_evidence_terms(capability: dict) -> list[str]:
+    terms = capability.get("active_evidence_terms", [])
+    if not isinstance(terms, list) or not terms:
+        return ["active regression", "not currently supported", "currently unverified"]
+    return [str(term).lower() for term in terms]
+
+
+def line_mentions_capability(line: str, capability: dict) -> bool:
+    lowered = line.lower()
+    capability_id = str(capability.get("id", "")).lower()
+    return capability_id in lowered or any(
+        token in lowered for token in capability_tokens(capability)
+    )
 
 
 def load_status(root: Path) -> dict:
@@ -48,6 +77,11 @@ def check(root: Path) -> list[str]:
         errors.append("capabilities must be a non-empty list")
         capabilities = []
 
+    # The canonical register is itself an operator-facing surface.  Scan it
+    # together with the configured documents so a status row cannot quietly
+    # turn an active failure into a historical footnote.
+    surfaces: list[tuple[str, str]] = [(status_doc, status_text)]
+
     for document in documents:
         if not isinstance(document, str):
             errors.append(f"operator document is not a path: {document!r}")
@@ -57,6 +91,7 @@ def check(root: Path) -> list[str]:
             errors.append(f"operator document is missing: {document}")
             continue
         text = path.read_text()
+        surfaces.append((document, text))
         if status_doc not in text and Path(status_doc).name not in text:
             errors.append(f"{document} does not link to {status_doc}")
 
@@ -89,6 +124,60 @@ def check(root: Path) -> list[str]:
                             f"{document}:{line_number}: {capability_id} has "
                             f"unlicensed release claim {matched.group(0)!r}"
                         )
+
+    for capability in capabilities:
+        if not isinstance(capability, dict):
+            continue
+        capability_id = str(capability.get("id", "<missing-id>"))
+        if capability.get("status") != "active-regression":
+            continue
+
+        evidence_beads = capability.get("evidence_beads", [])
+        if not isinstance(evidence_beads, list) or not evidence_beads:
+            errors.append(
+                f"{capability_id}: active-regression capabilities need evidence_beads"
+            )
+            continue
+        evidence_beads = [str(bead) for bead in evidence_beads]
+        for bead in evidence_beads:
+            if not re.fullmatch(r"armor-[0-9a-f]+", bead):
+                errors.append(
+                    f"{capability_id}: invalid evidence bead reference {bead!r}"
+                )
+            if not any(
+                bead in line and line_mentions_capability(line, capability)
+                for line in status_text.splitlines()
+            ):
+                errors.append(
+                    f"{status_doc} does not cite evidence bead {bead} "
+                    f"for active capability {capability_id}"
+                )
+
+        tokens = capability_tokens(capability)
+        terms = active_evidence_terms(capability)
+        if not any(
+            line_mentions_capability(line, capability)
+            and any(term in line.lower() for term in terms)
+            for line in status_text.splitlines()
+        ):
+            errors.append(
+                f"{status_doc} does not record current active evidence for "
+                f"{capability_id}"
+            )
+
+        for document, text in surfaces:
+            for line_number, line in enumerate(text.splitlines(), 1):
+                lowered = line.lower()
+                if not any(token in lowered for token in tokens):
+                    continue
+                if not HISTORICAL_ONLY.search(line):
+                    continue
+                if any(term in lowered for term in terms):
+                    continue
+                errors.append(
+                    f"{document}:{line_number}: {capability_id} describes an "
+                    "active regression only as historical"
+                )
 
     for capability in capabilities:
         if not isinstance(capability, dict):

@@ -8,21 +8,22 @@ ARMOR is an S3-compatible proxy server that encrypts data before storing it in
 [Backblaze B2](https://www.backblaze.com/cloud-storage) and serves downloads
 through Cloudflare for zero-egress cost. ARMOR exposes a tested S3 protocol
 surface, not a guarantee about every client or every AWS S3 operation. The
-current in-tree contract covers SigV4 authentication, plain and byte-range
-reads, prefix-scoped listing, overwrite, deletion, single-PUT writes, and the
-documented multipart cases. The protocol suite pins those behaviors on every
-test run; the image compatibility gate additionally exercises the configured
-AWS CLI, rclone, boto3, DuckDB/httpfs, litestream, and barman legs when it
-builds a release image. The release and deployment evidence boundary, known
+source tree has focused test coverage for SigV4 authentication, plain and
+byte-range reads, prefix-scoped listing, overwrite, deletion, single-PUT
+writes, and the documented multipart cases. That coverage is not a claim that
+the corresponding capability currently works in every release or deployment.
+The image compatibility gate additionally exercises the configured AWS CLI,
+rclone, boto3, DuckDB/httpfs, litestream, and barman legs when it builds a
+release image. The release and deployment evidence boundary, known
 limitations, and per-client matrix are in
 [release status](docs/release-status.md) and
 [multipart compatibility](docs/multipart-client-compatibility.md).
 
 - **Zero-knowledge encryption** — data is encrypted before it leaves ARMOR; B2 only ever stores ciphertext (guaranteed for envelope v2/v3 objects; legacy v1 objects must be migrated first — see [Security model](#security-model))
 - **Zero egress fees** — downloads route through Cloudflare via the Bandwidth Alliance
-- **Seekable encryption** — AES-256-CTR with 64 KB blocks enables byte-range reads without decrypting the whole file
+- **Seekable encryption** — AES-256-CTR with 64 KB blocks is designed to enable byte-range reads without decrypting the whole file; current range status is in [release status](docs/release-status.md)
 - **DuckDB-compatible** — query encrypted Parquet files with column pruning and predicate pushdown intact
-- **Multi-key routing** — different master keys for different path prefixes; automatic key selection per object
+- **Multi-key routing** — different master keys for different path prefixes; automatic key selection is covered by tests, while named-key reads remain an active regression boundary (see [release status](docs/release-status.md))
 
 ## Project status and contributing
 
@@ -35,16 +36,19 @@ Build, test, work-tracking and release conventions: [AGENTS.md](AGENTS.md).
 ## Release status and known limitations
 
 `VERSION` identifies the source release currently described by this checkout;
-it does not prove that every fleet deployment runs that image. Repository
-tests cover the fingerprinted-DEK, v3 multipart, SigV4, presigned/share, and
-range paths, but release-image and live DR evidence is still required before
-those capabilities are accepted for an operator workflow. Named-key
-reads, wrapped-DEK decoding, multipart sidecar preservation, and presigned GET
-have historical failure records. Range correctness is repository-tested and a
-repeatable local large-object performance baseline is recorded in the
-[large-object range-read baseline](docs/performance/large-object-range-read-baseline.md);
-production B2/Cloudflare performance remains unmeasured. Do not infer a full
-AWS S3 contract from the tested operation matrix.
+it does not prove that every fleet deployment runs that image. The repository
+has tests for fingerprinted-DEK decoding, v3 multipart reads, SigV4 (including
+AWS CLI-shaped requests), presigned/share GETs, and range reads, but those are
+coverage results rather than currently working-support evidence. Active P0
+regression records and their follow-up implementation beads leave named-key
+reads, wrapped-DEK decoding, multipart sidecar/DR verification, AWS CLI SigV4,
+presigned GET, and range reads unverified for an operator workflow. The
+[release-status register](docs/release-status.md) records the current evidence
+and cites the existing beads; it is the source of truth for promotion. Range
+correctness and a repeatable local large-object performance baseline are
+recorded in the [large-object range-read baseline](docs/performance/large-object-range-read-baseline.md),
+but production B2/Cloudflare performance remains unmeasured. Do not infer a
+full AWS S3 contract from the tested operation matrix.
 See the [release-status and known-limitations register](docs/release-status.md)
 for the exact boundary and promotion evidence.
 
@@ -282,7 +286,9 @@ append-only writers and the YAML credentials file:
 
 Transforming operations (encryption/decryption applied): PutObject (streaming;
 `If-None-Match: *` create-only honored), GetObject (range reads), HeadObject,
-CopyObject (DEK re-wrapping, cross-bucket) and the full multipart set.
+CopyObject (DEK re-wrapping, cross-bucket) and the full multipart set. These
+are the operation families covered by tests; current support status is bounded
+by the [release-status register](docs/release-status.md).
 Passthrough: ListObjectsV2 (size correction, `.armor/` filter), DeleteObject /
 DeleteObjects, ListBuckets, CreateBucket / DeleteBucket / HeadBucket, lifecycle
 configuration, Object Lock / Retention / Legal Hold. Per-operation comparison

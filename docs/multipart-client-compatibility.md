@@ -8,9 +8,9 @@ This matrix is the scoped repository contract, not a blanket release claim for
 every S3 client or every deployed image. The current source has tests for v2
 and v3 multipart ordering, sidecars, HMAC reads, full GET, and range semantics;
 release-image and live-client evidence is still required for the image being
-rolled out. Historical failures in named-key lookup, wrapped-DEK decoding,
-multipart sidecars, SigV4, presigned GET, and range paths remain operator
-triage signals even where a focused regression test now passes. Read the
+rolled out. Active regression records for named-key lookup, wrapped-DEK
+decoding, multipart sidecars, SigV4, presigned GET, and range paths remain
+operator triage signals even where a focused regression test now passes. Read the
 [release-status register](release-status.md) before marking a client or DR
 workflow complete.
 

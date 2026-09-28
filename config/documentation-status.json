@@ -12,86 +12,107 @@
   "capabilities": [
     {
       "id": "named-key-read",
-      "status": "release-pending",
+      "status": "active-regression",
       "tokens": ["named key", "named-key"],
+      "evidence_beads": ["armor-8317f313"],
+      "active_evidence_terms": ["active regression", "not currently supported", "currently unverified"],
       "forbidden_claims": [
         "release[- ]verified",
         "\\b(?:is|are|was|were|as)\\s+(?:fully\\s+)?verified\\b",
         "verified in production",
         "fully supported",
-        "works without modification"
+        "works without modification",
+        "currently\\s+(?:works|working|supported)"
       ]
     },
     {
       "id": "wrapped-dek-decoding",
-      "status": "release-pending",
+      "status": "active-regression",
       "tokens": ["wrapped dek", "wrapped-dek"],
+      "evidence_beads": ["armor-4b1b6c64", "armor-da67956d"],
+      "active_evidence_terms": ["active regression", "not currently supported", "currently unverified"],
       "forbidden_claims": [
         "release[- ]verified",
         "\\b(?:is|are|was|were|as)\\s+(?:fully\\s+)?verified\\b",
         "verified in production",
         "fully supported",
-        "works without modification"
+        "works without modification",
+        "currently\\s+(?:works|working|supported)"
       ]
     },
     {
       "id": "multipart-hmac-read",
-      "status": "release-pending",
+      "status": "active-regression",
       "tokens": ["hmac sidecar", "multipart hmac", "multipart sidecar"],
+      "evidence_beads": ["armor-1b272971", "armor-7edd1237"],
+      "active_evidence_terms": ["active regression", "not currently supported", "currently unverified"],
       "forbidden_claims": [
         "release[- ]verified",
         "\\b(?:is|are|was|were|as)\\s+(?:fully\\s+)?verified\\b",
         "verified in production",
         "fully supported",
-        "works without modification"
+        "works without modification",
+        "currently\\s+(?:works|working|supported)"
       ]
     },
     {
       "id": "v3-multipart-verification",
-      "status": "release-pending",
+      "status": "active-regression",
       "tokens": ["v3 multipart", "multipart v3"],
+      "evidence_beads": ["armor-86a90341", "armor-da67956d"],
+      "active_evidence_terms": ["active regression", "not currently supported", "currently unverified"],
       "forbidden_claims": [
         "release[- ]verified",
         "\\b(?:is|are|was|were|as)\\s+(?:fully\\s+)?verified\\b",
         "verified in production",
         "fully supported",
-        "works without modification"
+        "works without modification",
+        "currently\\s+(?:works|working|supported)"
       ]
     },
     {
       "id": "sigv4-authentication",
-      "status": "release-pending",
+      "status": "active-regression",
       "tokens": ["sigv4"],
+      "evidence_beads": ["armor-a3b04ef2", "armor-4795decf"],
+      "active_evidence_terms": ["active regression", "not currently supported", "currently unverified"],
       "forbidden_claims": [
         "release[- ]verified",
         "\\b(?:is|are|was|were|as)\\s+(?:fully\\s+)?verified\\b",
         "verified in production",
         "fully supported",
-        "works without modification"
+        "works without modification",
+        "currently\\s+(?:works|working|supported)"
       ]
     },
     {
       "id": "presigned-get",
-      "status": "release-pending",
+      "status": "active-regression",
       "tokens": ["presigned get", "presign", "share get"],
+      "evidence_beads": ["armor-0163fb32"],
+      "active_evidence_terms": ["active regression", "not currently supported", "currently unverified"],
       "forbidden_claims": [
         "release[- ]verified",
         "\\b(?:is|are|was|were|as)\\s+(?:fully\\s+)?verified\\b",
         "verified in production",
         "fully supported",
-        "works without modification"
+        "works without modification",
+        "currently\\s+(?:works|working|supported)"
       ]
     },
     {
       "id": "range-reads",
-      "status": "repository-tested",
+      "status": "active-regression",
       "tokens": ["range read", "range reads", "byte-range"],
+      "evidence_beads": ["armor-817d9d92", "armor-73564f97", "armor-5694713b", "armor-272299ca"],
+      "active_evidence_terms": ["active regression", "not currently supported", "currently unverified"],
       "forbidden_claims": [
         "release[- ]verified",
         "\\b(?:is|are|was|were|as)\\s+(?:fully\\s+)?verified\\b",
         "verified in production",
         "fully supported",
-        "works without modification"
+        "works without modification",
+        "currently\\s+(?:works|working|supported)"
       ]
     },
     {

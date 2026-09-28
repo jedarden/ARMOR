@@ -8,9 +8,9 @@ This runbook is a procedure, not proof that a current release can recover every
 object. The source tree tests fingerprinted wrapped-DEK decoding, v3 multipart
 manifest/sidecar reads, and direct-only DR paths, but the exact published image,
 MEK/ring escrow, B2 metadata, and `.armor/` sidecars must still be exercised.
-Named-key reads, historical wrapped-DEK and multipart sidecar failures, old
+Named-key reads, unresolved wrapped-DEK and multipart sidecar regressions, old
 restore-verifier metadata gaps, presigned GET, SigV4, and range-read behavior
-have separate status boundaries; do not promote a test result to release
+have separate active status boundaries; do not promote a test result to release
 evidence without the image and object-shape record. See
 [release-status.md](release-status.md) for the current register and tracking
 references.

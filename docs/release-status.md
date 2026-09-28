@@ -9,27 +9,30 @@ credential/key-ring combination has exercised that behavior. “Release-pending�
 means that release-image or live deployment evidence is still required before
 an operator should treat the capability as verified. The compatibility and DR
 pages link here so their examples do not silently become release claims.
+“Active-regression” is stronger: an implementation or verification bead has
+reported a current failure or an unclosed support boundary, so test coverage
+must not be presented as currently working support.
 
 ## Current release posture
 
-<!-- capability: named-key-read status: release-pending -->
-<!-- capability: wrapped-dek-decoding status: release-pending -->
-<!-- capability: multipart-hmac-read status: release-pending -->
-<!-- capability: v3-multipart-verification status: release-pending -->
-<!-- capability: sigv4-authentication status: release-pending -->
-<!-- capability: presigned-get status: release-pending -->
-<!-- capability: range-reads status: repository-tested -->
+<!-- capability: named-key-read status: active-regression evidence: armor-8317f313 -->
+<!-- capability: wrapped-dek-decoding status: active-regression evidence: armor-4b1b6c64 armor-da67956d -->
+<!-- capability: multipart-hmac-read status: active-regression evidence: armor-1b272971 armor-7edd1237 -->
+<!-- capability: v3-multipart-verification status: active-regression evidence: armor-86a90341 armor-da67956d -->
+<!-- capability: sigv4-authentication status: active-regression evidence: armor-a3b04ef2 armor-4795decf -->
+<!-- capability: presigned-get status: active-regression evidence: armor-0163fb32 -->
+<!-- capability: range-reads status: active-regression evidence: armor-817d9d92 armor-73564f97 armor-5694713b armor-272299ca -->
 <!-- capability: s3-operation-surface status: scope-limited -->
 
 | Capability | Status | What the source tree demonstrates | Operator boundary |
 |---|---|---|---|
-| Named-key and ring-key reads | `release-pending` | Focused key-manager and multi-key routing tests cover fingerprint selection and rejection of unknown metadata. | On a deployment, confirm the running image and the named key/ring census before relying on non-default keys. Historical failure: `armor-8317f313`. |
-| Fingerprinted wrapped-DEK decoding | `release-pending` | CLI, server, and restore-verifier tests cover the `v2:<fingerprint>:<base64>` form and legacy values. | A DR drill must exercise the exact escrow package and object population; old images had decode/version failures. Historical incident: `armor-4b1b6c64`. |
-| Multipart HMAC sidecar and read paths | `release-pending` | In-tree v2/v3 full-read, range-read, prefix, sidecar, and corruption tests cover the current layouts. | Preserve `.armor/hmac/` and deploy the sidecar reader fix before trusting existing multipart data. A historical prefix mismatch caused 500s: `armor-1b272971`. |
-| V3 multipart verification in CLI and DR | `release-pending` | `armor verify`, `armor decrypt`, and restore-verifier tests cover manifest fallback, sidecar HMACs, part counters, and digest outcomes. | Prove it against the published image and a real v3 multipart object; old completed objects with empty B2 metadata were not visible to the verifier. Historical incident: `armor-86a90341`. |
-| SigV4 authentication | `release-pending` | The protocol suite and request-shape tests cover accepted and rejected credentials, including AWS CLI and barman-shaped requests. | Run the real AWS CLI against the release image and inspect the server-side denial class. A live rejection remains a release/endpoint concern: `armor-a3b04ef2`. |
-| Presigned/share GET | `release-pending` | Enabled-harness tests cover share GETs and range/error responses. | `ARMOR_PRESIGN_ENABLED`, absolute base URL, and the dedicated secret must be configured; test the enabled route, not only the admin URL. Historical 403 harness failure: `armor-0163fb32`. |
-| Byte-range reads | `repository-tested` | Protocol and handler tests cover unaligned, suffix, multipart-boundary, prefix, and corruption cases; the focused [large-object range baseline](performance/large-object-range-read-baseline.md) records local latency and backend-byte shape. | The baseline is loopback + filesystem only, not B2/Cloudflare production evidence. Coalesced fetches, bounded streaming, and production-shaped performance remain open work (`armor-73564f97`, `armor-5694713b`, `armor-272299ca`). |
+| Named-key and ring-key reads | `active-regression` | Focused key-manager and multi-key routing tests cover fingerprint selection and rejection of unknown metadata. | Active regression: current support is not established for non-default keys. The P0 regression record is `armor-8317f313`; its implementation and release evidence must be resolved before relying on named-key reads. |
+| Fingerprinted wrapped-DEK decoding | `active-regression` | CLI, server, and restore-verifier tests cover the `v2:<fingerprint>:<base64>` form and legacy values. | Active regression: test coverage does not establish working DR support. Track the decode and verifier evidence in `armor-4b1b6c64` and `armor-da67956d`; exercise the exact escrow package and object population before promotion. |
+| Multipart HMAC sidecar and read paths | `active-regression` | In-tree v2/v3 full-read, range-read, prefix, sidecar, and corruption tests cover the current layouts. | Active regression: preserve `.armor/hmac/` and do not rely on existing multipart data until the sidecar reader/write-path evidence is current. The implementation records are `armor-1b272971` and `armor-7edd1237`. |
+| V3 multipart verification in CLI and DR | `active-regression` | `armor verify`, `armor decrypt`, and restore-verifier tests cover manifest fallback, sidecar HMACs, part counters, and digest outcomes. | Active regression: a server GET is not DR proof. Published-image and real-object verification remain unestablished; use `armor-86a90341` and `armor-da67956d` for the existing verifier implementation work. |
+| SigV4 authentication, including AWS CLI | `active-regression` | The protocol suite and request-shape tests cover accepted and rejected credentials, including AWS CLI and barman-shaped requests. | Active regression: a passing request-shape test is not current AWS CLI support evidence. Reproduce against the release image and classify the denial using `armor-a3b04ef2` and `armor-4795decf` before promotion. |
+| Presigned/share GET | `active-regression` | Enabled-harness tests cover share GETs and range/error responses. | Active regression: configure `ARMOR_PRESIGN_ENABLED`, an absolute base URL, and the dedicated secret, then prove the enabled route. The existing 403 regression evidence is `armor-0163fb32`; do not describe it as only historical. |
+| Byte-range reads | `active-regression` | Protocol and handler tests cover unaligned, suffix, multipart-boundary, prefix, and corruption cases; the focused [large-object range baseline](performance/large-object-range-read-baseline.md) records local latency and backend-byte shape. | Active regression: correctness coverage does not establish currently working large-object support or production performance. The active read-path and bounded-throughput work is tracked by `armor-817d9d92`, `armor-73564f97`, `armor-5694713b`, and `armor-272299ca`. |
 | S3 operation surface | `scope-limited` | The documented matrix covers authentication, reads, ranges, listing, overwrite/delete, and multipart where a client supports it. | ARMOR is not a claim of full AWS S3 API compatibility. Use the matrix and the image-gate client run for the exact release under evaluation. |
 
 ## Known limitations
@@ -52,7 +55,7 @@ pages link here so their examples do not silently become release claims.
   current tests protect byte and status semantics, while the focused local
   baseline measures request count, backend bytes, and latency for representative
   large-object spans. It does not measure B2, Cloudflare, production network
-  tails, or bounded-memory behavior; the open read-ahead work still concerns
+  tails, or bounded-memory behavior; the active read-ahead work still concerns
   those limits.
 - **Compatibility is scoped.** The supported examples are the operations in
   the compatibility matrix, against the tested image and configuration. Do not
@@ -64,5 +67,6 @@ pages link here so their examples do not silently become release claims.
 For a release or fleet rollout, run the focused repository tests, run the
 real-client/image compatibility leg where applicable, and execute the relevant
 live or DR probe. Update this page and the status manifest in the same change,
-with the image version and evidence. Until then, use the `release-pending`,
-`repository-tested`, or `scope-limited` wording above.
+with the image version and evidence. Until then, use the
+`active-regression`, `release-pending`, `repository-tested`, or `scope-limited`
+wording above; never turn an active regression into a historical-only note.
