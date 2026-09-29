@@ -62,12 +62,31 @@ class Boto3S3CompatibilityTest(unittest.TestCase):
         cls.prefix = "compat/boto3/" + uuid.uuid4().hex
         cls.single_key = cls.prefix + "/single.bin"
         cls.multipart_key = cls.prefix + "/multipart.bin"
+        cls.delete_key = cls.prefix + "/delete-me.bin"
+        cls.overwrite_key = cls.prefix + "/overwrite.bin"
+        cls._ensure_bucket()
+
+    @classmethod
+    def _ensure_bucket(cls):
+        """Create the configured test bucket when the image starts empty."""
+        try:
+            cls.client.create_bucket(Bucket=cls.bucket)
+        except ClientError as error:
+            code = error.response.get("Error", {}).get("Code")
+            if code not in {"BucketAlreadyOwnedByYou", "BucketAlreadyExists"}:
+                raise
 
     @classmethod
     def tearDownClass(cls):
         if not hasattr(cls, "client"):
             return
-        for key in (getattr(cls, "single_key", None), getattr(cls, "multipart_key", None)):
+        keys = (
+            cls.single_key,
+            cls.multipart_key,
+            cls.delete_key,
+            cls.overwrite_key,
+        )
+        for key in keys:
             if key:
                 try:
                     cls.client.delete_object(Bucket=cls.bucket, Key=key)
@@ -75,6 +94,84 @@ class Boto3S3CompatibilityTest(unittest.TestCase):
                     # Preserve the original assertion if cleanup encounters a
                     # server-side failure. The gate uses a throwaway bucket.
                     pass
+
+    def test_authentication_rejects_invalid_credentials(self):
+        """SigV4 rejects a wrong secret and an unknown access key."""
+        cases = {
+            "wrong-secret": (
+                self.access_key,
+                self.secret_key + "-tampered",
+                "SignatureDoesNotMatch",
+            ),
+            "unknown-access-key": (
+                self.access_key + "-tampered",
+                self.secret_key,
+                "InvalidAccessKeyId",
+            ),
+        }
+        for label, (access_key, secret_key, error_code) in cases.items():
+            with self.subTest(case=label):
+                intruder = boto3.client(
+                    "s3",
+                    endpoint_url=self.endpoint,
+                    aws_access_key_id=access_key,
+                    aws_secret_access_key=secret_key,
+                    region_name=self.region,
+                    config=Config(
+                        signature_version="s3v4",
+                        s3={"addressing_style": "path"},
+                    ),
+                )
+                with self.assertRaises(ClientError) as ctx:
+                    intruder.list_buckets()
+                response = ctx.exception.response
+                self.assertEqual(
+                    response["ResponseMetadata"]["HTTPStatusCode"], 403
+                )
+                self.assertEqual(response["Error"]["Code"], error_code)
+
+    def test_delete_removes_object(self):
+        """DeleteObject removes an object from reads and listings."""
+        # Seed a bare-prefix list cache entry before writing. boto3 commonly
+        # lists without a trailing slash, so a write must invalidate that exact
+        # query shape rather than only the object's directory.
+        before = self.client.list_objects_v2(Bucket=self.bucket, Prefix=self.prefix)
+        self.assertNotIn(
+            self.delete_key,
+            {entry["Key"] for entry in before.get("Contents", [])},
+        )
+        self.client.put_object(
+            Bucket=self.bucket,
+            Key=self.delete_key,
+            Body=b"to-be-deleted" * 100,
+        )
+        after_put = self.client.list_objects_v2(
+            Bucket=self.bucket, Prefix=self.prefix
+        )
+        self.assertIn(
+            self.delete_key,
+            {entry["Key"] for entry in after_put.get("Contents", [])},
+        )
+
+        self.client.delete_object(Bucket=self.bucket, Key=self.delete_key)
+
+        with self.assertRaises(ClientError) as head_ctx:
+            self.client.head_object(Bucket=self.bucket, Key=self.delete_key)
+        self.assertEqual(
+            head_ctx.exception.response["ResponseMetadata"]["HTTPStatusCode"], 404
+        )
+        with self.assertRaises(ClientError) as get_ctx:
+            self.client.get_object(Bucket=self.bucket, Key=self.delete_key)
+        self.assertEqual(get_ctx.exception.response["Error"]["Code"], "NoSuchKey")
+        listed = self.client.list_objects_v2(Bucket=self.bucket, Prefix=self.prefix)
+        self.assertNotIn(
+            self.delete_key,
+            {entry["Key"] for entry in listed.get("Contents", [])},
+        )
+
+        # S3 deletes are idempotent.
+        gone = self.client.delete_object(Bucket=self.bucket, Key=self.delete_key)
+        self.assertEqual(gone["ResponseMetadata"]["HTTPStatusCode"], 204)
 
     def test_documented_s3_api(self):
         """Verify SigV4, bucket/object operations, ranges, metadata, and multipart."""
@@ -162,6 +259,37 @@ class Boto3S3CompatibilityTest(unittest.TestCase):
         )
         with multipart_get["Body"]:
             self.assertEqual(multipart_get["Body"].read(), multipart_payload)
+
+    def test_overwrite_replaces_object(self):
+        """A later PUT replaces both the old bytes and metadata."""
+        first_payload = b"first-version-" * 1000
+        self.client.put_object(
+            Bucket=self.bucket,
+            Key=self.overwrite_key,
+            Body=first_payload,
+            Metadata={"revision": "1"},
+        )
+
+        second_payload = bytes(range(256)) * 33
+        second_metadata = {"revision": "2"}
+        self.client.put_object(
+            Bucket=self.bucket,
+            Key=self.overwrite_key,
+            Body=second_payload,
+            Metadata=second_metadata,
+        )
+
+        head = self.client.head_object(Bucket=self.bucket, Key=self.overwrite_key)
+        self.assertEqual(head["ContentLength"], len(second_payload))
+        self.assertEqual(
+            {key.lower(): value for key, value in head["Metadata"].items()},
+            second_metadata,
+        )
+        overwritten = self.client.get_object(
+            Bucket=self.bucket, Key=self.overwrite_key
+        )
+        with overwritten["Body"]:
+            self.assertEqual(overwritten["Body"].read(), second_payload)
 
 
 if __name__ == "__main__":

@@ -128,7 +128,7 @@ var clientLegs = []clientLeg{
 			// The Go entry runs the whole driver under botocore's real
 			// SigV4 signer; the remaining cells bind to the driver's
 			// own request shapes.
-			opAuthentication:  {"TestBoto3_ClientLeg", `signature_version="s3v4"`},
+			opAuthentication:  {"TestBoto3_ClientLeg", `signature_version="s3v4"`, "SignatureDoesNotMatch", "InvalidAccessKeyId"},
 			opReads:           {"get_object(Bucket=bucket, Key=key)"},
 			opRangeReads:      {`Range="bytes=1000-1999"`},
 			opListing:         {"list_objects_v2"},

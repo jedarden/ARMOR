@@ -29,6 +29,7 @@ import uuid
 
 import boto3
 from botocore.config import Config
+from botocore.exceptions import ClientError
 
 MIB = 1024 * 1024
 
@@ -38,12 +39,8 @@ def fail(message):
     return 1
 
 
-def main() -> int:
-    endpoint, bucket, region = sys.argv[1:4]
-    access_key = os.environ["AWS_ACCESS_KEY_ID"]
-    secret_key = os.environ["AWS_SECRET_ACCESS_KEY"]
-
-    client = boto3.client(
+def make_client(endpoint, region, access_key, secret_key):
+    return boto3.client(
         "s3",
         endpoint_url=endpoint,
         aws_access_key_id=access_key,
@@ -55,6 +52,42 @@ def main() -> int:
             retries={"max_attempts": 3, "mode": "standard"},
         ),
     )
+
+
+def expect_authentication_error(client, expected_code):
+    try:
+        client.list_buckets()
+    except ClientError as error:
+        response = error.response
+        actual_code = response.get("Error", {}).get("Code")
+        status = response.get("ResponseMetadata", {}).get("HTTPStatusCode")
+        if actual_code != expected_code or status != 403:
+            return fail(
+                "invalid credentials returned %s/%s, want %s/403"
+                % (actual_code, status, expected_code)
+            )
+        return 0
+    return fail("invalid credentials unexpectedly listed buckets")
+
+
+def main() -> int:
+    endpoint, bucket, region = sys.argv[1:4]
+    access_key = os.environ["AWS_ACCESS_KEY_ID"]
+    secret_key = os.environ["AWS_SECRET_ACCESS_KEY"]
+
+    client = make_client(endpoint, region, access_key, secret_key)
+
+    auth_checks = (
+        (access_key, secret_key + "-tampered", "SignatureDoesNotMatch"),
+        (access_key + "-tampered", secret_key, "InvalidAccessKeyId"),
+    )
+    for bad_access_key, bad_secret_key, expected_code in auth_checks:
+        result = expect_authentication_error(
+            make_client(endpoint, region, bad_access_key, bad_secret_key),
+            expected_code,
+        )
+        if result:
+            return result
 
     prefix = "compat/boto3-leg/" + uuid.uuid4().hex
     key = prefix + "/obj.bin"
