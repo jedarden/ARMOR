@@ -73,12 +73,14 @@ func TestCompleteMultipartUpload_EnqueuesReplication(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create key manager: %v", err)
 	}
-	h := handlers.New(cfg, be, backend.NewMetadataCache(1000, 300), backend.NewFooterCache(1000, 300), km, nil)
+	listCache := backend.NewListCache(1000, 300)
+	h := handlers.New(cfg, be, backend.NewMetadataCache(1000, 300), backend.NewFooterCache(1000, 300), km, listCache)
 	mets := metrics.NewMetrics()
 
 	mockQueue := &mockReplicationQueue{}
 	h.WithReplicationQueue(mockQueue)
 	h.WithMetrics(mets)
+	listCache.Set("test-bucket", "test", "", 1000, "", &backend.ListResult{})
 
 	// Create a multipart upload
 	createReq, _ := http.NewRequest("POST", "/test-bucket/test-key?uploads", nil)
@@ -145,6 +147,9 @@ func TestCompleteMultipartUpload_EnqueuesReplication(t *testing.T) {
 	// Verify CompleteMultipartUpload succeeded
 	if completeResp.Code != http.StatusOK {
 		t.Fatalf("CompleteMultipartUpload failed: %d %s", completeResp.Code, completeResp.Body.String())
+	}
+	if _, ok := listCache.Get("test-bucket", "test", "", 1000, ""); ok {
+		t.Error("completed multipart object left a covering list-cache entry behind")
 	}
 
 	// Wait for the goroutine to enqueue

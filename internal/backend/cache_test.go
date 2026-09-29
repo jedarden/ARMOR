@@ -106,6 +106,36 @@ func TestListCache_InvalidatePrefix(t *testing.T) {
 	}
 }
 
+func TestListCache_InvalidateForWrite(t *testing.T) {
+	c := NewListCache(10, 60)
+
+	c.Set("bucket", "P", "", 100, "", &ListResult{})
+	c.Set("bucket", "P/", "/", 100, "", &ListResult{})
+	c.Set("bucket", "P/other/", "/", 100, "", &ListResult{})
+	c.Set("bucket", "Q", "", 100, "", &ListResult{})
+	c.Set("other-bucket", "P", "", 100, "", &ListResult{})
+
+	c.InvalidateForWrite("bucket", "P/obj")
+
+	for _, query := range []struct {
+		prefix    string
+		delimiter string
+		wantHit   bool
+	}{
+		{prefix: "P", wantHit: false},
+		{prefix: "P/", delimiter: "/", wantHit: false},
+		{prefix: "P/other/", delimiter: "/", wantHit: true},
+		{prefix: "Q", wantHit: true},
+	} {
+		if _, ok := c.Get("bucket", query.prefix, query.delimiter, 100, ""); ok != query.wantHit {
+			t.Errorf("prefix %q hit = %v, want %v", query.prefix, ok, query.wantHit)
+		}
+	}
+	if _, ok := c.Get("other-bucket", "P", "", 100, ""); !ok {
+		t.Error("entry for another bucket should not have been invalidated")
+	}
+}
+
 func TestListCache_Clear(t *testing.T) {
 	c := NewListCache(10, 60)
 

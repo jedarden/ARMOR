@@ -3785,6 +3785,39 @@ func TestListObjects_CacheInvalidatedByPut(t *testing.T) {
 	}
 }
 
+func TestListObjects_CacheInvalidatedByPutWithBarePrefix(t *testing.T) {
+	cfg, mb, cache, footerCache, km := testSetup(t)
+	cb := &countingListBackend{mockBackend: mb}
+	lc := backend.NewListCache(100, 60)
+	h := handlers.New(cfg, cb, cache, footerCache, km, lc)
+
+	// A boto3-style Prefix omits the trailing slash. The cached empty result
+	// must not survive a write below that prefix.
+	req := httptest.NewRequest(http.MethodGet, "/test-bucket?list-type=2&prefix=data", nil)
+	w := httptest.NewRecorder()
+	h.HandleRoot(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("list 1: expected 200, got %d", w.Code)
+	}
+
+	req = httptest.NewRequest(http.MethodPut, "/test-bucket/data/file.txt", bytes.NewReader([]byte("content")))
+	w = httptest.NewRecorder()
+	h.HandleRoot(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("put: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/test-bucket?list-type=2&prefix=data", nil)
+	w = httptest.NewRecorder()
+	h.HandleRoot(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("list 2: expected 200, got %d", w.Code)
+	}
+	if cb.listCallCount() != 2 {
+		t.Errorf("expected backend.List() called twice after bare-prefix PutObject invalidation, got %d", cb.listCallCount())
+	}
+}
+
 func TestListObjects_DisabledCache(t *testing.T) {
 	cfg, mb, cache, footerCache, km := testSetup(t)
 	cb := &countingListBackend{mockBackend: mb}

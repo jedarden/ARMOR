@@ -110,6 +110,7 @@ func (c *MetadataCache) evictOldest() {
 // ListCacheEntry is a cached list result.
 type ListCacheEntry struct {
 	Result    *ListResult
+	Prefix    string
 	ExpiresAt time.Time
 }
 
@@ -163,7 +164,23 @@ func (c *ListCache) Set(bucket, prefix, delimiter string, maxKeys int, continuat
 
 	c.entries[listCacheKey(bucket, prefix, delimiter, maxKeys, continuationToken)] = &ListCacheEntry{
 		Result:    result,
+		Prefix:    prefix,
 		ExpiresAt: time.Now().Add(c.ttl),
+	}
+}
+
+// InvalidateForWrite deletes cached list results whose queried prefix covers
+// the written object key. Prefixes are recorded on entries because the cache
+// key also contains delimiter and pagination parameters.
+func (c *ListCache) InvalidateForWrite(bucket, key string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	bucketPrefix := bucket + "|"
+	for cacheKey, entry := range c.entries {
+		if strings.HasPrefix(cacheKey, bucketPrefix) && strings.HasPrefix(key, entry.Prefix) {
+			delete(c.entries, cacheKey)
+		}
 	}
 }
 

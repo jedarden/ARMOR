@@ -21,7 +21,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"path"
 	"sort"
 	"strconv"
 	"strings"
@@ -682,9 +681,9 @@ func (h *Handlers) PutObject(w http.ResponseWriter, r *http.Request, bucket, key
 		}
 	}
 
-	// Invalidate list cache entries covering this key's directory
+	// Invalidate list cache entries covering this key.
 	if h.listCache != nil {
-		h.listCache.InvalidatePrefix(bucket, path.Dir(key)+"/")
+		h.listCache.InvalidateForWrite(bucket, key)
 	}
 
 	// Return ETag
@@ -1013,9 +1012,9 @@ func (h *Handlers) putObjectStreaming(ctx context.Context, w http.ResponseWriter
 		}
 	}
 
-	// Invalidate list cache entries covering this key's directory
+	// Invalidate list cache entries covering this key.
 	if h.listCache != nil {
-		h.listCache.InvalidatePrefix(bucket, path.Dir(key)+"/")
+		h.listCache.InvalidateForWrite(bucket, key)
 	}
 
 	// Return ETag
@@ -2405,7 +2404,7 @@ func (h *Handlers) DeleteObject(w http.ResponseWriter, r *http.Request, bucket, 
 	// Invalidate metadata cache and list cache
 	h.cache.Delete(bucket, key)
 	if h.listCache != nil {
-		h.listCache.InvalidatePrefix(bucket, path.Dir(key)+"/")
+		h.listCache.InvalidateForWrite(bucket, key)
 	}
 
 	w.WriteHeader(http.StatusNoContent)
@@ -2720,7 +2719,7 @@ func (h *Handlers) ListObjectsV2(w http.ResponseWriter, r *http.Request, bucket 
 
 	var result *backend.ListResult
 	if h.listCache != nil {
-		if cached, ok := h.listCache.Get(bucket, backendPrefix, delimiter, maxKeys, contToken); ok {
+		if cached, ok := h.listCache.Get(bucket, prefix, delimiter, maxKeys, contToken); ok {
 			result = cached
 		}
 	}
@@ -2737,7 +2736,7 @@ func (h *Handlers) ListObjectsV2(w http.ResponseWriter, r *http.Request, bucket 
 		// plaintext length.
 		h.enrichPlaintextSizes(ctx, bucket, result)
 		if h.listCache != nil {
-			h.listCache.Set(bucket, backendPrefix, delimiter, maxKeys, contToken, result)
+			h.listCache.Set(bucket, prefix, delimiter, maxKeys, contToken, result)
 		}
 	}
 
@@ -4146,6 +4145,12 @@ func (h *Handlers) CompleteMultipartUpload(w http.ResponseWriter, r *http.Reques
 			return
 		}
 		etag = info.ETag
+	}
+
+	// The completed object is now visible to list operations. Invalidate all
+	// cached queries whose prefixes cover this key, including bare prefixes.
+	if h.listCache != nil {
+		h.listCache.InvalidateForWrite(bucket, key)
 	}
 
 	// ADR-011: Non-uniform parts - leave placeholder HMACs (zeros) for boundary blocks.
