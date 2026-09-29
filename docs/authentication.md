@@ -61,8 +61,11 @@ ARMOR_AUTH_LOGS_ACL="mybucket:logs/*"
 # Only GET and LIST on readonly/
 ARMOR_AUTH_READONLY_ACL="mybucket:readonly/*:get+list"
 
-# Append-only backup writer: can write and list, never read, overwrite-protect or delete
+# Append-only backup writer: can create new keys and list, never read or delete
 ARMOR_AUTH_BACKUP_ACL="mybucket:backups/*:put+list"
+
+# Append-only writer that also needs to read its own objects
+ARMOR_AUTH_BACKUP_READER_ACL="mybucket:backups/*:get+put+list"
 
 # Multipart writer that can clean up its own aborted uploads but never delete objects
 ARMOR_AUTH_RAW_ACL="mybucket:raw/*:put+list+abort"
@@ -71,9 +74,12 @@ ARMOR_AUTH_RAW_ACL="mybucket:raw/*:put+list+abort"
 ARMOR_AUTH_CROSSBUCKET_ACL="bucket-primary:*:get+put+delete+list,bucket-audit:logs/*:get+list"
 ```
 
-**Overwrite-as-destruction risk:** without bucket versioning, a compromised
-`put`-only credential can still overwrite existing objects. Append-only writers
-mitigate but do not eliminate this; it is accepted residual risk.
+**Append-only PUT semantics:** an explicit action-scoped ACL that grants `put`
+but not `delete` is create-only. A PUT of a new key succeeds, while a PUT to an
+existing key is rejected with `403 AccessDenied`; DELETE is also rejected. The
+backend enforces the create-only write atomically. Credentials with no action
+segment retain full legacy access, and a credential granted both `put` and
+`delete` may overwrite existing objects.
 
 **Empty ACL:** a credential with no `ACL` has full access to `ARMOR_BUCKET`.
 

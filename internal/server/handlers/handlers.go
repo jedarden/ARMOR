@@ -389,6 +389,13 @@ func (h *Handlers) PutObject(w http.ResponseWriter, r *http.Request, bucket, key
 		return
 	}
 
+	appendOnly, err := appendOnlyPut(ctx, bucket, key)
+	if err != nil {
+		h.writeError(w, r, "AccessDenied", "Access Denied", http.StatusForbidden)
+		return
+	}
+	createOnly = createOnly || appendOnly
+
 	// Check Content-Length header
 	contentLength := r.ContentLength
 	streamingThreshold := int64(10 * 1024 * 1024) // 10MB threshold
@@ -399,7 +406,7 @@ func (h *Handlers) PutObject(w http.ResponseWriter, r *http.Request, bucket, key
 	useStreaming := !h.config.Compress && !h.config.CompressRules.HasRules() && (contentLength < 0 || contentLength > streamingThreshold)
 
 	if useStreaming {
-		h.putObjectStreaming(ctx, w, r, bucket, key, createOnly)
+		h.putObjectStreaming(ctx, w, r, bucket, key, createOnly, appendOnly)
 		return
 	}
 
@@ -607,7 +614,11 @@ func (h *Handlers) PutObject(w http.ResponseWriter, r *http.Request, bucket, key
 	prefixedKey := h.applyPrefix(key)
 	backendPutStart := time.Now()
 	if err := h.storePutObject(ctx, bucket, prefixedKey, bytes.NewReader(envelope), int64(len(envelope)), meta, createOnly); err != nil {
-		h.writePutObjectError(w, r, err)
+		if appendOnly {
+			h.writeAppendOnlyPutError(w, r, err)
+		} else {
+			h.writePutObjectError(w, r, err)
+		}
 		return
 	}
 	backendPutDuration := time.Since(backendPutStart)
@@ -713,7 +724,7 @@ func (h *Handlers) PutObject(w http.ResponseWriter, r *http.Request, bucket, key
 // 2. Create envelope header with the computed SHA-256
 // 3. Stream from temp file through encryption to B2 via io.Pipe
 // 4. Clean up temp file
-func (h *Handlers) putObjectStreaming(ctx context.Context, w http.ResponseWriter, r *http.Request, bucket, key string, createOnly bool) {
+func (h *Handlers) putObjectStreaming(ctx context.Context, w http.ResponseWriter, r *http.Request, bucket, key string, createOnly, appendOnly bool) {
 	// Phase 1: Stream to temp file and compute SHA-256
 	tmpFile, err := os.CreateTemp("", "armor-upload-*.tmp")
 	if err != nil {
@@ -931,7 +942,11 @@ func (h *Handlers) putObjectStreaming(ctx context.Context, w http.ResponseWriter
 			h.writeError(w, r, "InternalError", fmt.Sprintf("Encryption error: %v", encErrVal), 500)
 			return
 		}
-		h.writePutObjectError(w, r, err)
+		if appendOnly {
+			h.writeAppendOnlyPutError(w, r, err)
+		} else {
+			h.writePutObjectError(w, r, err)
+		}
 		return
 	}
 	backendPutDuration := time.Since(backendPutStart)

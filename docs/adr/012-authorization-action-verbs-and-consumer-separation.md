@@ -47,7 +47,9 @@ Consequences of the current state:
 - Any compromised client can read, overwrite, or delete **every other
   client's data** — and its own backup history.
 - A backup writer holding delete rights is precisely the property ransomware
-  playbooks exploit. An append-only writer is unbuildable today.
+  playbooks exploit. Before append-only write enforcement landed, an
+  append-only writer was unbuildable because a Put grant also allowed
+  replacement of an existing object.
 
 ### The structural gap: no action verbs
 
@@ -99,12 +101,11 @@ observability scope.
    [Amendment](#amendment-2026-09-13-the-abort-verb).
 
 3. **Append-only writer becomes the standard backup role.** Backup-writing
-   credentials (CNPG, Forgejo backup paths) get `Put+List` only. A
-   compromised backup client can then neither destroy nor exfiltrate its
-   history. Overwrite-as-destruction is accepted residual risk in v1 (S3
-   PutObject overwrites; without bucket versioning a poisoned re-upload is
-   possible) — documented, revisited if B2 versioning is enabled (see
-   "Operations Not Implemented").
+   credentials (CNPG, Forgejo backup paths) get `Put+List` only. An explicit
+   `put` grant without `delete` is enforced as create-only: a new key may be
+   written, but a replacement PUT and DELETE are denied. The backend's atomic
+   conditional-write path closes the concurrent-writer race. A legacy ACL with
+   no action segment remains full access for compatibility.
 
 4. **Per-request identity audit logging.** The per-request log line gains
    `access_key_id` (the *ID*, never the secret), the resolved verb, the
@@ -144,6 +145,9 @@ observability scope.
   No measurable request-path cost.
 - Coverage tests may surface real enforcement gaps (CopyObject source is
   unverified today). Any gap found is fixed in the same change as its test.
+- Append-only PUTs use the backend's atomic create-only operation; backends
+  without conditional-write support fail closed instead of silently falling
+  back to an overwrite.
 - The audit log line grows ~40 bytes per request. Identity is the access-key
   ID only — never secrets — safe for shipped logs.
 - Production rollout ordering is P0 (split credentials) → verbs → roles
