@@ -1562,16 +1562,16 @@ work that depends on one waits.
    decision outside this repo. **Update (2026-09-25, armor-afe279bd):** iad-ci
    is no longer inert — its existing VictoriaMetrics store gained an `armor`
    scrape job and a `vmalert` Deployment evaluates the shipped rule group
-   (Alertmanager → ntfy). The other clusters still have no evaluator; the
-   proposed fleet-wide shape remains an estate decision outside this repo.
-   **Update (2026-09-28, ARMOR workspace):** iad-ci is the only verified live
-   evaluator. Its VictoriaMetrics + vmalert + Alertmanager path is covered by
-   `scripts/alerting-smoke-test.sh`, including correlation of active vmalert
-   alerts with Alertmanager. The other verifier clusters still need their
-   GitOps monitoring integration deployed and a passing per-cluster smoke test;
-   the recipe is in the alerting runbook. The `.disabled` CR manifests remain
-   inert until a compatible Prometheus Operator is actually installed and
-   selecting them.
+   (Alertmanager → ntfy). **Update (2026-09-29, armor-175b8af7):** the same
+   dedicated-store shape is now present on `rs-manager`, `iad-kalshi`, and
+   `ord-devimprint`, while the Prometheus Operator shape is present on
+   `ardenone-cluster`. The live smoke test passes on `iad-ci` and
+   `rs-manager`; `iad-kalshi` and `ord-devimprint` have unreachable tailnet
+   endpoints, and ardenone's old verifier image is rejected for a nonnumeric
+   legacy gauge. The alerting runbook records the exact commands and keeps
+   those three scopes outside the live boundary until their checks pass. The
+   `.disabled` CR manifests remain inert on clusters without compatible
+   Prometheus Operator CRDs.
 4. **Fleet console placement (8.8).** Whether `armor-fleet`'s page is folded
    into `dashboard.ardenone.com` (and via which publisher) or stays on its own
    Traefik route. Proposed: keep its own route until the dashboard's

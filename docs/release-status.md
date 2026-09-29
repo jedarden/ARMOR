@@ -1,6 +1,6 @@
 # Release status and known limitations
 
-**Status date:** 2026-09-28 · **Source version:** see [`VERSION`](../VERSION)
+**Status date:** 2026-09-29 · **Source version:** see [`VERSION`](../VERSION)
 
 This page is the evidence boundary for operator documentation. “Repository
 tested” means the committed tree has focused tests for the behavior. It does
@@ -63,6 +63,18 @@ must not be presented as currently working support.
   the compatibility matrix, against the tested image and configuration. Do not
   generalize them to untested S3 features or to a deployment whose image or
   configuration has not been checked.
+- **Restore-verifier alerting is not yet a fleet-wide release claim.** The
+  GitOps rollout now contains the scrape, rule-evaluation, Alertmanager route,
+  and tailnet verification surfaces for all five verifier scopes. The live
+  smoke test passes on `iad-ci` and `rs-manager` (14/14 checks each). The
+  `iad-kalshi` and `ord-devimprint` endpoints were unreachable during the
+  2026-09-29 check, and `ardenone-cluster`'s Prometheus rejected the
+  restore-verifier scrape because its deployed `0.1.1975` image still emits a
+  quoted legacy gauge. Treat restore failures as paged only on the two
+  smoke-verified clusters until the remaining endpoint/image checks pass; a
+  running verifier without a passing scrape and delivery path is not an
+  alerting guarantee. See the [restore-verifier alerting runbook](runbooks/restore-verifier-alerting.md)
+  for the exact commands and current boundary.
 
 ## How to promote a capability
 

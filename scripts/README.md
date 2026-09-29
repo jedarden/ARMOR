@@ -380,7 +380,8 @@ PROMTOOL_IMAGE=prom/prometheus:v3.6.0 ./scripts/alerting-rule-unittest.sh
 
 ### alerting-smoke-test.sh
 
-Live end-to-end verification of the activated alerting stack on iad-ci: collection
+Live end-to-end verification of the activated alerting stack (the default
+profile is iad-ci): collection
 (VictoriaMetrics scraping the armor server `:9001` admin mux and the restore-verifier
 `:9002` listener, numeric `armor_*` series fresh — including the unix-seconds
 `*_last_check_timestamp` gauges the former string-valued diagnostics were converted

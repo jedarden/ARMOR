@@ -1,35 +1,35 @@
-# Restore-Verifier Alerting Runbook (iad-ci)
+# Restore-Verifier Alerting Runbook
 
 Operator guide to the live ARMOR alerting pipeline: what is deployed, how to
 verify it, and how to respond when it pages. The alert rule semantics —
 expressions, hold durations, thresholds, and per-alert first response — are
 the contract in
 [observability-contract.md](../observability-contract.md) ("Alert rules");
-this runbook covers the pipeline around them and the iad-ci-specific
-operational facts that nowhere else records.
+this runbook covers the pipeline around them and the per-cluster operational
+facts that nowhere else records.
 
-Status of the fleet: **the pipeline is live and verified on iad-ci and
-ardenone-cluster** (ardenone's ARMOR alerting was activated 2026-09-25,
-armor-cb731b20). The other three restore-verifier Deployments still
-expose `/metrics` but have no evaluator in the current GitOps estate; their
-activation recipe is recorded in §6 and must be deployed and smoke-tested from
-the owning cluster before it is called live. The estate split is:
+Status of the fleet as of **2026-09-29**: the GitOps rollout exists for all
+five restore-verifier scopes, but a cluster is not called live until its
+end-to-end smoke test exits 0. The pipeline is live and verified on `iad-ci`
+and `rs-manager`; the other three scopes have an explicit verification
+boundary below:
 
-| Cluster | Form | Tailnet endpoints (smoke-test env) |
+| Cluster | Form | Current verification boundary |
 |---|---|---|
-| iad-ci | dedicated store: VictoriaMetrics + vmalert + Alertmanager | `vmetrics-iad-ci-ts` / `vmalert-iad-ci-ts` / `alertmanager-iad-ci-ts` `.ardenone.com:8444` |
-| rs-manager | no compatible evaluator currently deployed | deploy the §6 dedicated-store shape before smoke testing |
-| iad-kalshi | no compatible evaluator currently deployed | deploy the §6 dedicated-store shape before smoke testing |
-| ord-devimprint | no compatible evaluator currently deployed | deploy the §6 dedicated-store shape before smoke testing |
-| apexalgo-iad | no restore-verifier Deployment in the current inventory | server-only monitoring is outside this runbook |
-| ardenone-cluster | Prometheus Operator on the shared kube-prometheus-stack | `tradegraph-platform/restore-verifier` is scraped by its own ServiceMonitor |
+| iad-ci | dedicated VictoriaMetrics + vmalert + Alertmanager | 14/14 smoke checks passed; `vmetrics-iad-ci-ts` / `vmalert-iad-ci-ts` / `alertmanager-iad-ci-ts` `.ardenone.com:8444` |
+| rs-manager | dedicated VictoriaMetrics + vmalert + Alertmanager | 14/14 smoke checks passed; `vmetrics-rs-manager-ts` / `vmalert-rs-manager-ts` / `alertmanager-rs-manager-ts` `.ardenone.com:8444` |
+| iad-kalshi | dedicated VictoriaMetrics + vmalert + Alertmanager | GitOps manifests are present, but the three tailnet APIs did not answer and the cluster read-only proxy was unavailable; not live-verified |
+| ord-devimprint | dedicated VictoriaMetrics + vmalert + Alertmanager | Monitoring pods are Running, but the three tailnet APIs refused connections; not live-verified |
+| ardenone-cluster | Prometheus Operator + shared Alertmanager | Prometheus and Alertmanager are reachable, but the restore-verifier scrape is rejected by the deployed `0.1.1975` image's legacy nonnumeric gauge; not live-verified |
 
-iad-ci pages the shared ntfy topic (the cnpg-backup-watchdog channel); its pages
-carry the cluster label. The per-cluster
+The verified dedicated stores page the shared ntfy topic (the
+`cnpg-backup-watchdog` channel); their pages carry the cluster label. The
+per-cluster
 `restore-verifier-monitoring.yaml.disabled` PrometheusRule/ServiceMonitor
 manifests stay `.disabled` on clusters without Prometheus Operator CRDs —
-iad-ci evaluates through an active vmalert ConfigMap, while ardenone-cluster
-uses active PrometheusRule/ServiceMonitor resources. The verifier fleet itself —
+the dedicated stores evaluate through active vmalert ConfigMaps, while
+ardenone-cluster uses active PrometheusRule/ServiceMonitor resources. The
+verifier fleet itself —
 five restore-verifier Deployments today
 (`iad-ci/armor`, `iad-kalshi/armor`, `ord-devimprint/devimprint`, and
 `rs-manager/armor` running `restore-verifier-acb`, plus
@@ -76,10 +76,11 @@ forbids exec, so use the real kubeconfig) or read the same gauges from the
 store.
 
 Everything that owns a piece of this lives in `declarative-config`
-(`k8s/iad-ci/monitoring/`: `victoriametrics-application.yml` — the store and
-the `armor` scrape job; `vmalert.yml` — the rule ConfigMap + evaluator;
-`alertmanager.yml` — delivery config), except the rules themselves, which
-ARMOR owns — see §3.
+(`k8s/<cluster>/monitoring/`: the VictoriaMetrics store and `armor` scrape
+job, `vmalert.yml` for rule evaluation, and `alertmanager.yml` for delivery),
+except the rules themselves, which ARMOR owns — see §3. GitOps presence is not
+live evidence: use the matrix above and rerun the smoke test after a route,
+image, or sync repair.
 
 ## 2. Verify the pipeline
 
@@ -122,16 +123,16 @@ in the script header) is:
 
 ## 3. Changing a rule — three verbatim copies, one change
 
-The rule group exists in three copies that must stay byte-identical:
+The rule group exists across three copy surfaces that must stay byte-identical:
 
 1. `internal/metrics/testdata/restore-verifier-monitoring.yaml` — the
    in-repo fixture, pinned by `internal/metrics/alert_rules_contract_test.go`
    (which also pins the alert table in the observability contract);
 2. the per-cluster `restore-verifier-monitoring.yaml.disabled` manifests in
-   `declarative-config`;
-3. the `vmalert-rules` ConfigMap inside
-   `declarative-config/k8s/iad-ci/monitoring/vmalert.yml` (the only copy that
-   evaluates today).
+   `declarative-config`; and
+3. the live evaluator copies: each dedicated-store `vmalert-rules` ConfigMap
+   (`iad-ci`, `rs-manager`, `iad-kalshi`, and `ord-devimprint`) plus the
+   `PrometheusRule` on `ardenone-cluster`.
 
 An expression, `for`, severity, or label change updates all three plus the
 contract test's expected table and the observability-contract alert table in
@@ -213,13 +214,14 @@ config edit into a silently stale one.
 
 ## 6. Activating another cluster
 
-Fleet-wide activation is not yet complete. iad-ci is the reference deployment;
-the remaining verifier clusters need the following GitOps work before their
-metrics become actionable. The form is NOT a copy-paste of iad-ci — it follows
+Fleet-wide activation is not yet complete. `iad-ci` is the reference
+deployment and `rs-manager` is the first replicated stack verified live. The
+remaining verifier scopes need a successful smoke test after their route or
+image issues are repaired. The form is NOT a copy-paste of iad-ci — it follows
 what the cluster already runs:
 
-- **Cluster has a kube-prometheus-stack** (apexalgo-iad,
-  ardenone-cluster): no second store. A `ServiceMonitor` beside each armor
+- **Cluster has a kube-prometheus-stack** (ardenone-cluster): no second store.
+  A `ServiceMonitor` beside each armor
   Service (admin-api port, armor_* keep-list, canary families dropped at
   scrape where `ARMOR_CANARY_DISABLED=true` pins the gauge at 0 forever),
   the contract-pinned rule group as a `PrometheusRule` (with whatever rule
@@ -228,7 +230,10 @@ what the cluster already runs:
   ExternalSecret whose root route stays on the chart-default `'null'`
   receiver with a `component=~"restore-verifier|armor-canary"` sub-route to
   ntfy, so nothing else on the shared Alertmanager starts paging. Cluster
-  attribution comes from `prometheusSpec.externalLabels`.
+  attribution comes from `prometheusSpec.externalLabels`. The verifier image
+  must export numeric-only Prometheus text; an old image that emits a quoted
+  legacy gauge makes the whole scrape unhealthy and leaves restore alerts
+  silent.
 - **Cluster has no store** (rs-manager, iad-kalshi, ord-devimprint): the
   iad-ci shape — `victoriametrics-application.yml` (armor job + self-scout
   only, 5Gi sata, requests under the cluster's per-pod cap), `vmalert.yml`
@@ -249,3 +254,46 @@ and no error-string series at all; the `.disabled` manifests stay `.disabled`; a
 cluster needs only its scrape surface added (a static target in the armor job,
 or a ServiceMonitor). Record the deployment commit and a passing per-cluster
 smoke-test run in the owning deployment bead before calling activation live.
+
+### Per-cluster verification commands
+
+Run both verification scripts after each cluster's sync. The live script is
+read-only and never prints rendered secret-bearing configuration; the offline
+script checks the rule semantics without requiring a cluster.
+
+```bash
+./scripts/alerting-rule-unittest.sh
+
+# iad-ci
+./scripts/alerting-smoke-test.sh
+
+# rs-manager
+VM_BASE=https://vmetrics-rs-manager-ts.ardenone.com:8444 \
+VMALERT_BASE=https://vmalert-rs-manager-ts.ardenone.com:8444 \
+AM_BASE=https://alertmanager-rs-manager-ts.ardenone.com:8444 \
+  ./scripts/alerting-smoke-test.sh
+
+# iad-kalshi
+VM_BASE=https://vmetrics-iad-kalshi.tail1b1987.ts.net \
+VMALERT_BASE=https://vmalert-iad-kalshi.tail1b1987.ts.net \
+AM_BASE=https://alertmanager-iad-kalshi.tail1b1987.ts.net \
+  ./scripts/alerting-smoke-test.sh
+
+# ord-devimprint
+VM_BASE=https://vmetrics-ord-devimprint.tail1b1987.ts.net \
+VMALERT_BASE=https://vmalert-ord-devimprint.tail1b1987.ts.net \
+AM_BASE=https://alertmanager-ord-devimprint.tail1b1987.ts.net \
+  ./scripts/alerting-smoke-test.sh
+
+# ardenone-cluster — Prometheus is both store and evaluator.
+VM_BASE=https://prometheus-ardenone-cluster-ts.ardenone.com:8444 \
+VMALERT_BASE=https://prometheus-ardenone-cluster-ts.ardenone.com:8444 \
+AM_BASE=https://alertmanager-ardenone-cluster-ts.ardenone.com:8444 \
+ARMOR_JOB_REGEX='detector-baseline|restore-verifier' \
+  ./scripts/alerting-smoke-test.sh
+```
+
+As of the status date above, the first two live commands pass. The
+`iad-kalshi` and `ord-devimprint` commands are retained as the required
+post-repair checks, and the `ardenone-cluster` command remains blocked until
+its restore-verifier image is rolled past the quoted-gauge scrape failure.

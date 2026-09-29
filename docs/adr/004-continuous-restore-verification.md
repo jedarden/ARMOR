@@ -36,7 +36,7 @@ Implemented: harness with dual-path verification, SHA comparison, per-bucket sta
 
 - **Artifact-class assertions** — landed everywhere (bf-1tzyle / armor-2e8758b8; see the as-shipped note on Decision 3). Pinned by `TestSQLiteAssertion`/`TestSQLiteAssertionRowCountProbe`, `TestParquetAssertion`, and the tar/gz tests in `internal/restoreverifier/verifier_test.go`.
 - **Deployment manifests** — landed: five per-scope restore-verifier Deployments (Fleet topology below; the mechanical enumeration is `scripts/find-armor-deployments.py`, pinned by `tests/test_restore_verifier_inventory.py`).
-- **PrometheusRule/alerting** — landed on `iad-ci` and `ardenone-cluster` (VictoriaMetrics/vmalert plus Prometheus Operator; activated 2026-09-25); the remaining three Deployments expose `/metrics` uncollected (see Metrics in the Fleet topology section). Full fleet activation remains open work: armor-c866e4ca, armor-cb731b20.
+- **PrometheusRule/alerting** — the GitOps evaluator rollout now exists on all five scopes: dedicated VictoriaMetrics/vmalert/Alertmanager stacks on `iad-ci`, `rs-manager`, `iad-kalshi`, and `ord-devimprint`, plus Prometheus Operator resources on `ardenone-cluster`. The end-to-end smoke test passed on `iad-ci` and `rs-manager` on 2026-09-29; `iad-kalshi` and `ord-devimprint` still lack reachable verification endpoints, while ardenone's deployed old verifier image makes its scrape unhealthy. Full operational activation remains open work: armor-175b8af7.
 - **Bead-filing escalation** — landed on `iad-ci` only (armor-babc0b2b, 2026-09-25; see the escalation-enablement note below); the other four Deployments keep escalation off until each gets the PVC + env.
 - **Scheduled `armor decrypt`-only DR drill** — landed everywhere (armor-445bcb28): all five Deployments set `VERIFIER_DR_DRILL_INTERVAL: "24h"`, and live pods confirm scheduled drills execute and report. Scheduler contract pinned in `internal/restoreverifier/drill_schedule_test.go`.
 
@@ -168,17 +168,21 @@ has a dedicated ExternalSecret
 `/var/lib/restore-verifier` where `VERIFIER_ESCALATION=true` — iad-ci only,
 today.
 
-**Metrics.** Every Deployment serves `/metrics` on a `:9002` Service.
-Collection and rule evaluation are active on iad-ci (VictoriaMetrics + vmalert)
-and ardenone-cluster (Prometheus Operator); the per-cluster
-`restore-verifier-monitoring.yaml.disabled` manifests stay `.disabled` on the
-clusters without an evaluator (rs-manager has no Prometheus Operator). The
-iad-kalshi, ord-devimprint, and rs-manager Deployments' gauges are exposed but
-uncollected; ardenone-cluster's tradegraph verifier is scraped by its own
-ServiceMonitor.
+**Metrics.** Every Deployment serves `/metrics` on a `:9002` Service. Collection
+and rule evaluation are live and smoke-verified on `iad-ci` and `rs-manager`.
+The dedicated-store manifests for `iad-kalshi` and `ord-devimprint` are
+deployed but their tailnet verification endpoints are currently unreachable.
+`ardenone-cluster` has the Prometheus Operator and its own ServiceMonitor, but
+the deployed verifier image emits a quoted legacy gauge that causes Prometheus
+to reject that scrape. The per-cluster
+`restore-verifier-monitoring.yaml.disabled` manifests remain disabled on the
+clusters without Prometheus Operator CRDs; see the alerting runbook for the
+post-repair smoke commands.
 
-**Alert routing.** iad-ci: vmalert → Alertmanager → the ntfy webhook — the
-pipeline and responses are the
+**Alert routing.** The verified dedicated stores route vmalert → Alertmanager
+→ the shared ntfy webhook, with a cluster label on each page. Ardenone uses its
+Prometheus Operator Alertmanager route but is not live-verified until its
+verifier scrape is healthy. The pipeline and responses are the
 [restore-verifier alerting runbook](../runbooks/restore-verifier-alerting.md).
 Bead-filing escalation (Decision 5) is likewise a per-Deployment feature,
 enabled only on iad-ci; day-to-day fleet status stays in the
