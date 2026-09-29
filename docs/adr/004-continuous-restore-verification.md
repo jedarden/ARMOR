@@ -37,7 +37,7 @@ Implemented: harness with dual-path verification, SHA comparison, per-bucket sta
 - **Artifact-class assertions** — landed everywhere (bf-1tzyle / armor-2e8758b8; see the as-shipped note on Decision 3). Pinned by `TestSQLiteAssertion`/`TestSQLiteAssertionRowCountProbe`, `TestParquetAssertion`, and the tar/gz tests in `internal/restoreverifier/verifier_test.go`.
 - **Deployment manifests** — landed: five per-scope restore-verifier Deployments (Fleet topology below; the mechanical enumeration is `scripts/find-armor-deployments.py`, pinned by `tests/test_restore_verifier_inventory.py`).
 - **PrometheusRule/alerting** — the GitOps evaluator rollout now exists on all five scopes: dedicated VictoriaMetrics/vmalert/Alertmanager stacks on `iad-ci`, `rs-manager`, `iad-kalshi`, and `ord-devimprint`, plus Prometheus Operator resources on `ardenone-cluster`. The end-to-end smoke test passed on `iad-ci` and `rs-manager` on 2026-09-29; `iad-kalshi` and `ord-devimprint` still lack reachable verification endpoints, while ardenone's deployed old verifier image makes its scrape unhealthy. Full operational activation remains open work: armor-175b8af7.
-- **Bead-filing escalation** — landed on `iad-ci` (armor-babc0b2b, 2026-09-25) and was rolled out to `iad-kalshi`, `ord-devimprint`, and `rs-manager` (armor-c134cb55, 2026-09-29; see the escalation-enablement note below). The `ardenone-cluster/tradegraph-platform` Deployment remains off until it gets the PVC + env.
+- **Bead-filing escalation** — landed on `iad-ci` (armor-babc0b2b, 2026-09-25). Desired state for `iad-kalshi`, `ord-devimprint`, and `rs-manager` is committed (armor-c134cb55, 2026-09-29), but live activation is pending publication of restore-verifier `0.1.1976`; the `ardenone-cluster/tradegraph-platform` Deployment remains off until it gets the PVC + env.
 - **Scheduled `armor decrypt`-only DR drill** — landed everywhere (armor-445bcb28): all five Deployments set `VERIFIER_DR_DRILL_INTERVAL: "24h"`, and live pods confirm scheduled drills execute and report. Scheduler contract pinned in `internal/restoreverifier/drill_schedule_test.go`.
 
 plan.md Phase 6 remains the running record; the two reliability regressions found after this snapshot — discovery reliability ([ADR-014](014-restore-verifier-discovery-reliability.md)) and the ARMOR-path decrypt defect ([ADR-009](009-restore-verifier-armor-path-never-decrypts.md)) — are recorded in their own ADRs.
@@ -53,7 +53,8 @@ DISABLED —` with the remediation instead of crash-looping the verifier, and
 every filing carries a `--unique-ref` so the bead store itself rejects
 duplicates (a lost state file cannot file twice). The `iad-kalshi/armor`,
 `ord-devimprint/devimprint`, and `rs-manager/armor/restore-verifier-acb`
-Deployments now carry the same volume + env pattern (armor-c134cb55);
+desired manifests carry the same volume + env pattern (armor-c134cb55), but
+live activation is pending publication of restore-verifier `0.1.1976`;
 `ardenone-cluster/tradegraph-platform` remains off. See the
 [restore-verifier deployment guide](../restore-verifier-deployment-guide.md).
 

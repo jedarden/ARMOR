@@ -313,13 +313,15 @@ startup), `VERIFIER_ESCALATION_BEAD_BINARY` (default `bead`),
 default `24h`), `VERIFIER_ESCALATION_STATE`, `VERIFIER_ESCALATION_EXEC_TIMEOUT`
 (default `10s`).
 
-**Fleet status:** enabled on `iad-ci/armor` (2026-09-25, armor-babc0b2b) and
-rolled out to `iad-kalshi/armor`, `ord-devimprint/devimprint`, and
-`rs-manager/armor` (2026-09-29, armor-c134cb55). The
+**Fleet status:** enabled on `iad-ci/armor` (2026-09-25, armor-babc0b2b). The
+desired-state rollout for `iad-kalshi/armor`, `ord-devimprint/devimprint`, and
+`rs-manager/armor` is committed (2026-09-29, armor-c134cb55), but live
+activation is pending publication of the `0.1.1976` restore-verifier image;
+until then the new pods cannot pass startup validation. The
 `ardenone-cluster/tradegraph-platform` verifier remains off until it receives
 the same volume + env. The Spot Cinder `sata` class rejects claims below 5Gi,
-so the rollout uses the smallest claim that can bind rather than the original
-1Gi pilot request.
+so this desired state uses the smallest claim that can bind rather than the
+original 1Gi pilot request.
 
 ### Reading the escalation workspace
 
