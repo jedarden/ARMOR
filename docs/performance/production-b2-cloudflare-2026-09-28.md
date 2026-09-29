@@ -45,6 +45,46 @@ turn a deployment that does not deliver the expected bytes into a valid
 measurement. The attempted runs used deferred cleanup; no raw result or
 benchmark object identifier is retained here.
 
+## Follow-up attempt — 2026-09-29
+
+A bounded diagnostic retry used the same live deployment and image after the
+pod had been ready for more than a day:
+
+| Field | Value |
+|---|---|
+| Deployment/image | `iad-ci/armor`, `0.1.1971@sha256:7c146c638026699fd67a8aa7f10c4a1398fe70045f3546ab37bb8979fbc14b1e` |
+| Probe workload | one 64 MiB synthetic object, one PUT, one ordinary verification GET |
+| PUT result | HTTP 200 in 24.761 s |
+| Verification result | no completion after 287.303 s; interrupted; no report written |
+| Pod state | remained Ready with no restart during the probe |
+| Cleanup | the uploaded benchmark object was deleted by its exact key |
+
+The public Cloudflare path independently returned correct 206 responses for
+the same object at byte 0, a mid-object range, and the tail (65,536, 65,536,
+and 37 bytes respectively). Those individual checks completed in 1.221 s,
+1.104 s, and 0.725 s. They are diagnostics only, not throughput results.
+
+### Root cause and blocker
+
+The failure is in the production read-path shape, not object creation or basic
+Cloudflare reachability. A v3 single-PUT full GET calls the backend for the
+whole ciphertext stream. `B2Backend.GetRangeWithHeaders` divides that span
+into 64 KiB requests and allows 16 concurrent requests; the ordered reader
+cannot advance past a missing block, and the individual Cloudflare requests
+have no bounded backend deadline. Thus one delayed or wedged range request can
+leave the ordinary ARMOR verification GET open indefinitely. The current
+`0.1.1971` image fixed v3 multipart range batching and wide offsets, but did
+not coalesce the single-PUT stream or add the required bounded read-ahead and
+failure deadline.
+
+The qualification remains blocked by primary bead
+[`armor-73564f97`](https://git.ardenone.com/jedarden/ARMOR/issues/armor-73564f97)
+(bounded read-ahead and larger backend ranges), with related v3 coalescing
+work in
+[`armor-5694713b`](https://git.ardenone.com/jedarden/ARMOR/issues/armor-5694713b).
+No valid production throughput numbers exist until one of those fixes is
+published and a deployment completes the ordinary full verification GET.
+
 ## Release-status boundary
 
 This is an operational failure signal, not a production throughput number.
