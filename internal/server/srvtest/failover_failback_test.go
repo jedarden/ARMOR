@@ -1,3 +1,5 @@
+//go:build integration
+
 package srvtest
 
 // Server-level verification of the complete ADR-006 provider-outage route:

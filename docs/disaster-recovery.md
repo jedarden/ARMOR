@@ -1379,7 +1379,7 @@ replica), retry consistency, replacement replication, failback, and
 secondary-canary alert state transitions:
 
 ```bash
-go test ./internal/server/srvtest ./internal/canary \
+go test -tags=integration ./internal/server/srvtest ./internal/canary \
   -run 'Test(ProviderOutage|SecondaryOutage|OverwriteDuringSecondary|ReadsIgnoreTheSecondary|MonitorSecondaryCheck)' \
   -count=1
 ```

@@ -22,6 +22,7 @@ must not be presented as currently working support.
 <!-- capability: sigv4-authentication status: active-regression evidence: armor-a3b04ef2 armor-4795decf -->
 <!-- capability: presigned-get status: active-regression evidence: armor-0163fb32 -->
 <!-- capability: range-reads status: active-regression evidence: armor-817d9d92 armor-73564f97 armor-5694713b armor-272299ca -->
+<!-- capability: adr006-provider-outage-failover status: repository-tested evidence: armor-14a2e34c -->
 <!-- capability: s3-operation-surface status: scope-limited -->
 
 | Capability | Status | What the source tree demonstrates | Operator boundary |
@@ -33,6 +34,7 @@ must not be presented as currently working support.
 | SigV4 authentication, including AWS CLI | `active-regression` | The protocol suite and request-shape tests cover accepted and rejected credentials, including AWS CLI and barman-shaped requests. | Active regression: a passing request-shape test is not current AWS CLI support evidence. Reproduce against the release image and classify the denial using `armor-a3b04ef2` and `armor-4795decf` before promotion. |
 | Presigned/share GET | `active-regression` | Enabled-harness tests cover share GETs and range/error responses. | Active regression: configure `ARMOR_PRESIGN_ENABLED`, an absolute base URL, and the dedicated secret, then prove the enabled route. The existing 403 regression evidence is `armor-0163fb32`; do not describe it as only historical. |
 | Byte-range reads | `active-regression` | Protocol and handler tests cover unaligned, suffix, multipart-boundary, prefix, and corruption cases; the focused [large-object range baseline](performance/large-object-range-read-baseline.md) records local latency and backend-byte shape; the [first production B2/Cloudflare qualification](performance/production-b2-cloudflare-2026-09-28.md) records the workload and an incomplete live result. | Active regression: correctness coverage does not establish currently working large-object support or production performance. The active read-path and bounded-throughput work is tracked by `armor-817d9d92`, `armor-73564f97`, `armor-5694713b`, and `armor-272299ca`. |
+| ADR-006 provider-outage failover and failback | `repository-tested` | The tagged `TestProviderOutageFailoverWritesAndFailback` drill destroys the primary, promotes the replicated filesystem backend, proves reads and writes (including replicated metadata) through the promotion, re-uploads the pre-outage object for replacement backfill, and serves old/new data after failback. Backend unit coverage pins the explicit promotion decision. | Release-pending: this is credential-free repository evidence using filesystem backends; run the live provider-outage drill and record the image/version and recovery inventory before treating a deployment as proven. |
 | S3 operation surface | `scope-limited` | The documented matrix covers authentication, reads, ranges, listing, overwrite/delete, and multipart where a client supports it. | ARMOR is not a claim of full AWS S3 API compatibility. Use the matrix and the image-gate client run for the exact release under evaluation. |
 
 ## Known limitations
