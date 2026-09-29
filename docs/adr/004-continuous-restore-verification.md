@@ -37,7 +37,7 @@ Implemented: harness with dual-path verification, SHA comparison, per-bucket sta
 - **Artifact-class assertions** — landed everywhere (bf-1tzyle / armor-2e8758b8; see the as-shipped note on Decision 3). Pinned by `TestSQLiteAssertion`/`TestSQLiteAssertionRowCountProbe`, `TestParquetAssertion`, and the tar/gz tests in `internal/restoreverifier/verifier_test.go`.
 - **Deployment manifests** — landed: five per-scope restore-verifier Deployments (Fleet topology below; the mechanical enumeration is `scripts/find-armor-deployments.py`, pinned by `tests/test_restore_verifier_inventory.py`).
 - **PrometheusRule/alerting** — the GitOps evaluator rollout now exists on all five scopes: dedicated VictoriaMetrics/vmalert/Alertmanager stacks on `iad-ci`, `rs-manager`, `iad-kalshi`, and `ord-devimprint`, plus Prometheus Operator resources on `ardenone-cluster`. The end-to-end smoke test passed on `iad-ci` and `rs-manager` on 2026-09-29; `iad-kalshi` and `ord-devimprint` still lack reachable verification endpoints, while ardenone's deployed old verifier image makes its scrape unhealthy. Full operational activation remains open work: armor-175b8af7.
-- **Bead-filing escalation** — landed on `iad-ci` only (armor-babc0b2b, 2026-09-25; see the escalation-enablement note below); the other four Deployments keep escalation off until each gets the PVC + env.
+- **Bead-filing escalation** — landed on `iad-ci` (armor-babc0b2b, 2026-09-25) and was rolled out to `iad-kalshi`, `ord-devimprint`, and `rs-manager` (armor-c134cb55, 2026-09-29; see the escalation-enablement note below). The `ardenone-cluster/tradegraph-platform` Deployment remains off until it gets the PVC + env.
 - **Scheduled `armor decrypt`-only DR drill** — landed everywhere (armor-445bcb28): all five Deployments set `VERIFIER_DR_DRILL_INTERVAL: "24h"`, and live pods confirm scheduled drills execute and report. Scheduler contract pinned in `internal/restoreverifier/drill_schedule_test.go`.
 
 plan.md Phase 6 remains the running record; the two reliability regressions found after this snapshot — discovery reliability ([ADR-014](014-restore-verifier-discovery-reliability.md)) and the ARMOR-path decrypt defect ([ADR-009](009-restore-verifier-armor-path-never-decrypts.md)) — are recorded in their own ADRs.
@@ -51,9 +51,11 @@ dedupe state and the beads workspace, startup validation (CLI runnable,
 volume writable, workspace provisioned/opened) logs `ESCALATION FILING
 DISABLED —` with the remediation instead of crash-looping the verifier, and
 every filing carries a `--unique-ref` so the bead store itself rejects
-duplicates (a lost state file cannot file twice). The other four
-restore-verifier Deployments keep escalation off until each gets the volume
-+ env. See the [restore-verifier deployment guide](../restore-verifier-deployment-guide.md).
+duplicates (a lost state file cannot file twice). The `iad-kalshi/armor`,
+`ord-devimprint/devimprint`, and `rs-manager/armor/restore-verifier-acb`
+Deployments now carry the same volume + env pattern (armor-c134cb55);
+`ardenone-cluster/tradegraph-platform` remains off. See the
+[restore-verifier deployment guide](../restore-verifier-deployment-guide.md).
 
 **Known defect in the direct path (verified 2026-07-18; fixed 2026-07-19, bf-5jc1j8):** `armor decrypt` could not read multipart objects at all — it failed with `invalid ARMOR magic` because it implemented the never-shipped reserved-byte envelope design (expected a 64-byte header at offset 0 and, for local files, a local sidecar path) instead of the shipped ADR-003 layout (headerless ciphertext, `x-amz-meta-armor-multipart` marker, sidecar object in B2). The "ARMOR server is gone" recovery path therefore did not exist for exactly the object class that matters most (large backups) — the failure mode the dual-path tripwire is designed to catch, which fired on its first real use. **Fixed:** `decryptB2` now dispatches on the `x-amz-meta-armor-multipart` marker (mirroring the server's GET path and the restore-verifier's direct path): for multipart objects it reads headerless ciphertext from offset 0, loads the JSON HMAC sidecar via `MultipartStateManager.LoadHMACTable`, and verifies with absolute block indices; single-PUT objects keep the envelope-header path. Local-file mode accepts a JSON sidecar alongside the headerless ciphertext (`-sidecar`) plus the object IV (`-iv`). Covered by round-trip and corruption tests against a real headerless + sidecar fixture. The placeholder whole-object SHA (ADR-003 gap bf-1v2ehf) means multipart objects still have no header SHA to verify — per-block HMAC verification is the integrity guarantee.
 
@@ -165,8 +167,9 @@ B2/MEK value in `armor-credentials`; the standalone `restore-verifier-acb`
 has a dedicated ExternalSecret
 (`restore-verifier-acb-b2-credentials`, backed by OpenBao
 `rs-manager/iad-acb/armor`). Escalation state needs a PVC (`sata`) at
-`/var/lib/restore-verifier` where `VERIFIER_ESCALATION=true` — iad-ci only,
-today.
+`/var/lib/restore-verifier` where `VERIFIER_ESCALATION=true` — iad-ci,
+iad-kalshi, ord-devimprint, and rs-manager today. The Spot Cinder `sata`
+class requires the smallest bindable claim to be 5Gi.
 
 **Metrics.** Every Deployment serves `/metrics` on a `:9002` Service. Collection
 and rule evaluation are live and smoke-verified on `iad-ci` and `rs-manager`.

@@ -205,7 +205,9 @@ config edit into a silently stale one.
 4. Escalate per ADR-004 §5: one bead per distinct active failure, never a
    retry loop. The verifier's built-in escalation (bead filing) is a
    deployment-level feature — enabled on `iad-ci/armor` (2026-09-25,
-   armor-babc0b2b), off on the other deployments (enablement recipe:
+   armor-babc0b2b), `iad-kalshi/armor`, `ord-devimprint/devimprint`, and
+   `rs-manager/armor/restore-verifier-acb` (2026-09-29, armor-c134cb55).
+   It remains off on `ardenone-cluster/tradegraph-platform` (enablement recipe:
    [restore-verifier deployment guide, "Failure/staleness
    escalation"](../restore-verifier-deployment-guide.md)); where it is off,
    the alert is the only paging signal and the human files the bead.

@@ -299,7 +299,7 @@ env:
 volumes:
   - name: escalation
     persistentVolumeClaim:
-      claimName: restore-verifier-escalation
+      claimName: restore-verifier-escalation-data
 volumeMounts:
   - name: escalation
     mountPath: /var/lib/restore-verifier
@@ -313,9 +313,13 @@ startup), `VERIFIER_ESCALATION_BEAD_BINARY` (default `bead`),
 default `24h`), `VERIFIER_ESCALATION_STATE`, `VERIFIER_ESCALATION_EXEC_TIMEOUT`
 (default `10s`).
 
-**Fleet status:** enabled on `iad-ci/armor` (2026-09-25, armor-babc0b2b).
-The other four restore-verifier Deployments keep escalation off until each
-gets the volume + env; filing there is inert (`VERIFIER_ESCALATION` unset).
+**Fleet status:** enabled on `iad-ci/armor` (2026-09-25, armor-babc0b2b) and
+rolled out to `iad-kalshi/armor`, `ord-devimprint/devimprint`, and
+`rs-manager/armor` (2026-09-29, armor-c134cb55). The
+`ardenone-cluster/tradegraph-platform` verifier remains off until it receives
+the same volume + env. The Spot Cinder `sata` class rejects claims below 5Gi,
+so the rollout uses the smallest claim that can bind rather than the original
+1Gi pilot request.
 
 ### Reading the escalation workspace
 
