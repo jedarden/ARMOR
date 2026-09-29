@@ -20,6 +20,7 @@ run) as current production throughput**; re-run the harness.
 | `tests/performance/remote_test.go` | Opt-in remote targets: real ARMOR service, Cloudflare read path, labeled direct-backend comparison |
 | [small-object-get-baseline.md](small-object-get-baseline.md) | The small-object full-GET baseline (armor-50a36688): per-GET backend request counts pinned by tests, the latency-injected matrix, and the in-cluster `armor-get-probe` production numbers |
 | [large-object-range-read-baseline.md](large-object-range-read-baseline.md) | The focused large-object range baseline: exact plaintext verification, warm-metadata latency, backend fetch counts/bytes, and interpretation limits |
+| [production-b2-cloudflare-2026-09-28.md](production-b2-cloudflare-2026-09-28.md) | First live B2/Cloudflare qualification result: workload, deployment, failed large-object qualification, and release-status boundary |
 
 ## What is measured
 
@@ -100,33 +101,81 @@ directly. It is **not** production throughput: no network, no B2, no
 Cloudflare. Production-shaped numbers require the remote mode below,
 originally from a pod on `iad-ci` per ADR-013's methodology.
 
-## Remote measurements (opt-in, never in CI)
+## Production measurements (opt-in, never in CI)
+
+`TestRemoteBaseline` is the production-shaped workflow. It is deliberately
+single-client and bounded: one 64 MiB object by default, three serialized
+single-PUT uploads, five warm full reads, and three samples of each aligned,
+unaligned, multi-block, and suffix range. It exercises the same object through
+three paths:
+
+| Target | What it measures | Payload verified against |
+|---|---|---|
+| `armor-service` | authenticated ARMOR upload and plaintext GET/range, including ARMOR's B2/Cloudflare read path | synthetic plaintext |
+| `b2-origin` | direct B2 S3 GET/range of the encrypted object created by ARMOR | exact ciphertext fetched once from B2 |
+| `cloudflare` | public `/file/<bucket>/<key>` GET/range of that same encrypted object | exact B2 ciphertext |
+
+The B2 and Cloudflare rows are intentionally ciphertext transport rows; they
+must not be compared with ARMOR plaintext bytes without accounting for the v3
+envelope. Each acknowledged upload is verified by an untimed ordinary ARMOR
+GET. Each measured response checks status, byte count, and SHA-256 (and each
+range checks the exact requested slice). Results include p50/p95 latency and
+throughput, time to first byte, HTTP status counts, and `CF-Cache-Status`.
+
+For the representative `iad-ci/armor` deployment, run from a tailnet-capable
+host. Keep credential values in the operator's secret store; the assignments
+below are placeholders, not values to paste into a transcript:
 
 ```bash
-# real ARMOR service (SigV4; credentials by environment reference only)
-AWS_ACCESS_KEY_ID=... AWS_SECRET_ACCESS_KEY=... \
-ARMOR_PERF_ENDPOINT=https://<armor-host>:2443 \
+AWS_ACCESS_KEY_ID=<armor-auth-access-key> \
+AWS_SECRET_ACCESS_KEY=<armor-auth-secret-key> \
+ARMOR_PERF_B2_ACCESS_KEY_ID=<b2-key-id> \
+ARMOR_PERF_B2_SECRET_ACCESS_KEY=<b2-application-key> \
+ARMOR_PERF_ENDPOINT=https://<armor-s3-host>:8444 \
+ARMOR_PERF_B2_ENDPOINT=https://s3.<region>.backblazeb2.com \
+ARMOR_PERF_CF_BASE=https://<cf-domain> \
 ARMOR_PERF_BUCKET=<bucket> ARMOR_PERF_REGION=<region> \
-go test ./tests/performance/ -run TestRemoteBaseline -v -timeout 60m
-
-# add the Cloudflare read path — reads the SAME ciphertext object the service
-# uploaded (like-for-like); records CF-Cache-Status per sample (HIT / MISS /
-# EXPIRED / DYNAMIC reported separately, large objects may exceed CDN limits
-# and stay MISS/DYNAMIC)
-ARMOR_PERF_CF_BASE=https://<cf-domain>/file/<bucket> ...
-
-# add the explicitly labeled direct-backend comparison — billed egress,
-# results are recorded under the name "direct-backend-egress-billed" and
-# exist only to contextualize the CF/service ratios (ADR-013)
-ARMOR_PERF_DIRECT_S3=https://s3.<region>.backblazeb2.com ...
+ARMOR_PERF_OUT=/tmp/armor-production-results \
+go test ./tests/performance/ -run '^TestRemoteBaseline$' -count=1 -v -timeout 90m
 ```
 
-Every remote download is hash-verified against a payload the run uploaded
-itself under the dedicated `armor-bench/` prefix; cleanup deletes exactly the
-keys the run created. Results go to `$ARMOR_PERF_OUT/remote-results.json`.
+`ARMOR_PERF_CF_BASE` may instead include `/file/<bucket>`; the harness accepts
+both forms. `ARMOR_PERF_B2_KEY_PREFIX` is required when ARMOR's configured
+`ARMOR_PREFIX` makes the physical B2 key differ from the S3 key. The old
+`ARMOR_PERF_DIRECT_S3` variable remains an alias for
+`ARMOR_PERF_B2_ENDPOINT`. Use `ARMOR_PERF_SIZES=128MiB` or `1GiB` to change the
+large-object shape only after confirming the deployment and runner have enough
+memory and time. `ARMOR_PERF_UPLOAD_SAMPLES`, `ARMOR_PERF_READ_SAMPLES`, and
+`ARMOR_PERF_RANGE_SAMPLES` tune the bounded sample counts.
 
-Credentials travel only as environment references. No secret value, and no
-unpublished object identifier, is ever written to results or logs.
+The run creates keys only below `armor-bench/production/<run-id>/`, deletes
+exactly those keys in a deferred cleanup, and writes
+`remote-results.{json,md}` under `ARMOR_PERF_OUT`. Do not commit raw results
+that contain private endpoints or object names. A release-status entry should
+record the date, source commit, deployment image/digest, runner location,
+region/bucket, workload, sample counts, the generated result summary, and the
+limits below.
+
+### Production interpretation limits
+
+- This is one runner and one deployment replica, not a load test, SLO, or
+  capacity claim. It does not measure concurrent clients or multipart upload.
+- ARMOR upload numbers include request handling, encryption, and the B2 PUT;
+  direct B2-origin download rows measure ciphertext transport. Cloudflare rows
+  include the selected edge and current cache state.
+- A B2 reference fetch is required to verify CDN bytes and is itself an extra
+  direct-B2 read outside the reported samples. B2-origin downloads may incur
+  provider egress; use the smallest acceptable sample count.
+- Cache state, edge selection, WAN path, B2 contention, deployment load, and
+  object lifecycle can change between runs. `CF-Cache-Status` is evidence for
+  that run, not a permanent cache guarantee.
+- The v3 object envelope and the ARMOR prefix are production configuration;
+  record both. Raw B2/Cloudflare response size is not plaintext object size.
+
+The first live qualification against `iad-ci/armor` is recorded in
+[production-b2-cloudflare-2026-09-28.md](production-b2-cloudflare-2026-09-28.md);
+it produced no valid throughput numbers because the large-object verification
+GET did not deliver its expected bytes before the bounded timeout.
 
 ## Focused large-object range baseline
 

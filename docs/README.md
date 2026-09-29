@@ -140,6 +140,7 @@ Contextual notes and temporary documentation:
 - **[Performance Runbook](performance/README.md)** — Reproducible, bounded read/write throughput baselines (`tests/performance`); supersedes the one-off ADR-013 figures
 - **[Small-Object Full-GET Baseline](performance/small-object-get-baseline.md)** — Backend request counts per small-object GET (pinned by tests), the latency-injected matrix, and the in-cluster `armor-get-probe` production numbers (armor-50a36688)
 - **[Large-Object Range-Read Baseline](performance/large-object-range-read-baseline.md)** — Repeatable latency and backend-byte measurements for representative ranges on a 64 MiB object, with the production-evidence boundary
+- **[Production B2/Cloudflare Qualification](performance/production-b2-cloudflare-2026-09-28.md)** — First live large-object qualification workload and result boundary; no valid throughput numbers were produced because the representative deployment did not complete the verification GET
 
 ## Archive
 

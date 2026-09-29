@@ -46,9 +46,12 @@ presigned GET, and range reads unverified for an operator workflow. The
 [release-status register](docs/release-status.md) records the current evidence
 and cites the existing beads; it is the source of truth for promotion. Range
 correctness and a repeatable local large-object performance baseline are
-recorded in the [large-object range-read baseline](docs/performance/large-object-range-read-baseline.md),
-but production B2/Cloudflare performance remains unmeasured. Do not infer a
-full AWS S3 contract from the tested operation matrix.
+recorded in the [large-object range-read baseline](docs/performance/large-object-range-read-baseline.md).
+The [production B2/Cloudflare qualification](docs/performance/production-b2-cloudflare-2026-09-28.md)
+defines the repeatable workload, but its first live run produced no valid
+throughput numbers because the representative deployment did not complete the
+large-object verification GET. Do not infer a full AWS S3 contract or
+production performance from the tested operation matrix.
 See the [release-status and known-limitations register](docs/release-status.md)
 for the exact boundary and promotion evidence.
 
