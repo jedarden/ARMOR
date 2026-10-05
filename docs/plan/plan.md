@@ -1572,7 +1572,36 @@ a per-operation breakdown (backend ms, round trips, windows, retries,
 metrics (labels for op/verb/size class, buckets above 10 s, per-pod scrape on
 devimprint, live cache/byte counters) and alert on GET 5xx rate (it would
 have caught the 33% devimprint GET failure). Correct ADR-013's status and
-history.
+history (done with 9.3).
+
+#### 9.1 Stale Cloudflare copies: detect, then pin by file ID (P1; fallback implemented, `armor-90f1a010`)
+
+Findings: in 24 h 22,556 of ord-devimprint's 22,567 GET 500s were
+overwritten `warm-start-tree-0.tar` keys. The HEAD goes direct to B2 and sees
+the new version; the body is read through Cloudflare by key
+(`/file/<bucket>/<key>`), whose edge still holds the old bytes. The failures
+surface as trailer 416, HMAC mismatch and block-table decode errors, and
+boto3 retries each six times. B2 reports the file ID as the S3 `VersionId`
+and on every download as `X-Bz-File-Id`, so the two can be compared.
+
+Decisions: (1) `Head` records the version ID in a **per-request** pin
+(`backend.VersionPin`, created for GET/HEAD in `wrapHandler`; never
+process-wide, which would mix one version's metadata with another's bytes);
+a ranged read whose `X-Bz-File-Id` differs from the pin, or that gets a 416,
+is re-read directly from B2 at the pinned version. `ARMOR_CF_STALE_FALLBACK`,
+default **on** — the one deliberate exception to the reader-first/off-by-
+default rule, because it only changes reads that would otherwise fail.
+Implemented; unit-tested against stand-in servers. (2) `ARMOR_CF_VERSION_PINNED`
+(default off) reads through Cloudflare by file ID
+(`/b2api/v1/b2_download_file_by_id?fileId=`) so every version has its own
+immutable URL; with that, a long edge TTL becomes safe and repeat reads of the
+same object (tradegraph re-downloads one 321 MB key 7× a week) come from the
+edge. Implemented but **unverified against real Cloudflare/B2**: the first
+step is an `armor-integration` test that the by-file-ID path passes through
+the CNAME and cache rule and returns identical bytes; a cache-rule change in
+Cloudflare may be needed. Enable one cluster at a time, starting with
+devimprint, watching the fallback count fall to zero. This adds no objects to
+B2: it addresses versions that already exist.
 
 #### 9.2 Provenance off the PUT path (P1)
 
@@ -1597,6 +1626,32 @@ devimprint, reduce replicas from 12 toward 4 and re-measure. Rejected:
 per-prefix chains and Merkle heads (the hash is not the bottleneck). Writing
 the head less often needs tip recovery first and is unsafe with a fixed
 writer ID (parquet-mirror); not scheduled.
+
+#### 9.3 One pipelined, streaming reader (P1; tracked: `armor-73564f97`, `armor-5694713b`, `armor-272299ca`)
+
+Findings: the backend fetch window is a hard-coded 64 KiB (`b2.go`
+`defaultReadBlockSize`) — a transport setting, not the envelope block size
+(ADR-013 conflated them); range reads of v3 single-PUT objects fetch one block
+per serial `GetRange` (`v3_range.go:42-59`, with an O(n²) `uint32` offset sum
+that also wraps above 4 GiB) and buffer the whole range; multipart GETs fetch,
+decrypt and write one whole part at a time with no Content-Length, so first
+byte waits for a whole part; one failed window aborts a response whose 200 was
+already sent; `readRangeBody` rejects a 200 at offset 0 when the origin ignores
+Range. Simulated (real backend, 74 ms): 64 KiB windows 10.7 MB/s, 1 MiB 40.8
+MB/s, 1,028 requests vs 68. Live: parquet-mirror 8 MiB ranges 18 s; tradegraph
+300–470 MB GETs up to 826 s; iad-ci aggregate read throughput flat at 5.4–8.6
+MB/s whether 6 or 12 requests run (hypothesis: one HTTP/2 connection).
+
+Decisions: a configurable window (`ARMOR_READ_WINDOW`, default 1 MiB after one
+64 KiB + 64 B first window for time-to-first-byte); whole-span range fetches
+sliced per block via `BlockTable.BlockOffset`; streamed multipart GETs
+decrypting block by block, with Content-Length from the sidecar; bounded
+per-window retry on transport errors and 5xx, a response-header timeout, and a
+per-window deadline; accept a 200 at offset 0 by reading only the requested
+length; a configurable number of HTTP/2 connections to Cloudflare, left at 1
+until 9.0's harness shows whether it matters. No format change. Memory per
+request is concurrency × window (16 MiB at defaults), counted against 9.7's
+budget. Correct ADR-013's status and history in the same change.
 
 #### 9.4 Zero-downtime rollouts (P1, ships first, manifests only)
 
@@ -1777,26 +1832,6 @@ work that depends on one waits.
    rs-manager, since it reuses the endpoint and its verification exactly;
    until decided, the four migration beads cover the four served buckets
    only.
-9. **Version-pinned Cloudflare reads (Phase 9, review item 1).** 22,556 of
-   devimprint's 22,567 GET 500s in 24 h were overwritten objects whose bytes
-   Cloudflare served from the old cached version while ARMOR's HEAD saw the
-   new one. Fix: read by B2 file ID (the S3 `VersionId` from the HEAD) so each
-   version has its own immutable URL, then a long edge TTL becomes safe.
-   Forces: the URL form (`/b2api/v1/b2_download_file_by_id?fileId=`) must be
-   proven to pass through the Cloudflare CNAME and cache rule, and
-   `ObjectInfo` does not carry the version ID today. Proposed: first an
-   interim retry of a failed block check directly against B2, then the
-   version-pinned URL behind a flag, one cluster at a time; waits for the
-   operator's go-ahead.
-10. **One pipelined, streaming reader (Phase 9, review item 3; tracked:
-   `armor-73564f97`, `armor-5694713b`, `armor-272299ca`).** Window size is
-   hard-coded at 64 KiB; single-PUT v3 range reads fetch one block per
-   serial round trip; multipart GETs buffer each whole part. Simulation:
-   1 MiB windows give 40.8 vs 10.7 MB/s at 74 ms. Forces: window and
-   concurrency defaults, per-window retry, and Content-Length for multipart.
-   Proposed: configurable window defaulting to 1 MiB with a small first
-   window, whole-span range fetches, streamed multipart, per-window retry;
-   waits for the operator's go-ahead.
 
 ---
 
