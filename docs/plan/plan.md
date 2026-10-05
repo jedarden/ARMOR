@@ -1537,6 +1537,186 @@ armor-4a03c2f6, armor-b00ee40c, armor-c01708aa):
 - **Clutter is deleted, not archived:** `notes/`, `samples/`, `deploy/`,
   `k8s/`, and the Python test-table framework under `tests/`.
 
+### Phase 9: Performance program (opened 2026-10-04)
+
+**Tracking bead:** `armor-3ea22b41` (plan change only); implementation beads are
+created per item when admitted. The existing epic `armor-d6de0b60` already
+covers the read/write throughput work marked "(tracked)" below.
+
+Findings (fleet log survey 2026-09-21..28, code review, latency-injection
+probes): ARMOR is slow because of **serial round trips and whole-body
+buffering**, not CPU (typical pods sit near 1m CPU) and not B2 itself (HEAD
+≈ 61–69 ms). On ord-devimprint (0.1.1975) provenance is ~69% of PUT time;
+iad-ci spends 8 minutes on every start loading the manifest and has been
+OOMKilled four times; multipart Complete takes p50 9 s; large PUTs hit
+client timeouts. The perf harness measured v2, not v3 (`localenv.go` never
+sets `FormatWriteVersion`), so the 2026-09-18 baseline understates these.
+
+**Zero-downtime rule for every item below.** The fleet is live; each change
+must be safe while old and new versions run side by side. Format or protocol
+changes ship **reader first** (release N reads, release N+1 writes), behind an
+env flag that defaults to the old behaviour. Every release goes
+armor-test → one pod per cluster → the rest, one cluster at a time, verifying
+each (`/readyz`, restarts, 5xx rate, p95) before the next. An item that
+cannot satisfy this is split until it can.
+
+#### 9.0 Measure honestly first (P2, blocks the rest)
+
+Set `FormatWriteVersion: 3` in `tests/performance/localenv.go`; add a leg that
+runs `B2Backend` against an in-process TLS server with per-request delay and
+a per-stream bandwidth cap; add a multipart-read scenario; stop counting the
+verification GET in write durations (the "4.2× slower multipart" figure is
+really ~1.9×; F2, the concurrent-parts 503, is v2-only). In the service: log
+a per-operation breakdown (backend ms, round trips, windows, retries,
+`CF-Cache-Status`), log the real cause in `conditional_put.go:39`, fix the
+metrics (labels for op/verb/size class, buckets above 10 s, per-pod scrape on
+devimprint, live cache/byte counters) and alert on GET 5xx rate (it would
+have caught the 33% devimprint GET failure). Correct ADR-013's status and
+history.
+
+#### 9.2 Provenance off the PUT path (P1)
+
+Findings: provenance wait is 23% of devimprint PUT time (lock, p99 7.3 s)
+plus 46% (writes); all four `RecordUpload` call sites discard the error
+(`handlers.go:657,984,2566,4310`), so the synchronous wait buys latency, not
+a guarantee; with 12 replicas each group-commit batch holds ~one entry.
+
+Decisions: (1) ship **one segment object per batch** (the reader
+`walkChainSegments` already exists unused; the auditor learns to read
+segments in release N, the writer switches behind a flag in N+1) — this is
+8.10's batching and needs no operator decision; (2) add **async append**
+behind `ARMOR_PROVENANCE_ASYNC` (default off): the PUT acknowledges once the
+object is durable, entries go to a write-ahead log on the pod's scratch
+volume and are drained to B2 off the request path, with a drain on shutdown
+(today `cmd_serve.go` has none). A crash loses only queued entries, which the
+audit reports as untracked objects — the same contract as manifest mode.
+Enabling it per deployment requires the operator's sign-off recorded on the
+owning bead; (3) only sequence/hash assignment stays under the lock; the head
+never points past entries not yet stored; (4) after (1) or (2) is live on
+devimprint, reduce replicas from 12 toward 4 and re-measure. Rejected:
+per-prefix chains and Merkle heads (the hash is not the bottleneck). Writing
+the head less often needs tip recovery first and is unsafe with a fixed
+writer ID (parquet-mirror); not scheduled.
+
+#### 9.4 Zero-downtime rollouts (P1, ships first, manifests only)
+
+Findings: ord-devimprint rolls with `maxSurge: 0, maxUnavailable: 100%` (all
+12 pods down per roll; the reason — old builds cannot read v3 — no longer
+holds, every pod is ≥ 0.1.1970); native-ads-scan and parquet-mirror use
+`Recreate`; no instance has a PodDisruptionBudget.
+
+Decisions: devimprint moves to `maxSurge: 25%, maxUnavailable: 0` and a
+shorter readiness period; the two `Recreate` instances move to a surge
+rollout (parquet-mirror only after confirming it never writes provenance —
+its writer ID is fixed, so two pods at once could fork a chain); iad-ci,
+iad-kalshi and tradegraph-platform get two replicas and a PDB
+(`minAvailable: 1`); every pod gets a `preStop` hook and a
+`terminationGracePeriodSeconds` longer than the longest in-flight part
+(iad-ci p95 is 86 s). Deployment manifests change only in declarative-config.
+
+#### 9.5 Fewer metadata round trips (P2; part tracked: `armor-c3199f1c`)
+
+Findings: a single-PUT GET makes ~7 round trips before the first byte
+(always-404 manifest HEAD, object HEAD, envelope header read twice, trailer);
+multipart repeats the freshness HEAD (`handlers.go:1083`); HEAD still calls
+`readManifest`; the metadata cache is never read on GET/HEAD.
+
+Decisions: run the manifest and object HEADs concurrently; pass the decoded
+header down instead of re-reading it; on full GETs take the header from the
+first data window; fetch tiny objects in one ranged GET; drop the duplicate
+freshness HEAD. Phase 2: a multipart flag on the manifest entry (additive
+JSON; a missing flag means the old behaviour) so single-PUT HEADs skip the
+manifest lookup, and populate/consult the metadata cache on PUT, Complete,
+GET, HEAD and LIST (LIST: cap the per-key HEAD fan-out at 16, filter
+`.armor-manifest` companions, skip `<prefix>.armor/` with `StartAfter`).
+Target: ~3 round trips before first byte.
+
+#### 9.6 Listener first, loader fixed (P1)
+
+Findings: the manifest cold load runs before the listener binds (bounded
+480 s). iad-ci hit that bound on all 19 starts since 09-18 and then served
+with an empty index; a failed load resets the delta sequence to 0
+(`server.go:321-327`) so new deltas overwrite old ones; the loader fetches
+files one at a time (iad-kalshi: 42,343 entries in 82.9 s); flush has no
+batching delay; snapshot encoding allocates ~2.3 KB per entry (a plausible
+OOM source); old writer shards (writer ID = pod name) are never cleaned up.
+
+Decisions: bind the listener first and load in the background (an index miss
+already falls back to B2; this removes the need for the startupProbe
+workaround once rolled everywhere); fetch 16–32 files in parallel without the
+pre-GET HEAD; fix the sequence reset; add a 1 s / 256-op flush linger; encode
+snapshots as a stream; skip compaction when nothing changed; clean up
+shards of writers gone for > 7 days. Stopgap until released:
+`ARMOR_MANIFEST_ENABLED=false` on iad-ci.
+
+#### 9.7 A memory budget instead of OOM (P2; part tracked: `armor-cb2b0731`)
+
+Findings: iad-ci OOMKilled 4× (two align with 10 concurrent 64 MiB aws-cli
+parts, each held at ~3–4× its size); only iad-ci sets `GOMEMLIMIT`; the
+100m/200m CPU limits (armor-ledger, native-ads-scan) cap small PUTs near
+27/55 MB/s; parquet-mirror's metadata cache holds 16 entries.
+
+Decisions: a process-wide in-flight byte budget that answers `503 SlowDown`
+(S3 clients back off) rather than exhausting memory; pre-size the part buffer
+from Content-Length and encrypt in place. Configuration, no release needed:
+`GOMEMLIMIT` at ~85–90% of the memory limit on every pod, raise the two
+low CPU limits, parquet-mirror `ARMOR_CACHE_MAX_ENTRIES` 16 → 1000.
+
+#### 9.8 Cheaper multipart (P2)
+
+Findings: devimprint Complete is p50 9.0 s / p95 19.6 s (6.2k/day); an
+8-part upload costs 41 backend calls, 16 serial in Complete (one GET per
+part-state file, `multipart.go:360-420`); each UploadPart makes three serial
+B2 calls; B2 returns ~215 "internal incident" 500s/day.
+
+Decisions: drive Complete from the client's part list, read part state in
+parallel, write `part-N.json` concurrently with the part upload (v3
+ciphertext is deterministic, so retries stay idempotent), delete upload state
+asynchronously, and retry B2 5xx on idempotent UploadPart. State layout is
+unchanged, so old and new pods can serve one upload. Target ~6 calls for
+Complete.
+
+#### 9.9 B2 lifecycle cleanup and canaries (P2, operations)
+
+Findings: `.armor/chain-head/` holds 377 keys but >600k old versions (every
+batch re-PUTs it, versioning is on); list pages there take ~10 s, which
+drives the 16 h restore-verifier pass and 10 s uncached barman WAL lists
+(cause on devimprint is inferred — confirm version counts first);
+`.armor/canary*/` debris; manifest versions; abandoned multipart state.
+Canaries run on every pod (~3 GiB/day on devimprint) and delete only on
+success.
+
+Decisions: lifecycle rules per bucket — old `chain-head/` versions after 1
+day; `canary*/` hidden after 1 day and deleted a day later; old `manifest/`
+versions after 1 day; abandoned `multipart/` state hidden after 7 days;
+**never** `chain/` or `hmac/`. Lifecycle deletion is irreversible, so each
+rule is first dry-run (list the versions it would remove, confirm none is
+referenced), applied to one bucket, observed for a week, then the rest, and
+recorded in `docs/runbooks/`. **Index pruning follows confirmation, never
+precedes it:** an ARMOR-held reference to a removed version (manifest index
+entry, sidecar-cache key, any version-pinned cache entry) is dropped only
+after `HeadVersion` returns 404 for it. Canaries run on one elected replica
+per bucket and delete by version ID.
+
+#### 9.10 Large PUTs: one spool, parallel upload (P2; part tracked: `armor-213bd392`)
+
+Findings: iad-kalshi uploads 8–64 MB at 3.08 MB/s and anything reaching 60 s
+returns 500 (botocore's read timeout); PUTs over 10 MiB are spooled twice
+(plaintext, then ciphertext in `b2.go:207-221`), and the SDK hashes the whole
+body again for signing.
+
+Decisions: encrypt directly into one spool file (the fixed-size header is
+written last) and hand the `*os.File` to the backend; skip the SDK payload
+hash (`SwapComputePayloadSHA256ForUnsignedPayloadMiddleware`) after
+`armor-integration` confirms B2 accepts it; upload large PUTs as parallel B2
+multipart ranges from the spool file (stored bytes identical); measure
+dropping `Expect: 100-continue` and raising the SDK's 10 idle connections per
+host with `httptrace` before changing either. Separate correctness bugs found
+on the way (not performance, filed separately): >10 MiB PUTs return a
+SHA-based ETag rather than MD5 (rclone may reject), 0-byte PUTs fail with
+"cannot encode empty block table", SigV4 never checks the body against its
+declared hash.
+
 ---
 
 ## Open questions
@@ -1597,6 +1777,26 @@ work that depends on one waits.
    rs-manager, since it reuses the endpoint and its verification exactly;
    until decided, the four migration beads cover the four served buckets
    only.
+9. **Version-pinned Cloudflare reads (Phase 9, review item 1).** 22,556 of
+   devimprint's 22,567 GET 500s in 24 h were overwritten objects whose bytes
+   Cloudflare served from the old cached version while ARMOR's HEAD saw the
+   new one. Fix: read by B2 file ID (the S3 `VersionId` from the HEAD) so each
+   version has its own immutable URL, then a long edge TTL becomes safe.
+   Forces: the URL form (`/b2api/v1/b2_download_file_by_id?fileId=`) must be
+   proven to pass through the Cloudflare CNAME and cache rule, and
+   `ObjectInfo` does not carry the version ID today. Proposed: first an
+   interim retry of a failed block check directly against B2, then the
+   version-pinned URL behind a flag, one cluster at a time; waits for the
+   operator's go-ahead.
+10. **One pipelined, streaming reader (Phase 9, review item 3; tracked:
+   `armor-73564f97`, `armor-5694713b`, `armor-272299ca`).** Window size is
+   hard-coded at 64 KiB; single-PUT v3 range reads fetch one block per
+   serial round trip; multipart GETs buffer each whole part. Simulation:
+   1 MiB windows give 40.8 vs 10.7 MB/s at 74 ms. Forces: window and
+   concurrency defaults, per-window retry, and Content-Length for multipart.
+   Proposed: configurable window defaulting to 1 MiB with a small first
+   window, whole-span range fetches, streamed multipart, per-window retry;
+   waits for the operator's go-ahead.
 
 ---
 
