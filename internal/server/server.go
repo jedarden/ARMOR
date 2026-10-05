@@ -127,6 +127,8 @@ func New(cfg *config.Config) (*Server, error) {
 			SecretKey:       cfg.B2SecretAccessKey,
 			CFDomain:        cfg.CFDomain,
 			ReadConcurrency: cfg.ReadConcurrency,
+			CFStaleFallback: cfg.CFStaleFallback,
+			CFVersionPinned: cfg.CFVersionPinned,
 			KeyPrefix:       cfg.Prefix,
 		})
 		if err != nil {
@@ -1565,6 +1567,12 @@ func (s *Server) handleProvenanceCompact(w http.ResponseWriter, r *http.Request)
 func (s *Server) wrapHandler(h http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
+
+		// Pin the B2 version each HEAD observes for this request so reads
+		// through Cloudflare can detect a stale edge copy (backend.VersionPin).
+		if r.Method == http.MethodGet || r.Method == http.MethodHead {
+			r = r.WithContext(backend.WithVersionPin(r.Context()))
+		}
 
 		// Track in-flight request
 		s.requestTracker.Start()

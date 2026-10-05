@@ -28,6 +28,9 @@ type ObjectInfo struct {
 	LastModified     time.Time
 	Metadata         map[string]string
 	IsARMOREncrypted bool
+	// VersionID is the B2 file ID of the version this describes (the S3
+	// VersionId). Empty when the backend does not report one.
+	VersionID string
 }
 
 // ListResult contains the result of a ListObjects operation.

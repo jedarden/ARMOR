@@ -1896,3 +1896,33 @@ func TestPresignRedactedConfig(t *testing.T) {
 		t.Errorf("Redacted PresignBaseURL = '%s', want 'https://armor.example.com/share'", rc.PresignBaseURL)
 	}
 }
+
+func TestCFReadPathFlags(t *testing.T) {
+	setEnv(t, minimalEnv()...)
+	os.Unsetenv("ARMOR_CF_STALE_FALLBACK")
+	os.Unsetenv("ARMOR_CF_VERSION_PINNED")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+	if !cfg.CFStaleFallback {
+		t.Error("CFStaleFallback default = false, want true")
+	}
+	if cfg.CFVersionPinned {
+		t.Error("CFVersionPinned default = true, want false")
+	}
+
+	os.Setenv("ARMOR_CF_STALE_FALLBACK", "false")
+	os.Setenv("ARMOR_CF_VERSION_PINNED", "true")
+	cfg, err = Load()
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+	if cfg.CFStaleFallback {
+		t.Error("ARMOR_CF_STALE_FALLBACK=false left the fallback on")
+	}
+	if !cfg.CFVersionPinned {
+		t.Error("ARMOR_CF_VERSION_PINNED=true did not enable pinning")
+	}
+}

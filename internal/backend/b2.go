@@ -43,6 +43,8 @@ type B2Backend struct {
 	httpClient      *http.Client
 	readBlockSize   int64
 	readConcurrency int
+	cfStaleFallback bool
+	cfVersionPinned bool
 	keyPrefix       string
 	conditionalMu   sync.Mutex
 	conditionalKeys map[string]*conditionalKeyLock
@@ -66,6 +68,17 @@ type B2Config struct {
 	SecretKey       string
 	CFDomain        string // Cloudflare domain for free egress downloads
 	ReadConcurrency int    // Maximum concurrent ranged reads; zero uses the default
+
+	// CFStaleFallback re-fetches a ranged read directly from B2, by version ID,
+	// when Cloudflare answers with a version other than the one the request's
+	// HEAD pinned (see VersionPin). It only changes reads that would otherwise
+	// fail a block check.
+	CFStaleFallback bool
+
+	// CFVersionPinned reads through Cloudflare by B2 file ID instead of by key
+	// whenever the request has a pinned version, so each version has its own
+	// immutable URL and a stale edge copy cannot answer for a newer version.
+	CFVersionPinned bool
 
 	// KeyPrefix is the ADR-001 shared-bucket prefix (normalized with a trailing
 	// slash) that the server prepends to every object key. The backend does not
@@ -130,6 +143,8 @@ func NewB2Backend(ctx context.Context, cfg B2Config) (*B2Backend, error) {
 		httpClient:      &http.Client{Timeout: 30 * time.Minute},
 		readBlockSize:   defaultReadBlockSize,
 		readConcurrency: readConcurrency,
+		cfStaleFallback: cfg.CFStaleFallback,
+		cfVersionPinned: cfg.CFVersionPinned,
 		keyPrefix:       cfg.KeyPrefix,
 		conditionalKeys: make(map[string]*conditionalKeyLock),
 	}, nil
@@ -384,8 +399,13 @@ func (b *B2Backend) fetchRange(ctx context.Context, bucket, key string, offset, 
 		return data, nil, nil
 	}
 
-	// Construct Cloudflare download URL.
+	// Construct Cloudflare download URL. With a pinned version and
+	// CFVersionPinned the URL names the B2 file ID, which is immutable.
+	pinned := pinnedVersion(ctx, bucket, key)
 	cfURL := fmt.Sprintf("https://%s/file/%s/%s", b.cfDomain, bucket, url.PathEscape(key))
+	if b.cfVersionPinned && pinned != "" {
+		cfURL = fmt.Sprintf("https://%s/b2api/v1/b2_download_file_by_id?fileId=%s", b.cfDomain, url.QueryEscape(pinned))
+	}
 
 	httpClient := b.httpClient
 	if httpClient == nil {
@@ -420,6 +440,19 @@ func (b *B2Backend) fetchRange(ctx context.Context, bucket, key string, offset, 
 	}
 	defer resp.Body.Close()
 
+	// A stale edge copy shows up as a different file ID than the HEAD saw, or
+	// as a 416 for a range the new version has but the cached one is too short
+	// to satisfy. Either way the bytes belong to another version: read this
+	// range straight from B2 at the pinned version instead of failing the
+	// block check downstream.
+	if b.cfStaleFallback && pinned != "" {
+		served := resp.Header.Get("X-Bz-File-Id")
+		if (served != "" && served != pinned) || resp.StatusCode == http.StatusRequestedRangeNotSatisfiable {
+			cfStaleFallbacks.Add(1)
+			return b.fetchRangeVersion(ctx, bucket, key, pinned, rangeHeader, length)
+		}
+	}
+
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusPartialContent {
 		return nil, nil, fmt.Errorf("cloudflare returned status %d", resp.StatusCode)
 	}
@@ -433,6 +466,26 @@ func (b *B2Backend) fetchRange(ctx context.Context, bucket, key string, offset, 
 	}
 
 	return data, cloudflareHeaders(resp), nil
+}
+
+// fetchRangeVersion reads one range of a specific version directly from B2's S3
+// API, bypassing Cloudflare.
+func (b *B2Backend) fetchRangeVersion(ctx context.Context, bucket, key, versionID, rangeHeader string, length int64) ([]byte, map[string]string, error) {
+	resp, err := b.s3Client.GetObject(ctx, &s3.GetObjectInput{
+		Bucket:    aws.String(bucket),
+		Key:       aws.String(key),
+		VersionId: aws.String(versionID),
+		Range:     aws.String(rangeHeader),
+	})
+	if err != nil {
+		return nil, nil, fmt.Errorf("direct S3 range request for version %s after stale Cloudflare copy failed: %w", versionID, err)
+	}
+	defer resp.Body.Close()
+	data, err := readRangeBody(resp.Body, length)
+	if err != nil {
+		return nil, nil, fmt.Errorf("direct S3 range response for version %s: %w", versionID, err)
+	}
+	return data, nil, nil
 }
 
 func readRangeBody(body io.Reader, expectedLength int64) ([]byte, error) {
@@ -575,7 +628,9 @@ func (b *B2Backend) Head(ctx context.Context, bucket, key string) (*ObjectInfo, 
 		ETag:         aws.ToString(resp.ETag),
 		LastModified: aws.ToTime(resp.LastModified),
 		Metadata:     fromS3Metadata(resp.Metadata),
+		VersionID:    aws.ToString(resp.VersionId),
 	}
+	recordVersionPin(ctx, bucket, key, info.VersionID)
 
 	// Check if this is an ARMOR-encrypted object
 	if _, ok := ParseARMORMetadata(info.Metadata); ok {

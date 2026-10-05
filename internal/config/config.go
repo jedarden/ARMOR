@@ -111,6 +111,12 @@ type Config struct {
 	// Read path configuration
 	ReadConcurrency int // Maximum concurrent ranged GETs (default 16)
 
+	// CFStaleFallback re-reads a range directly from B2 when Cloudflare served a
+	// version other than the one the request's HEAD saw (default true).
+	CFStaleFallback bool
+	// CFVersionPinned reads through Cloudflare by B2 file ID (default false).
+	CFVersionPinned bool
+
 	// Multi-key configuration
 	NamedKeys map[string][]byte // Named MEKs (key name -> MEK)
 	KeyRoutes []KeyRoute        // Prefix to key name mappings
@@ -337,6 +343,11 @@ func Load() (*Config, error) {
 	if cfg.ReadConcurrency < 1 {
 		errs = append(errs, fmt.Errorf("ARMOR_READ_CONCURRENCY must be at least 1"))
 	}
+
+	cfStaleFallbackStr := os.Getenv("ARMOR_CF_STALE_FALLBACK")
+	cfg.CFStaleFallback = cfStaleFallbackStr != "false" && cfStaleFallbackStr != "0"
+	cfVersionPinnedStr := os.Getenv("ARMOR_CF_VERSION_PINNED")
+	cfg.CFVersionPinned = cfVersionPinnedStr == "true" || cfVersionPinnedStr == "1"
 
 	// Auth credentials
 	cfg.AuthAccessKey = os.Getenv("ARMOR_AUTH_ACCESS_KEY")
