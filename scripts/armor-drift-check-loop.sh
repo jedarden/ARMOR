@@ -16,7 +16,7 @@ mkdir -p "$WORK_ROOT" "$REPORT_ROOT"
 # The report endpoint is deliberately independent from the check process. A
 # failed clone or check therefore leaves the previous JSON report readable and
 # can publish a red check-success gauge below.
-busybox httpd -f -p 8080 -h "$REPORT_ROOT" >/dev/null 2>&1 &
+busybox-extras httpd -f -p 8080 -h "$REPORT_ROOT" >/dev/null 2>&1 &
 
 write_startup_failure() {
   now=$(date +%s)
