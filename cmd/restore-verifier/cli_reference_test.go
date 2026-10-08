@@ -282,7 +282,7 @@ func verifierBinary(t *testing.T) string {
 		verifierBinDir = dir
 		goBin, err := exec.LookPath("go")
 		if err != nil {
-			goBin = filepath.Join(runtime.GOROOT(), "bin", "go")
+			goBin = filepath.Join(os.Getenv("GOROOT"), "bin", "go")
 		}
 		bin := filepath.Join(dir, "restore-verifier")
 		// The test suite also runs from git archives, where there is no .git

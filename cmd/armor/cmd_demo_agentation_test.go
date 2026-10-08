@@ -100,7 +100,7 @@ func TestDemoDashboardAgentationWiring(t *testing.T) {
 			t.Fatalf("demo dashboard wiring piece %d absent; cannot pin ordering", i)
 		}
 	}
-	if !(order[0] < order[1] && order[1] < order[2]) {
+	if order[0] >= order[1] || order[1] >= order[2] {
 		t.Errorf("demo dashboard Agentation wiring out of order: import map at %d, module tag at %d, mount check at %d", order[0], order[1], order[2])
 	}
 	if headEnd := strings.Index(html, "</head>"); headEnd >= 0 && order[2] > headEnd {

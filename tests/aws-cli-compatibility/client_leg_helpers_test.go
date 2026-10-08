@@ -99,24 +99,6 @@ func renderFixture(t *testing.T, name string, replacements map[string]string) []
 	return []byte(rendered)
 }
 
-// skipOrFailEnv returns the value of an environment variable, or — when it is
-// unset — skips (outside endpoint mode) or fatals (in endpoint mode) with
-// reason. The barman leg uses it for the PostgreSQL connection info: the leg
-// needs a reachable PostgreSQL to back up, and only the caller's environment
-// knows where one lives.
-func skipOrFailEnv(t *testing.T, name, reason string) string {
-	t.Helper()
-	v := os.Getenv(name)
-	if v != "" {
-		return v
-	}
-	if isCompatEndpointMode() {
-		t.Fatalf("%s is required in ARMOR_COMPAT_ENDPOINT mode: %s", name, reason)
-	}
-	t.Skipf("%s not set — skipping compatibility test (%s)", name, reason)
-	return ""
-}
-
 // daemon is a long-running client process (litestream replicate) started in
 // the background, with its output captured to a file the test can inspect.
 type daemon struct {

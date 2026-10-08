@@ -53,7 +53,7 @@ func TestReadsIgnoreTheSecondary(t *testing.T) {
 	// mirror can be restored to a fully valid state before the
 	// destroyed-primary leg — the fallback prohibition is only proven if the
 	// mirror copy would actually decrypt.
-	body, info, err := h.Secondary.Backend.Get(ctx, h.Bucket, storedCold)
+	body, info, err := h.Secondary.Get(ctx, h.Bucket, storedCold)
 	if err != nil {
 		t.Fatalf("secondary Get %q: %v", storedCold, err)
 	}
@@ -159,7 +159,7 @@ func TestReadsIgnoreTheSecondary(t *testing.T) {
 
 	// And the mirror copy itself must be untouched by the failed read — the
 	// promotion candidate stays intact for the runbook's manual procedure.
-	mbody, _, err := h.Secondary.Backend.Get(ctx, h.Bucket, storedCold)
+	mbody, _, err := h.Secondary.Get(ctx, h.Bucket, storedCold)
 	if err != nil {
 		t.Fatalf("mirror Get after the destroyed-primary read: %v", err)
 	}

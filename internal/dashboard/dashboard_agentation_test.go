@@ -49,7 +49,7 @@ func TestDashboardPageAgentationWiring(t *testing.T) {
 			t.Fatalf("dashboard page wiring piece %d absent; cannot pin ordering", i)
 		}
 	}
-	if !(order[0] < order[1] && order[1] < order[2]) {
+	if order[0] >= order[1] || order[1] >= order[2] {
 		t.Errorf("Agentation wiring out of order: import map at %d, module tag at %d, mount check at %d",
 			order[0], order[1], order[2])
 	}

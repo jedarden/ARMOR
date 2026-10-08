@@ -255,7 +255,7 @@ func fleetBinary(t *testing.T) string {
 		fleetBinDir = dir
 		goBin, err := exec.LookPath("go")
 		if err != nil {
-			goBin = filepath.Join(runtime.GOROOT(), "bin", "go")
+			goBin = filepath.Join(os.Getenv("GOROOT"), "bin", "go")
 		}
 		bin := filepath.Join(dir, "armor-fleet")
 		// Git archives have no VCS metadata for Go to stamp. The reference

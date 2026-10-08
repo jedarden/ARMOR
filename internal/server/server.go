@@ -1479,7 +1479,7 @@ func (s *Server) canaryHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	writeUnknown := func(reason string) {
 		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(fmt.Sprintf(`{"status":"unknown","error":%q}`, reason)))
+		_, _ = fmt.Fprintf(w, `{"status":"unknown","error":%q}`, reason)
 	}
 
 	if s.canaryDisabled {
