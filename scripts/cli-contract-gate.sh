@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/bin/sh
 # Executable parity gate for the operator-facing CLI contracts.
 #
 # The cross-binary package builds the real armor, restore-verifier, and
@@ -6,9 +6,9 @@
 # reference pages.  The command-package tests remain in this gate because
 # they add the deeper HTTP, shutdown, and secret-safety checks for each
 # companion binary.
-set -uo pipefail
+set -u
 
-cd "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$(cd "$(dirname "$0")/.." && pwd)"
 
 GO="${GO:-go}"
 status=0
