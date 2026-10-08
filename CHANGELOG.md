@@ -14,6 +14,110 @@ Entries before 0.1.1958 were written by hand on the Forgejo releases and are
 reproduced here; entries from 0.1.1958 on were reconstructed from git history
 on 2026-09-18 (bead armor-43ec803f).
 
+## 0.1.1985 (2026-10-08)
+
+- fix(gates): image build runs only the Go legs of the release gate (armor-c4e2a922)
+- fix(gates): cli-contract-gate runs under POSIX sh; golang:alpine has no bash (armor-89d946d8)
+- fix(lint): clear the 10 golangci-lint findings that failed armor-build (armor-9547e465)
+- docs(plan): add 9.1 stale-CF pinning and 9.3 pipelined reader; close open questions 9-10 (armor-3ea22b41)
+- feat(backend): detect stale Cloudflare copies with a per-request version pin (armor-90f1a010)
+- docs(plan): add Phase 9 performance program from the 2026-10-04 fleet review (armor-3ea22b41)
+- fix(drift): use busybox-extras httpd; Alpine busybox has no httpd applet (armor-6ae42719)
+- test(compat): complete boto3 operation coverage (armor-b7d260b0)
+- wip(armor-275495e6): fix list cache write invalidation
+- docs(restore-verifier): mark image publication blocker (armor-c134cb55)
+- docs(restore-verifier): record escalation rollout (armor-c134cb55)
+- docs(performance): record blocked live qualification (armor-3b0d924e)
+- wip(armor-175b8af7): document alerting activation boundary
+- wip(armor-14a2e34c): add ADR-006 failover coverage
+- wip(armor-45546b0e): enforce append-only ACL writes
+- wip(armor-675250fc): add production B2 Cloudflare benchmark
+- wip(armor-e01cb6d4): add V3 counter golden tests
+- wip(armor-749804d5): align active capability docs
+- wip(armor-f263499c): benchmark large-object range reads
+- wip(armor-71f7d4b0): verify every UI entry point
+- wip(armor-74e2397e): define canary observability contract
+- fix(armor-a48b2e70): make parity smoke archive-safe
+- wip(armor-a48b2e70): add CLI contract parity gate
+- wip(armor-36cae001): reconcile restore-verifier fleet inventory
+- wip(armor-abff8d6e): reconcile operator docs
+- wip(armor-d2b9d00e): add tradegraph verifier coverage
+- feat(server): export MEK ring with key export (armor-0be2b871)
+- docs(armor-c866e4ca): state smoke-test deployment scope
+- fix(armor-c866e4ca): validate alert API handoff
+- wip(armor-c866e4ca): verify alert delivery handoff
+- fix(armor-babc0b2b): make verifier reference build archive-safe
+- wip(armor-babc0b2b): harden restore-verifier escalation
+- test(verify): make binary contract archive-safe (armor-58ff0267)
+- wip(armor-3f35a65d): add ListBuckets prefix regression coverage
+- docs(adr): reconcile multipart finalization history (armor-87bd79fe)
+- feat(gates): enforce the Dockerfile default image contract (armor-33bc86b9)
+- test(perf): pin small-object full-GET backend request counts and latency baseline (armor-50a36688)
+- test(agentation): run the browser mount smoke in the full definition of done (armor-80113dcf)
+- test(docsindex): hold ARMOR_* consumers to the config reference (armor-6d2aa197)
+- docs(server): add HTTP API reference (armor-f51c0191)
+- docs(adr): reconcile ADR-004 status with shipped reality (armor-9e600d0f)
+- test(release): run the publisher contract suite in the release gate (armor-562d57c9)
+- test(compat): pin the real-client matrix to executable legs (armor-e3772451)
+- test(release): pin cut-release mutation workflow in isolated repos (armor-8438af77)
+- test(gate): pin documented Python gate inventory to the DoD invocation (armor-6d6ca9b1)
+- test(server): pin mixed-era provenance namespace resolution (armor-1cc2f6df)
+- test(compat): cover multi-key routing lifecycle (armor-92c989cc)
+- fix(metrics): make dropped verifier series ingestible and gate rules on stored series (armor-969c909d)
+- feat(config): refuse startup on missing prefix for shared-bucket deployments (armor-dd325731)
+- test(adr006): pin ranged reads through the promoted replica (armor-5600fabd)
+- feat(scripts): prohibited deployment constructs gate (armor-7a6ffd3c)
+- feat(restore-verifier): scope-contract validation for declarative-config (armor-300f66f4)
+- test(server): repair 14 auth-family test reds since 78af4460 (armor-d1fd297b)
+- test(prefix): dual-era ARMOR_MANIFEST_PREFIX containment regression coverage (armor-fd1369c7)
+- test(restore-verifier): cover alert lifecycle (armor-7938ec3b)
+- test(cli): pin secret-safe output across every documented credential path (armor-e2c2e909)
+- test(adr006): exercise failover writes and failback (armor-c42a037d)
+- fix(handlers): restore the pinned contracts behind the 9 red unit tests (armor-a2205754)
+- test(compat): drop rclone --ignore-checksum now the server emits the composite ETag (armor-e8981148)
+- fix(multipart): return the S3 md5(md5s)-N composite ETag for completed multipart uploads (armor-e8981148)
+- test(agentation): fail the build when any page ships without the toolbar (armor-4e9c31be)
+- test(compat): cover rclone and boto3 real-client legs (armor-9b82b605)
+- docs(adr): state Decision 4 as the amended per-bucket-scope topology (armor-5d7e4a62)
+- test(prefix): rollback coverage for the ARMOR_PREFIX cutover (armor-b94cd8c1)
+- test(config): hold docs/configuration.md to the defaults and validation rules the code enforces (armor-bd9b8027)
+- test(compat): pin the S3 wire contract and narrow the client claim to it (armor-9fca25b2)
+- test(verify): pin the report and exit-code contract across formats and shapes (armor-5a4f1cdc)
+- docs(companions): document and smoke-test the restore-verifier and armor-fleet CLI contracts (armor-c0ed7627)
+- fix(migration): encrypt v3 single-PUT migration output with EncryptV3 and the trailer block table (armor-511015d0)
+- test(storage): pin the README ciphertext-only storage guarantee (armor-90e6f3b0)
+- feat(ui): mount the Agentation toolbar on every web UI entry point (armor-afa5ab34)
+- docs(archive): retain 2026-08-07 probe and go-test artifacts from claude-governor (armor-4210d134)
+- docs(release): gate the fleet roll on the live-B2 armor-integration leg (armor-d0336387)
+- test(compat): gate documented S3 clients (armor-2bbf4a0f)
+- docs(fleet): operator guide for the armor-fleet console (armor-fba6cf3a)
+- test(adr006): pin secondary failover routing, recovery, and canary alerts (armor-e241f77f)
+- test(cli): enforce cli-reference.md behavior claims against the binary (armor-162e5208)
+- fix(ci): clear staticcheck release blockers (armor-0373828e)
+- fix(metrics): keep Prometheus exposition numeric (armor-c866e4ca)
+- fix(alerting): tolerate Prometheus expression formatting (armor-c866e4ca)
+- docs(alerting): fleet activation — smoke-test shape knobs, runbook estate table (armor-cb731b20)
+- docs(restore-verifier): reconcile fleet topology; inventory pin test (armor-79255e46)
+- test(prefix): pin ADR-001 ListBuckets real-bucket behavior; document it (armor-b4818824)
+- docs(adr): record per-cluster restore-verifier deployment form as ADR-004 addendum (armor-02a5889c)
+- feat(release): cut-release.sh bumps compose.yaml pin; parity gate (armor-3c849ea3)
+- test(config): ARMOR_MANIFEST_PREFIX tenant-namespace escape matrix (armor-0d909e77)
+- docs(server): publish prefix-aware multipart layout and read-path contract (armor-8ab6625e)
+- test(server): mixed-era ARMOR_PREFIX cutover regression suite (armor-93205de7)
+- test(client-config): golden + property tests for every tool and write format (armor-4a220505)
+- build(toolchain): hard-fail on go.mod/Dockerfile golang pin drift (armor-255e8f31)
+- feat(restoreverifier): canonical bead-rs escalation filer + deployment support (armor-babc0b2b)
+- docs(alerting): restore-verifier alerting runbook + live-run smoke-test fixes (armor-afe279bd)
+- test(verify): binary-level contract suite for armor verify (armor-121caf08)
+- test(compat): cover boto3 API against built image (armor-b8f5262d)
+- test(restore-verifier): scheduled drill failure signals + no-retry-storm pin (armor-a166a6bc)
+- feat(alerting): activation verification for the ARMOR alert set — live smoke test + offline rule unittest (armor-afe279bd)
+- docs(prefix): ARMOR_PREFIX cutover and legacy internal-state runbook + both-eras integration tests (armor-a7192841)
+- test(restore-verifier): pin scheduled DR-drill execution, reporting, pause (armor-445bcb28)
+- docs(multipart): reconcile ADR-003/015 contract scoping; add reader and min-part-size contract tests (armor-96d1a374)
+- docs(adr): reconcile ADR-005 with the current V3 write format (armor-56d44708)
+- test(observability): contract-pin shipped multipart-canary alerts and endpoint failure semantics (armor-470d6e60)
+
 ## 0.1.1984 (2026-10-08)
 
 - fix(gates): image build runs only the Go legs of the release gate (armor-c4e2a922)
