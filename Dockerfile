@@ -31,7 +31,7 @@ RUN mkdir -p /image-tmp && chmod 1777 /image-tmp
 # multipart state, canary, concurrent HTTP round trips, the publisher
 # contract tests (network-free, fake endpoints), and integration-suite
 # compilation without requiring live B2 credentials.
-RUN CGO_ENABLED=0 ./scripts/release-gate.sh
+RUN ARMOR_GATE_SCOPE=image CGO_ENABLED=0 ./scripts/release-gate.sh
 
 # Build the main armor binary
 ARG VERSION
