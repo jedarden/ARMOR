@@ -1,5 +1,9 @@
 # ARMOR Implementation Plan
 
+> **Plan decision (2026-10-09):** Scoped object-key delivery for read-only local
+> downloads is permitted as an optional extension (§9.11). This records the
+> feature design; it is not an implementation or deployment claim.
+
 > **Status (updated 2026-09-18): `main` builds and releases through CI (fleet on 0.1.1963–0.1.1969, see `CHANGELOG.md`); the default write format is envelope v3 (since 0.1.1943), so §8.0 and the write side of §8.1 are done. The open P0 work is the in-place migration of legacy v1/v2 objects to v3: genesis bead `armor-cb6f29ce` and its blockers (migrate object-count bookkeeping, authoritative target selection, asynchronous and resumable migration). Phase 8 below is the decision record; the 2026-08-28 findings it opens with are historical. Releases are cut with `scripts/cut-release.sh` and CI tags and publishes them (`docs/release-process.md`).**
 >
 > **Status as of 2026-08-28, kept for history: Phases 1–5 complete and deployed (fleet on 0.1.1913); Phase 6 deployed with one discovery bug still open; Phase 7 shipped in code and rolled out to 3 of 4 production instances; Phase 8 (correctness, usability & convenience) opened 2026-08-28 after a full review — it starts with two P0 defects: `main` does not compile (import cycle + sources referenced by HEAD that were never committed) and every production PUT still writes the Version 1 envelope whose CTR derivation reuses keystream between adjacent blocks (ADR-005, reproduced 2026-08-28). See Phase 8 for the decided remediation and the bead graph.**
@@ -24,7 +28,7 @@ ARMOR abstracts this arbitrage away behind a standard S3 endpoint: clients speak
 
 ## Overview
 
-ARMOR is an S3-compatible proxy server that transparently encrypts and decrypts data between clients and Backblaze B2. Clients interact with ARMOR using standard S3 SDKs and tools (boto3, DuckDB `httpfs`, AWS CLI, etc.). ARMOR handles all cryptography invisibly — clients never see ciphertext.
+ARMOR is an S3-compatible proxy server that transparently encrypts and decrypts data between clients and Backblaze B2. Clients interact with ARMOR using standard S3 SDKs and tools (boto3, DuckDB `httpfs`, AWS CLI, etc.). In the standard S3 path ARMOR handles all cryptography invisibly. The optional extension planned in §9.11 lets explicitly authorized read-only clients download ciphertext directly and decrypt locally using only the requested object's key.
 
 ```
                         ARMOR Server
@@ -42,7 +46,7 @@ ARMOR is an S3-compatible proxy server that transparently encrypts and decrypts 
                     └───────────────────┘
 ```
 
-**What makes this different from encrypting on the client:** The encryption boundary is inside the server, not on each client machine. Any S3-compatible tool works unmodified — DuckDB, pandas, rclone, AWS CLI, custom scripts — they all point at `localhost:9000` (or wherever ARMOR listens) and get transparent encryption with zero-egress downloads through Cloudflare.
+**Standard S3 compatibility:** Upload encryption and ordinary download decryption happen inside the server. Any S3-compatible tool works unmodified — DuckDB, pandas, rclone, AWS CLI, custom scripts — they all point at `localhost:9000` (or wherever ARMOR listens) and get transparent encryption with zero-egress downloads through Cloudflare. Opting into local download decryption requires an ARMOR-aware client; it does not replace the standard S3 path or introduce client-side uploads.
 
 ### Statelessness Principle
 
@@ -108,7 +112,7 @@ Client                    ARMOR                    Cloudflare              B2
   │                         │                         │                     │
 ```
 
-Downloads route **through Cloudflare** for zero-egress via the Bandwidth Alliance PNI. The bucket is set to `allPublic` — this is safe because every object is AES-256-CTR ciphertext, useless without the MEK. ARMOR assembles the Cloudflare download URL itself:
+Downloads route **through Cloudflare** for zero-egress via the Bandwidth Alliance PNI. The bucket is set to `allPublic` — object content is ciphertext and requires its DEK, or the MEK capable of unwrapping that DEK, to decrypt. ARMOR assembles the Cloudflare download URL itself:
 
 ```
 https://<cloudflare_domain>/file/<bucket>/<key>
@@ -182,6 +186,10 @@ Master Encryption Key (MEK)
 - **One DEK per file.** Compromise of one DEK exposes one file.
 - **MEK wraps all DEKs.** Rotating the MEK re-wraps DEKs via `CopyObject` metadata update — no data re-upload.
 - **HMAC key** is derived from the DEK via HKDF: `hmac_key = HKDF-SHA256(dek, info="armor-hmac-v1")`. Separate from the encryption key to avoid key reuse.
+- **Optional object-key delivery (planned, §9.11).** An explicitly authorized
+  reader may receive the existing DEK for one object version. The MEK and its
+  ring remain server-side; the read-only boundary is enforced by storage/API
+  authorization, since a symmetric DEK can also encrypt and generate MACs.
 
 ### Encrypted Object Format (Stored on B2)
 
@@ -441,7 +449,7 @@ https://armor-b2.example.com/file/<bucket>/<key>
 ```
 Used for: GetObject (full and range). ARMOR assembles this URL from the configured Cloudflare domain, bucket name, and object key. The request routes through Cloudflare's edge network and PNI to the public B2 bucket, ensuring $0 egress. Cloudflare caches responses at the edge — repeated reads of the same encrypted blocks (common with DuckDB) are served from cache without hitting B2.
 
-No authentication is needed on the download path because the bucket is public. This is safe: every stored object is AES-256-CTR ciphertext, completely opaque without the MEK. Public access to ciphertext is equivalent to accessing `/dev/urandom`. This also means Cloudflare can freely cache responses (no `Authorization` header to bypass caching).
+No authentication is needed on the ciphertext download path because the bucket is public. Object content remains encrypted without its DEK or the MEK that unwraps it; object names, sizes and exposed metadata are not hidden by encryption. Cloudflare can cache ciphertext responses without an `Authorization` header. The planned object-key delivery path (§9.11) is separately authenticated and must never be cached by Cloudflare or a shared proxy.
 
 ### Authentication
 
@@ -468,12 +476,13 @@ loadNamedCredentials`). Each is SigV4-verified independently and enforced at
 the router (`CheckACL`), with list operations checked against the `?prefix`
 query param. An empty/absent ACL means full access to the configured bucket.
 
-**Current limitation:** ACLs carry no action verbs — a credential's access to
-a prefix is all-or-nothing (read implies write implies delete). Append-only
-backup writers are therefore not yet expressible, and as of 2026-08-07 all
-production consumers share the single default credential. Both are addressed
-by [ADR-012](../adr/012-authorization-action-verbs-and-consumer-separation.md)
-(Phase 7).
+**Action-scoped credentials:** Phase 7 and
+[ADR-012](../adr/012-authorization-action-verbs-and-consumer-separation.md)
+define action verbs as well as bucket/prefix scope. A `get+list` credential
+permits reads and listings without granting uploads or deletions. An API
+credential authenticates requests; it is not an object decryption key. The
+planned §9.11 endpoint additionally requires an explicit local-key-delivery
+permission, so existing read credentials do not silently gain key export.
 
 For a single-user deployment (the original primary use case), a single static
 key pair in the config file is sufficient.
@@ -1772,6 +1781,102 @@ SHA-based ETag rather than MD5 (rclone may reject), 0-byte PUTs fail with
 "cannot encode empty block table", SigV4 never checks the body against its
 declared hash.
 
+#### 9.11 Scoped object-key delivery and read-only local downloads (planned, 2026-10-09)
+
+**Plan owner:** `armor-7de3415b` (documentation only). This feature is permitted
+in the architecture; implementation and deployment remain future work. It is
+an optional extension alongside the standard S3 proxy and §9.3's reader work.
+
+**Evidence:** The SalaryTrail/H-1B experiment (`h1b-61bb6f07`, `h1b-data`
+commit `234a23e`) fetched the complete 85 MB production ciphertext directly
+through Cloudflare in 1.4–6.1 seconds across two reads with matching hashes.
+A separate full-size fixture with a disposable key authenticated and decrypted
+locally in 1.07 seconds, then expanded and verified the 474 MB database in
+1.20 seconds. Production plaintext was not verified: the existing read-only
+API credential cannot obtain an object DEK, and no authorized production DEK
+was supplied. These measurements motivate the extension; they do not establish
+a production throughput guarantee or isolate the proxy bottleneck.
+
+**Request flow:** An ARMOR-aware downloader authenticates to a dedicated TLS
+endpoint with a named SigV4 credential and requests one bucket/object version.
+ARMOR authorizes the request, resolves authoritative metadata, unwraps that
+object's existing DEK internally and returns a versioned download descriptor:
+the DEK, exact ciphertext location/version, expected lengths, format and
+integrity metadata needed by the client. The client fetches ciphertext
+directly through Cloudflare, authenticates/decrypts locally and publishes the
+plaintext only after verification. Key delivery moves no object payload
+through ARMOR. Issuing a new API credential alone cannot enable this flow,
+and generating a new DEK cannot decrypt an existing object.
+
+**Authorization and key boundaries:**
+
+- Require both normal `get` authorization for the canonical bucket/key and
+  an explicit local-key-delivery permission. Use the existing SigV4 and ACL
+  enforcement, including prefix boundaries and request canonicalization;
+  deny before metadata lookup or unwrap when either permission is absent.
+  A consumer such as SalaryTrail can be limited to `h1b-data/`, with optional
+  `list` and no `put`, `copy`, `delete` or multipart mutation rights.
+- Resolve the wrapped key from the authorized object's authoritative
+  metadata. Do not accept caller-provided wrapped keys, backend URLs or
+  metadata locations. Do not expose internal `.armor/` objects or companion
+  keys through a prefix escape, or turn the endpoint into a general unwrap
+  service. Return only that object's DEK, never an MEK, retired key ring,
+  B2 credential or another object's key. The existing master-key export
+  endpoint is not part of this client protocol.
+- Return keys only in an authenticated TLS response with `Cache-Control:
+  no-store`; exclude the route from CDN/shared caching and redact response
+  bodies from logs, traces and error reports. Audit caller, object version,
+  permission decision and outcome without recording keys. The client keeps
+  keys in memory by default and never puts them in URLs, argv or logs;
+  explicit persistence uses the approved secret store or a protected runtime
+  file, never a repository artifact.
+- Revoking a credential stops future key delivery, not use of a DEK or
+  plaintext already received. Descriptor expiration has the same limit.
+  MEK re-wrapping does not revoke an exported DEK. New content needs a new DEK
+  to exclude a former reader; historical ciphertext already accessible with
+  an exported key cannot be made unreadable. Because the DEK also derives
+  MAC keys, independent trusted hashes/provenance remain necessary when
+  publisher authenticity is required; read-only storage permissions remain
+  the boundary against replacing remote content.
+
+**Version and format contract:** Bind the descriptor, wrapped DEK, ciphertext,
+and any companion metadata to the same authoritative object version. Reuse
+§9.1's version pinning and verify the returned backend file ID; reject stale
+Cloudflare data, overwrites or rotation races rather than mixing metadata
+and bytes. Do not fall back to an unpinned URL or silently bypass Cloudflare
+through a chargeable backend path. An unavailable direct path may use the
+ordinary authorized ARMOR GET only as an explicit client fallback.
+
+Start with the experiment's bounded v3 single-PUT format (uncompressed ARMOR
+blocks, up to 128 MiB plaintext; gzip is an application payload). Reuse ARMOR's
+crypto and verify every block MAC, framing, lengths and trusted whole-file
+hash before atomically publishing output. Bound memory, bytes, time and
+retries. Reject legacy, multipart and unsupported compression with a clear
+unsupported-format result until their layouts and version-bound sidecars
+have separate acceptance coverage; do not claim general S3 compatibility for
+this extension.
+
+**Acceptance and rollout:**
+
+- [ ] Positive and negative authorization tests cover permitted reads,
+  absent local-key permission, write-only credentials, wrong buckets,
+  sibling prefixes, encoded/traversal paths, internal keys and denied
+  mutations. Responses and observability contain no unrelated key material.
+- [ ] End-to-end tests prove direct ciphertext retrieval and local decryption
+  with the scoped credential alone, including wrong keys, corrupt/truncated
+  data, stale versions, overwrite/rotation races, revoked credentials,
+  unsupported formats and failure without publishing plaintext.
+- [ ] A real canary verifies the complete production plaintext against an
+  independently trusted hash, records time/bytes/request counts, and compares
+  with the proxy path under documented cache conditions. Ciphertext hashes
+  and disposable-key fixture results alone do not satisfy this check.
+- [ ] Ship server support disabled by default, then the compatible client;
+  enable only for an explicitly provisioned consumer/prefix after the normal
+  release gates and armor-test canary pass. Keep standard S3 behavior and
+  old clients working throughout. Record configuration and permission syntax,
+  operational key handling and live evidence before rollout. Rollback disables
+  new key delivery; it cannot recall previously delivered keys.
+
 ---
 
 ## Open questions
@@ -1957,7 +2062,8 @@ image.
 | Cloudflare CDN inspection | All cached content is ciphertext |
 | ARMOR server compromise | MEK exposed — rotate immediately; per-file DEKs limit blast radius |
 | Network sniffing (client ↔ ARMOR) | TLS on ARMOR listener, or localhost-only binding |
-| Public bucket enumeration | Attacker can list/download ciphertext — useless without MEK |
+| Public bucket enumeration | Names/sizes may be exposed; decrypting content requires its DEK or the MEK |
+| Authorized local downloader compromised (planned §9.11) | Credential scope bounds further key requests; storage writes remain denied, and revocation blocks future delivery but cannot recall exported keys |
 | Bit-flipping attack on ciphertext | Per-block HMAC-SHA256 detects any modification |
 | Block reordering/truncation | Block index is implicit in offset; HMAC table length validates block count |
 
