@@ -14,6 +14,10 @@ Entries before 0.1.1958 were written by hand on the Forgejo releases and are
 reproduced here; entries from 0.1.1958 on were reconstructed from git history
 on 2026-09-18 (bead armor-43ec803f).
 
+## 0.1.1986 (2026-10-09)
+
+- Automatic release of source `b0421cffe0800424bfd3312b410af146693a11c2`.
+
 ## 0.1.1985 (2026-10-08)
 
 - fix(gates): image build runs only the Go legs of the release gate (armor-c4e2a922)
