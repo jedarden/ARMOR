@@ -111,6 +111,11 @@ type Config struct {
 	// Read path configuration
 	ReadConcurrency int // Maximum concurrent ranged GETs (default 16)
 
+	// Network fetch tuning (armor-73564f97); none of these change the stored format.
+	ReadFetchSize      int64         // Bytes per backend ranged request (default 1 MiB)
+	ReadRequestTimeout time.Duration // Deadline per backend ranged request (default 2m)
+	ReadBackendLimit   int           // Simultaneous ranged requests across all readers (default 64)
+
 	// CFStaleFallback re-reads a range directly from B2 when Cloudflare served a
 	// version other than the one the request's HEAD saw (default true).
 	CFStaleFallback bool
@@ -342,6 +347,24 @@ func Load() (*Config, error) {
 	cfg.ReadConcurrency = getEnvInt("ARMOR_READ_CONCURRENCY", 16)
 	if cfg.ReadConcurrency < 1 {
 		errs = append(errs, fmt.Errorf("ARMOR_READ_CONCURRENCY must be at least 1"))
+	}
+
+	cfg.ReadFetchSize = int64(getEnvInt("ARMOR_READ_FETCH_SIZE", 1<<20))
+	if cfg.ReadFetchSize < 64*1024 || cfg.ReadFetchSize > 16<<20 {
+		errs = append(errs, fmt.Errorf("ARMOR_READ_FETCH_SIZE must be between 65536 and 16777216 bytes"))
+	}
+	cfg.ReadRequestTimeout = 2 * time.Minute
+	if v := os.Getenv("ARMOR_READ_REQUEST_TIMEOUT"); v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil || d <= 0 {
+			errs = append(errs, fmt.Errorf("ARMOR_READ_REQUEST_TIMEOUT must be a positive duration like 90s"))
+		} else {
+			cfg.ReadRequestTimeout = d
+		}
+	}
+	cfg.ReadBackendLimit = getEnvInt("ARMOR_READ_BACKEND_LIMIT", 64)
+	if cfg.ReadBackendLimit < 1 {
+		errs = append(errs, fmt.Errorf("ARMOR_READ_BACKEND_LIMIT must be at least 1"))
 	}
 
 	cfStaleFallbackStr := os.Getenv("ARMOR_CF_STALE_FALLBACK")

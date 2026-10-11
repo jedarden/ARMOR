@@ -121,15 +121,18 @@ func New(cfg *config.Config) (*Server, error) {
 	case "b2":
 		// B2 backend as primary (default)
 		primaryBackend, err = backend.NewB2Backend(context.Background(), backend.B2Config{
-			Region:          cfg.B2Region,
-			Endpoint:        cfg.B2Endpoint,
-			AccessKeyID:     cfg.B2AccessKeyID,
-			SecretKey:       cfg.B2SecretAccessKey,
-			CFDomain:        cfg.CFDomain,
-			ReadConcurrency: cfg.ReadConcurrency,
-			CFStaleFallback: cfg.CFStaleFallback,
-			CFVersionPinned: cfg.CFVersionPinned,
-			KeyPrefix:       cfg.Prefix,
+			Region:             cfg.B2Region,
+			Endpoint:           cfg.B2Endpoint,
+			AccessKeyID:        cfg.B2AccessKeyID,
+			SecretKey:          cfg.B2SecretAccessKey,
+			CFDomain:           cfg.CFDomain,
+			ReadConcurrency:    cfg.ReadConcurrency,
+			ReadFetchSize:      cfg.ReadFetchSize,
+			ReadRequestTimeout: cfg.ReadRequestTimeout,
+			ReadBackendLimit:   cfg.ReadBackendLimit,
+			CFStaleFallback:    cfg.CFStaleFallback,
+			CFVersionPinned:    cfg.CFVersionPinned,
+			KeyPrefix:          cfg.Prefix,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("failed to create B2 backend: %w", err)

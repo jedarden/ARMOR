@@ -41,8 +41,10 @@ type B2Backend struct {
 	endpoint        string
 	cfDomain        string
 	httpClient      *http.Client
-	readBlockSize   int64
+	readBlockSize   int64 // network fetch size; independent of the stored ARMOR block size
 	readConcurrency int
+	readTimeout     time.Duration // per-request deadline; zero uses the default
+	readBudget      chan struct{} // backend-wide cap on simultaneous ranged requests; nil = unlimited
 	cfStaleFallback bool
 	cfVersionPinned bool
 	keyPrefix       string
@@ -56,8 +58,13 @@ type conditionalKeyLock struct {
 }
 
 const (
-	defaultReadBlockSize   = 64 * 1024
-	defaultReadConcurrency = 16
+	// defaultReadBlockSize is the network fetch size, not the stored ARMOR
+	// block size. Fetching 1 MiB per request amortises the ~75 ms cross-country
+	// RTT over 16 crypto blocks (armor-73564f97).
+	defaultReadBlockSize    = 1 << 20
+	defaultReadConcurrency  = 16
+	defaultReadTimeout      = 2 * time.Minute
+	defaultReadBackendLimit = 64
 )
 
 // B2Config contains configuration for the B2 backend.
@@ -68,6 +75,19 @@ type B2Config struct {
 	SecretKey       string
 	CFDomain        string // Cloudflare domain for free egress downloads
 	ReadConcurrency int    // Maximum concurrent ranged reads; zero uses the default
+
+	// ReadFetchSize is the size of each backend ranged request in bytes. It is
+	// a network knob only and never changes the stored block size. Zero uses
+	// the default.
+	ReadFetchSize int64
+
+	// ReadRequestTimeout bounds each backend ranged request so one wedged
+	// request cannot hold an ordered read open forever. Zero uses the default.
+	ReadRequestTimeout time.Duration
+
+	// ReadBackendLimit caps simultaneous ranged requests across all readers of
+	// this backend. Zero uses the default.
+	ReadBackendLimit int
 
 	// CFStaleFallback re-fetches a ranged read directly from B2, by version ID,
 	// when Cloudflare answers with a version other than the one the request's
@@ -135,14 +155,29 @@ func NewB2Backend(ctx context.Context, cfg B2Config) (*B2Backend, error) {
 		readConcurrency = defaultReadConcurrency
 	}
 
+	fetchSize := cfg.ReadFetchSize
+	if fetchSize <= 0 {
+		fetchSize = defaultReadBlockSize
+	}
+	readTimeout := cfg.ReadRequestTimeout
+	if readTimeout <= 0 {
+		readTimeout = defaultReadTimeout
+	}
+	backendLimit := cfg.ReadBackendLimit
+	if backendLimit <= 0 {
+		backendLimit = defaultReadBackendLimit
+	}
+
 	return &B2Backend{
 		s3Client:        s3Client,
 		region:          cfg.Region,
 		endpoint:        cfg.Endpoint,
 		cfDomain:        cfg.CFDomain,
 		httpClient:      &http.Client{Timeout: 30 * time.Minute},
-		readBlockSize:   defaultReadBlockSize,
+		readBlockSize:   fetchSize,
 		readConcurrency: readConcurrency,
+		readTimeout:     readTimeout,
+		readBudget:      make(chan struct{}, backendLimit),
 		cfStaleFallback: cfg.CFStaleFallback,
 		cfVersionPinned: cfg.CFVersionPinned,
 		keyPrefix:       cfg.KeyPrefix,
@@ -319,8 +354,15 @@ func (b *B2Backend) GetRangeWithHeaders(ctx context.Context, bucket, key string,
 		workerCount = int(blockCount - 1)
 	}
 
+	// slots bounds the sliding window: a block may be scheduled only while a
+	// slot is free, and the reader frees a slot when it consumes a block. In-
+	// flight requests plus buffered results plus the reorder map therefore never
+	// exceed window blocks, however long the object is or however long an early
+	// block stalls.
+	window := concurrency * 2
+	slots := make(chan struct{}, window)
 	jobs := make(chan rangedBlockJob)
-	results := make(chan rangedBlockResult, workerCount)
+	results := make(chan rangedBlockResult, window)
 	var workers sync.WaitGroup
 	workers.Add(workerCount)
 	for i := 0; i < workerCount; i++ {
@@ -352,6 +394,11 @@ func (b *B2Backend) GetRangeWithHeaders(ctx context.Context, bucket, key string,
 				length: minInt64(blockSize, length-blockOffset),
 			}
 			select {
+			case slots <- struct{}{}:
+			case <-pipelineCtx.Done():
+				return
+			}
+			select {
 			case jobs <- job:
 			case <-pipelineCtx.Done():
 				return
@@ -372,7 +419,8 @@ func (b *B2Backend) GetRangeWithHeaders(ctx context.Context, bucket, key string,
 		cancel:      cancel,
 		workers:     &workers,
 		results:     results,
-		pending:     make(map[int64][]byte, workerCount),
+		slots:       slots,
+		pending:     make(map[int64][]byte, window),
 	}, headers, nil
 }
 
@@ -380,6 +428,24 @@ func (b *B2Backend) GetRangeWithHeaders(ctx context.Context, bucket, key string,
 // Buffering is intentional: it lets the caller consume blocks in order while
 // later ranged requests complete out of order, without buffering the object.
 func (b *B2Backend) fetchRange(ctx context.Context, bucket, key string, offset, length int64) ([]byte, map[string]string, error) {
+	if b.readBudget != nil {
+		select {
+		case b.readBudget <- struct{}{}:
+			defer func() { <-b.readBudget }()
+		case <-ctx.Done():
+			return nil, nil, context.Cause(ctx)
+		}
+	}
+	timeout := b.readTimeout
+	if timeout <= 0 {
+		timeout = defaultReadTimeout
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	return b.fetchRangeOnce(ctx, bucket, key, offset, length)
+}
+
+func (b *B2Backend) fetchRangeOnce(ctx context.Context, bucket, key string, offset, length int64) ([]byte, map[string]string, error) {
 	rangeHeader := fmt.Sprintf("bytes=%d-%d", offset, offset+length-1)
 	if b.cfDomain == "" {
 		// No CF domain configured — fall back to direct S3 range request.
@@ -460,6 +526,11 @@ func (b *B2Backend) fetchRange(ctx context.Context, bucket, key string, offset, 
 		return nil, nil, fmt.Errorf("cloudflare ignored Range header (status 200 for bytes %d-%d)", offset, offset+length-1)
 	}
 
+	if resp.StatusCode == http.StatusPartialContent {
+		if err := checkContentRange(resp.Header.Get("Content-Range"), offset, length); err != nil {
+			return nil, nil, fmt.Errorf("cloudflare range response: %w", err)
+		}
+	}
 	data, err := readRangeBody(resp.Body, length)
 	if err != nil {
 		return nil, nil, fmt.Errorf("cloudflare range response: %w", err)
@@ -486,6 +557,23 @@ func (b *B2Backend) fetchRangeVersion(ctx context.Context, bucket, key, versionI
 		return nil, nil, fmt.Errorf("direct S3 range response for version %s: %w", versionID, err)
 	}
 	return data, nil, nil
+}
+
+// checkContentRange rejects a 206 whose Content-Range names a different span
+// than the one requested. A missing header is tolerated (some edges omit it);
+// a present one must match exactly.
+func checkContentRange(header string, offset, length int64) error {
+	if header == "" {
+		return nil
+	}
+	var start, end int64
+	if _, err := fmt.Sscanf(header, "bytes %d-%d/", &start, &end); err != nil {
+		return fmt.Errorf("unparseable Content-Range %q", header)
+	}
+	if start != offset || end != offset+length-1 {
+		return fmt.Errorf("Content-Range %q does not match requested bytes %d-%d", header, offset, offset+length-1)
+	}
+	return nil
 }
 
 func readRangeBody(body io.Reader, expectedLength int64) ([]byte, error) {
@@ -523,6 +611,7 @@ type pipelinedRangeReader struct {
 	cancel      context.CancelCauseFunc
 	workers     *sync.WaitGroup
 	results     <-chan rangedBlockResult
+	slots       <-chan struct{}
 	pending     map[int64][]byte
 	closeOnce   sync.Once
 }
@@ -564,6 +653,7 @@ func (r *pipelinedRangeReader) nextBlockData() ([]byte, error) {
 		if data, ok := r.pending[r.nextBlock]; ok {
 			delete(r.pending, r.nextBlock)
 			r.nextBlock++
+			<-r.slots // block consumed: let the scheduler move the window forward
 			return data, nil
 		}
 		if err := r.pipelineError(); err != nil {

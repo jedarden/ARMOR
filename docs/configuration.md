@@ -95,6 +95,9 @@ for the ACL syntax.
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
 | `ARMOR_READ_CONCURRENCY` | No | `16` | Maximum concurrent ranged reads per backend read |
+| `ARMOR_READ_FETCH_SIZE` | No | `1048576` | Bytes per backend ranged request (65536–16777216). A network knob only: it never changes the stored block size, so existing objects are unaffected. Larger values amortise round-trip time; requests never overfetch past the requested span |
+| `ARMOR_READ_REQUEST_TIMEOUT` | No | `2m` | Positive Go duration (for example `90s`) bounding each backend ranged request. A request past it fails the whole read instead of holding it open |
+| `ARMOR_READ_BACKEND_LIMIT` | No | `64` | Cap on simultaneous ranged requests across all concurrent readers of the backend |
 | `ARMOR_CF_STALE_FALLBACK` | No | `true` | `false` or `0` disables re-reading a range directly from B2, at the version the request's HEAD saw, when Cloudflare served a different version (a stale edge copy after an overwrite). Only affects reads that would otherwise fail |
 | `ARMOR_CF_VERSION_PINNED` | No | `false` | `true` or `1` reads through Cloudflare by B2 file ID (`/b2api/v1/b2_download_file_by_id`) instead of by key, so each version has its own immutable URL. Requires that path to pass through the Cloudflare CNAME and cache rule |
 | `ARMOR_CACHE_MAX_ENTRIES` | No | `10000` | Object metadata cache entries |
