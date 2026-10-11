@@ -14,6 +14,10 @@ Entries before 0.1.1958 were written by hand on the Forgejo releases and are
 reproduced here; entries from 0.1.1958 on were reconstructed from git history
 on 2026-09-18 (bead armor-43ec803f).
 
+## 0.1.1987 (2026-10-10)
+
+- Automatic release of source `2ea1c42443be473369be7f9f5e405a2e47b8c8d5`.
+
 ## 0.1.1986 (2026-10-09)
 
 - Automatic release of source `b0421cffe0800424bfd3312b410af146693a11c2`.
