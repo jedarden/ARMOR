@@ -232,8 +232,8 @@ Returns:
 | `/dashboard/metrics` | GET | All metrics (JSON) |
 | `/dashboard/api/list?prefix=data/` | GET | List objects (JSON) |
 | `/dashboard/encryption-stats` | GET | Encryption statistics (JSON) |
-| `/dashboard/upload` | POST | Upload a file (`multipart/form-data`, field `file`; optional `key`, `content_type`) — 403 unless a dashboard credential is configured |
-| `/dashboard/download?key=path/to/file` | GET | Download an object — 403 unless a dashboard credential is configured |
+| `/dashboard/upload` | POST | Upload a file (`multipart/form-data`, field `file`; optional `key`, `content_type`) — 403 unless `ARMOR_DASHBOARD_CREDENTIAL` names a configured access key |
+| `/dashboard/download?key=path/to/file` | GET | Download an object — 403 unless `ARMOR_DASHBOARD_CREDENTIAL` names a configured access key |
 
 ### JSON List Endpoint
 
