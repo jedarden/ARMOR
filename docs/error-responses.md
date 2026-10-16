@@ -1,7 +1,7 @@
 # ARMOR Error Responses
 
-**Version:** 2.0
-**Date:** 2026-10-15
+**Version:** 2.1
+**Date:** 2026-10-16
 **Status:** Active
 
 ## Overview
@@ -31,6 +31,7 @@ ARMOR has three distinct error surfaces with different formats:
 
 - [S3-Facing Endpoints](#s3-facing-endpoints)
   - [Error Response Structure](#error-response-structure)
+  - [Client Messages and Log Detail](#client-messages-and-log-detail)
   - [Error Codes by HTTP Status](#error-codes-by-http-status)
   - [Client Disconnects and Request Deadlines](#client-disconnects-and-request-deadlines)
   - [Authentication Errors](#authentication-errors-http-403)
@@ -81,6 +82,43 @@ middleware context; `Resource` is always the request path.
 
 **Key Difference from AWS S3:** ARMOR includes CORS headers on error responses, while AWS S3 only includes them when explicitly configured via bucket CORS rules.
 
+### Client Messages and Log Detail
+
+The `<Message>` a client receives is never the string a handler passes to
+`writeError`. Both writers (`internal/server/handlers`'s `writeErrorCause` and
+`internal/server`'s `writeError`) resolve every error through the
+client-facing catalogue in `internal/server/s3errors`: the error code maps to
+a fixed client message, and the handler-supplied string becomes **log detail
+only**, recorded in the structured `s3_error` event alongside the request ID.
+
+The split is the contract:
+
+- **Client messages** state what the client did and what to change, and cite
+  the request ID (`Request ID: <id>.`, or where to find it when none was
+  assigned). They never contain Go identifiers, backend error text, or
+  operator-only remediation such as `/admin/` URLs.
+- **Log detail** carries the internal diagnostic (backend error, function
+  context, repair path) to the structured log, keyed by the same request ID
+  the client was told to quote.
+- **`SlowDown` is the deliberate exception:** its ADR-008 part-size guidance
+  is already a client contract, so non-empty detail passes through verbatim.
+- **`ClientDisconnect` (499) writes no body** — the client is gone.
+
+Two catalogue entries are dynamic: `AccessDenied` names the HTTP verb and the
+request path (`Access denied: GET access to /bucket/prefix. Check the
+credential permissions for this operation. Request ID: <id>.`), and
+`InvalidRange` explains the compressed-object alternative when the detail
+indicates compression. Every other code resolves statically; the authoritative
+message text lives in `internal/server/s3errors/catalog.go`, and
+`internal/server/s3errors/catalog_test.go` plus
+`internal/server/handlers/error_catalogue_callsite_test.go` hold it to the
+contract above (the latter walks every `writeError` call site and rejects
+client strings containing Go identifiers or `/admin/` paths).
+
+The status tables below therefore quote **log detail, not wire text**: the
+`Log Detail` column is what the handler recorded in the structured log; the
+client saw the catalogue message for that row's error code.
+
 ### Error Codes by HTTP Status
 
 Every S3 `<Code>` value `internal/server/handlers` can write to a client, in
@@ -112,7 +150,7 @@ going stale silently.
 
 #### HTTP 400 Bad Request
 
-| Error Code | Message | When Returned |
+| Error Code | Log Detail | When Returned |
 |------------|---------|---------------|
 | `InvalidRequest` | Unsupported POST operation | Unknown POST operations |
 | `InvalidRequest` | Missing partNumber | UploadPart without partNumber query param |
@@ -129,7 +167,7 @@ going stale silently.
 
 #### HTTP 403 Forbidden - Authentication Errors
 
-| Error Code | Message | Trigger |
+| Error Code | Log Detail | Trigger |
 |------------|---------|---------|
 | `MissingAuthenticationToken` | Missing Authentication Token | Authorization header is missing |
 | `InvalidAccessKeyId` | The AWS Access Key Id you provided does not exist | Unknown access key |
@@ -144,7 +182,8 @@ going stale silently.
 
 **Headers:** `Content-Type: application/xml` plus CORS headers (see above)
 
-**Example Response:**
+**Example Response** (client message from the catalogue; the log detail row
+above is what the structured `s3_error` event recorded):
 ```http
 HTTP/1.1 403 Forbidden
 Content-Type: application/xml
@@ -155,13 +194,13 @@ Access-Control-Allow-Headers: Authorization, Content-Type, Range, Content-Length
 <?xml version="1.0" encoding="UTF-8"?>
 <Error>
   <Code>SignatureDoesNotMatch</Code>
-  <Message>The request signature we calculated does not match the signature you provided</Message>
+  <Message>The request signature does not match. Check the signing key, region, and signed headers, then retry. Request ID: 0123456789ABCDEF.</Message>
 </Error>
 ```
 
 #### HTTP 404 Not Found
 
-| Error Code | Message | When Returned |
+| Error Code | Log Detail | When Returned |
 |------------|---------|---------------|
 | `NoSuchKey` | Object not found | GetObject/HeadObject on non-existent object |
 | `NoSuchBucket` | Bucket not found | GetBucketLocation/HeadBucket on non-existent bucket |
@@ -172,7 +211,7 @@ Access-Control-Allow-Headers: Authorization, Content-Type, Range, Content-Length
 
 #### HTTP 405 Method Not Allowed
 
-| Error Code | Message | When Returned |
+| Error Code | Log Detail | When Returned |
 |------------|---------|---------------|
 | `MethodNotAllowed` | Method X not allowed | HTTP method not supported for endpoint |
 
@@ -180,7 +219,7 @@ Access-Control-Allow-Headers: Authorization, Content-Type, Range, Content-Length
 
 #### HTTP 412 Precondition Failed
 
-| Error Code | Message | When Returned |
+| Error Code | Log Detail | When Returned |
 |------------|---------|---------------|
 | `PreconditionFailed` | Precondition failed | If-Match or If-Unmodified-Since condition not met, or a conditional PUT's `PutIfAbsent` loses the create-only race |
 
@@ -188,7 +227,7 @@ Access-Control-Allow-Headers: Authorization, Content-Type, Range, Content-Length
 
 #### HTTP 416 Range Not Satisfiable
 
-| Error Code | Message | When Returned |
+| Error Code | Log Detail | When Returned |
 |------------|---------|---------------|
 | `InvalidRange` | Invalid range: [details] | Malformed Range header or out of bounds (GetObject, V3 multipart range reads) |
 | `InvalidRange` | Range reads unsupported on compressed objects | Byte-range request against a zstd/gzip/zlib-compressed object |
@@ -201,7 +240,7 @@ Access-Control-Allow-Headers: Authorization, Content-Type, Range, Content-Length
 
 #### HTTP 500 Internal Server Error
 
-| Error Code | Message | When Returned |
+| Error Code | Log Detail | When Returned |
 |------------|---------|---------------|
 | `InternalError` | Failed to [operation]: [details] | Backend/cryptographic failures (key management, encryption, B2 operations) |
 
@@ -209,7 +248,7 @@ Access-Control-Allow-Headers: Authorization, Content-Type, Range, Content-Length
 
 #### HTTP 501 Not Implemented
 
-| Error Code | Message | When Returned |
+| Error Code | Log Detail | When Returned |
 |------------|---------|---------------|
 | `NotImplemented` | The storage backend does not support atomic conditional/append-only writes | A conditional PUT (`If-None-Match: *`) or append-only write targets a backend without atomic create-only support |
 
@@ -222,7 +261,7 @@ the plain-text readiness probe.
 
 **S3 XML errors:**
 
-| Error Code | Message | When Returned |
+| Error Code | Log Detail | When Returned |
 |------------|---------|---------------|
 | `RequestTimeout` | ARMOR request deadline exceeded | ARMOR's own request deadline expires while a response can still be written. Counted in `armor_errors_total`. |
 | `SlowDown` | [part-1-pinning deferral message] | UploadPart defers an out-of-order part until part 1 arrives and pins the block size |
@@ -258,7 +297,7 @@ failures remain `InternalError` responses as described below.
 
 All authentication/authorization errors return HTTP 403 with CORS headers. The ten authentication error codes are:
 
-| Error Code | Message | Status Code | CORS Headers |
+| Error Code | Log Detail | Status Code | CORS Headers |
 |------------|---------|-------------|--------------|
 | `MissingAuthenticationToken` | Missing Authentication Token | 403 | ✓ |
 | `InvalidAccessKeyId` | The AWS Access Key Id you provided does not exist | 403 | ✓ |
@@ -330,7 +369,7 @@ ARMOR's backend (B2/Cloudflare R2) may return errors that are wrapped in `Intern
 | Storage full | 500 InternalError |
 | Rate limited | 500 InternalError |
 
-**Note:** Backend-specific error details are logged but not exposed to clients in error messages for security reasons.
+**Note:** Backend-specific error details are logged but not exposed to clients in error messages for security reasons — the client-message catalogue (see [Client Messages and Log Detail](#client-messages-and-log-detail)) enforces this for every code, not just backend failures.
 
 ---
 
@@ -554,9 +593,14 @@ Method not allowed
 <?xml version="1.0" encoding="UTF-8"?>
 <Error>
   <Code>AccessDenied</Code>
-  <Message>Invalid credentials</Message>
+  <Message>Access denied: POST access to /admin/presign. Check the credential permissions for this operation. Request ID: 0123456789ABCDEF.</Message>
+  <RequestId>0123456789ABCDEF</RequestId>
 </Error>
 ```
+
+(`Invalid credentials` is the log detail the handler supplied; the client
+message comes from the catalogue — see
+[Client Messages and Log Detail](#client-messages-and-log-detail).)
 
 **Error Responses (400 Bad Request):**
 ```
@@ -878,11 +922,12 @@ This is handled by Go's `http.Error()` function.
 <?xml version="1.0" encoding="UTF-8"?>
 <Error>
   <Code>AccessDenied</Code>
-  <Message>Invalid credentials</Message>
+  <Message>Access denied: POST access to /admin/presign. Check the credential permissions for this operation. Request ID: 0123456789ABCDEF.</Message>
+  <RequestId>0123456789ABCDEF</RequestId>
 </Error>
 ```
 
-This is because `/admin/presign` calls the server's `writeError` helper, which uses the S3 error format.
+This is because `/admin/presign` calls the server's `writeError` helper, which uses the S3 error format. The `<Message>` text comes from the client-message catalogue; the handler's detail string (`Invalid credentials`) goes only to the structured log.
 
 #### 4. Response Format Variation Within Endpoints
 
@@ -956,25 +1001,30 @@ ARMOR has two `writeError` functions that handle S3 error responses:
 1. **`internal/server/server.go`'s `writeError`** - Handles authentication/authorization errors and admin-endpoint auth failures
 2. **`internal/server/handlers/handlers.go`'s `writeError`** - Handles S3 operation errors; delegates to `writeErrorCause`, which also reclassifies the response as `RequestTimeout` or a client disconnect, logs a structured `s3_error` event, and increments `armor_errors_total{code,operation}` (or `armor_client_disconnects_total{operation}` for disconnects)
 
-Both implementations build the same XML shape:
+Both implementations resolve the error through the client-message catalogue
+before writing anything (see
+[Client Messages and Log Detail](#client-messages-and-log-detail)):
 
 ```go
-func writeError(w http.ResponseWriter, code, message string, statusCode int) {
-    w.Header().Set("Content-Type", "application/xml")
-    w.WriteHeader(statusCode)
-    var codeBuf, msgBuf bytes.Buffer
-    xml.EscapeText(&codeBuf, []byte(code))
-    xml.EscapeText(&msgBuf, []byte(message))
-    fmt.Fprintf(w, `<?xml version="1.0" encoding="UTF-8"?>`+"\n<Error>\n  <Code>%s</Code>\n  <Message>%s</Message>\n</Error>",
-        codeBuf.String(), msgBuf.String())
-}
+errorEntry := s3errors.Resolve(code, s3errors.Request{
+    Method: r.Method, Path: r.URL.Path,
+    RequestID: requestID, Status: statusCode,
+}, message) // message becomes LogDetail, never the wire text
+
+w.Header().Set("Content-Type", "application/xml")
+w.WriteHeader(statusCode)
+var codeBuf, msgBuf bytes.Buffer
+xml.EscapeText(&codeBuf, []byte(code))
+xml.EscapeText(&msgBuf, []byte(errorEntry.ClientMessage))
+fmt.Fprintf(w, `<?xml version="1.0" encoding="UTF-8"?>`+"\n<Error>\n  <Code>%s</Code>\n  <Message>%s</Message>\n</Error>",
+    codeBuf.String(), msgBuf.String())
 ```
 
-**Note:** This code duplication is a maintainability concern (both functions must be updated together), but is not currently a functional inconsistency.
+**Note:** This code duplication is a maintainability concern (both functions must be updated together), but is not currently a functional inconsistency. The catalogue itself is shared, so the two writers cannot drift on client message text.
 
 **Observability (ADR-008):** every call through `writeError`/`writeErrorCause`
 logs a structured `s3_error` event (code, operation, bucket, key, request ID,
-status, message) and increments the `armor_errors_total{code,operation}`
+status, log detail) and increments the `armor_errors_total{code,operation}`
 counter, giving operators a code-granular axis beyond the generic
 request/status counter.
 
@@ -991,6 +1041,9 @@ For S3-compatible auth errors, admin endpoints call the XML `writeError()` funct
 ```go
 s.writeError(w, "AccessDenied", "Invalid credentials", 403)
 ```
+
+Here `"Invalid credentials"` is the log-detail argument; the client receives
+the catalogue's `AccessDenied` message (naming the verb and path).
 
 ### Performance
 
@@ -1026,6 +1079,8 @@ Error-response behavior is exercised by:
 - `internal/server/content_type_consistency_test.go` - Content-Type verification
 - `internal/server/error_response_verification_test.go` - Comprehensive error verification
 - `internal/server/auth_test.go` - Authentication unit tests
+- `internal/server/s3errors/catalog_test.go` - Client-message catalogue: message/log-detail separation, `AccessDenied` verb+path, clock-skew and compressed-range guidance
+- `internal/server/handlers/error_catalogue_callsite_test.go` - AST guard: walks every `writeError`/`writeErrorCause`/`writeBackendError` call site and rejects client strings containing Go identifiers or `/admin/` paths
 - `internal/docsindex` - Verifies every S3 error code `internal/server/handlers` can emit appears in this document, and no documented code goes unemitted
 
 **Run tests:**
@@ -1038,6 +1093,9 @@ go test -v -run TestContentTypeConsistencyAcrossAllRejections ./internal/server/
 
 # Run comprehensive error verification
 go test -v -run TestComprehensiveErrorVerification ./internal/server/
+
+# Run the client-message catalogue tests
+go test ./internal/server/s3errors/
 
 # Run the doc/code error-code parity check
 go test ./internal/docsindex/
