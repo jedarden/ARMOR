@@ -441,7 +441,7 @@ func TestCLIReferenceStartupValidationExitsOne(t *testing.T) {
 			env: append(strings.Split(credEnv, ","), "ARMOR_MEK="+validMEK,
 				"VERIFIER_MEK_RING=zzzz"),
 			args:       []string{bucketFlag},
-			wantStderr: []string{"Invalid MEK ring entry"},
+			wantStderr: []string{"invalid MEK ring entry"},
 		},
 		{
 			name:       "valid credentials and MEK but no bucket scope",

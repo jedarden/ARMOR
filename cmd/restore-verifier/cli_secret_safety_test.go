@@ -75,7 +75,7 @@ func TestVerifierCLIReferenceSecretsNeverReachOutput(t *testing.T) {
 		if res.exitCode != 1 {
 			t.Errorf("malformed MEK ring: exit = %d, want 1\nstderr: %s", res.exitCode, res.stderr)
 		}
-		if !strings.Contains(res.stderr, "Invalid MEK ring entry") {
+		if !strings.Contains(res.stderr, "invalid MEK ring entry") {
 			t.Errorf("malformed MEK ring: stderr missing the documented diagnostic:\n%s", res.stderr)
 		}
 		assertVerifierSecretAbsent(t, badEntry, "malformed MEK ring", res)
