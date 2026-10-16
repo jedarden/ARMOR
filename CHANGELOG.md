@@ -20,6 +20,14 @@ Entries before 0.1.1958 were written by hand on the Forgejo releases and are
 reproduced here; entries from 0.1.1958 on were reconstructed from git history
 on 2026-09-18 (bead armor-43ec803f).
 
+## 0.1.1994 (2026-10-16)
+
+- fix(release): refuse cuts with stale local tags (armor-5f0b4d23)
+- docs(plan): name the release script as VERSION owner (armor-5f0b4d23)
+- docs(release): explain conservative sensor admission (armor-5f0b4d23)
+- docs(release): record 0.1.1993 publication boundary (armor-5f0b4d23)
+- docs(release): fold unpublished cuts into image-backed 0.1.1993 (armor-5f0b4d23)
+
 ## 0.1.1993 (2026-10-16)
 
 - test(cli): align MEK diagnostics with lint fix (armor-5f0b4d23)
