@@ -1,0 +1,22 @@
+# ARMOR Python gate inventory — the single edit point.
+#
+# One suite per line (blank lines and #-comments ignored), executed in file
+# order by the pytest leg of scripts/definition-of-done.sh in BOTH --fast
+# and full mode. Adding a gate suite is one edit here; a new tests/test_*.py
+# file additionally needs a Suites row in tests/README.md, which
+# tests/test_gate_inventory.py forces for every pytest file in the tree.
+# That suite also holds this file, the script's invocation, the AGENTS.md
+# repository map and gate bullet, the script's own header, and the
+# scripts/README.md gate section to each other, so no copy can drift.
+tests/test_drift_check.py
+tests/test_toolchain_parity.py
+tests/test_compose_version_parity.py
+tests/test_image_contract_gate.py
+tests/test_cut_release.py
+tests/test_restore_verifier_inventory.py
+tests/test_restore_verifier_scope_validation.py
+tests/test_prohibited_constructs.py
+tests/test_gate_inventory.py
+tests/test_documentation_status.py
+tests/test_publish_release.py
+tests/test_docs_code_blocks.py

@@ -3,7 +3,8 @@
 Every suite under `tests/`: what it covers, the command that runs it, what it
 needs, and whether CI runs it. The local gate is
 [scripts/definition-of-done.sh](../scripts/definition-of-done.sh) (`make dod`
-is the fast lane); CI is the `armor-build` WorkflowTemplate in iad-ci — its
+is the hermetic fast lane — no network, no browser; `make dod-full` the
+full gate); CI is the `armor-build` WorkflowTemplate in iad-ci — its
 manifest lives in `declarative-config` at
 `k8s/iad-ci/argo-workflows/armor-workflowtemplate.yml`.
 
@@ -30,7 +31,7 @@ on NixOS hosts. The definition-of-done script makes the same choice.
 | `tests/test_restore_verifier_inventory.py` | Inventory pin for the restore-verifier fleet: `scripts/find-armor-deployments.py` classification fixtures, live declarative-config parity, and the five prose surfaces (AGENTS.md, ADR-004, deployment guide, alerting runbook, plan.md) held to the restore-verifier and five-primary-ARMOR goldens | `python3 -m pytest tests/test_restore_verifier_inventory.py -q` | python3 + pytest; reads the local `~/declarative-config` checkout when available; no network or credentials | Not in armor-build. Part of the local gate (both `--fast` and full) |
 | `tests/test_restore_verifier_scope_validation.py` | Scope-contract tests for `scripts/validate-restore-verifier-scopes.py`: the ADR-004 one-Deployment-per-bucket+MEK+credential contract over synthetic declarative-config trees; never reads the live `~/declarative-config` | `python3 -m pytest tests/test_restore_verifier_scope_validation.py -q` | python3 + pytest; network-free | Not in armor-build. Part of the local gate (both `--fast` and full) |
 | `tests/test_prohibited_constructs.py` | Replays each fixture in `tests/fixtures/prohibited-constructs/` into a scratch tree and proves `scripts/prohibited-constructs-gate.sh` fails on it; pins the passing complement (pinned/digest/variable tags, comment lines) and the clean live tree | `python3 -m pytest tests/test_prohibited_constructs.py -q` | python3 + pytest; network-free | Not in armor-build. Part of the local gate (both `--fast` and full) |
-| `tests/test_gate_inventory.py` | The documented-inventory parity pin: every copy of the Python gate-suite list (the AGENTS.md repository map and gate section, the `definition-of-done.sh` header, the `scripts/README.md` gate section, this table) is held to the pytest invocation in `scripts/definition-of-done.sh` | `python3 -m pytest tests/test_gate_inventory.py -q` | python3 + pytest; network-free | Not in armor-build. Part of the local gate (both `--fast` and full) |
+| `tests/test_gate_inventory.py` | The gate-inventory single-edit-point pin: `tests/gate-suites.txt` is the only copy of the gate-suite list, `scripts/definition-of-done.sh` executes exactly the file's contents, every gate suite keeps a row in this table (and every row keeps its file), and the surfaces that used to carry hand-copied lists (the AGENTS.md repository map and gate section, the `definition-of-done.sh` header, the `scripts/README.md` gate section) point at the file instead of enumerating suites | `python3 -m pytest tests/test_gate_inventory.py -q` | python3 + pytest; network-free | Not in armor-build. Part of the local gate (both `--fast` and full) |
 | `tests/test_documentation_status.py` | The release-status claim gate: every operator surface links the evidence register, pending capabilities cannot be described as release-verified/fully supported, and active regressions cannot be reduced to historical-only notes | `python3 -m pytest tests/test_documentation_status.py -q` | python3 + pytest; network-free | Not in armor-build. Part of the local gate (both `--fast` and full); the gate script also runs in the release gate |
 | `tests/test_publish_release.py` | Contract tests for `scripts/publish_release.py`: annotated tag + Forgejo/GitHub release publishing, idempotency (re-run refreshes, never duplicates), refusal to move a tag, version/tag consistency across every call, digest-table coverage of exactly the published artifacts, and rejection of floating tags; every HTTP call is faked | `python3 -m pytest tests/test_publish_release.py -q` | python3 + pytest; network-free | Yes — the `go-test` step runs it inside `ARMOR_RELEASE_RACE=1 ./scripts/release-gate.sh`, and the `Dockerfile` builder stage runs the same gate during image builds (armor-562d57c9). Part of the local gate (both `--fast` and full) |
 | `tests/test_docs_code_blocks.py` | Scans every `docs/**/*.md` file (excluding `docs/archive/`) for the secret-scrubber placeholder `REMOVED-NOT-A-SECRET-VALUE` inside a fenced code block — a corrupted copy-paste command (armor-3a98d0b0) | `python3 -m pytest tests/test_docs_code_blocks.py -q` | python3 + pytest; network-free | Not in armor-build. Part of the local gate (both `--fast` and full) |
@@ -48,8 +49,9 @@ described its helper pattern. Nothing ran it, and it broke pytest collection
 when its helpers drifted, so it was removed in commit `663f81c2`; the guides
 are retrievable from git history, e.g.
 `git show 663f81c2^:tests/TEST_TABLE_GUIDE.md`. The pytest targets in this
-directory today are the `test_*.py` files in the table above — and
-`tests/test_gate_inventory.py` fails the local gate if that table, or any
-other documented copy of the gate-suite list, drifts from what
-[scripts/definition-of-done.sh](../scripts/definition-of-done.sh) actually
-runs.
+directory today are the gate suites enumerated in
+`tests/gate-suites.txt` (the single edit point) plus the manually-run
+`tests/test_s3_basic_operations.py` — and `tests/test_gate_inventory.py`
+fails the local gate if that table, the inventory file, or the
+[scripts/definition-of-done.sh](../scripts/definition-of-done.sh)
+invocation drift from each other.

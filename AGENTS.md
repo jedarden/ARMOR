@@ -25,7 +25,7 @@ The release-image boundary and known limitations are maintained in
 | `cmd/armor` | The server binary and its subcommands (`serve`, `demo`, `check`, `decrypt`, `verify`, `migrate`, `client-config`, `version`, `help`) |
 | `cmd/restore-verifier`, `cmd/armor-fleet` | Companion binaries (restore verification harness, fleet console). The old offline verifier `cmd/verify-objects` was deleted 2026-09-20 — stale against fingerprinted DEKs and v3, and fully folded into `armor verify` (armor-da67956d). The current source has focused coverage for ring fallback and v3 manifest/sidecar verification; release and live DR evidence remains bounded by [docs/release-status.md](docs/release-status.md) |
 | `internal/` | All packages: `server` (S3 + admin handlers), `crypto`, `backend`, `config`, `keymanager`, `manifest`, `acl`, `canary`, `dashboard`, `presign`, `provenance`, `replication`, `restoreverifier`, `metrics`, `logging`, `b2keys`, `docsindex`, `version`, `testutil` |
-| `tests/` | Go test suites outside the package tree: `integration/` (real B2, build-tagged), `aws-cli-compatibility/`, `docker-demo-smoke/`, `fixtures/`; plus the Python gate suites (`test_drift_check.py`, `test_toolchain_parity.py`, `test_compose_version_parity.py`, `test_image_contract_gate.py` — the Dockerfile default-image contract pin, `test_cut_release.py` — the cut-release isolated-repo workflow pin, `test_restore_verifier_inventory.py` — the restore-verifier fleet-inventory doc pin, `test_restore_verifier_scope_validation.py`, `test_prohibited_constructs.py`, `test_gate_inventory.py` — the documented-inventory parity pin, `test_documentation_status.py` — the release-status claim gate, `test_publish_release.py` — the release-publisher contract suite, also run by the release gate, and `test_docs_code_blocks.py` — the scrubber-placeholder-in-fenced-code-block pin) |
+| `tests/` | Go test suites outside the package tree: `integration/` (real B2, build-tagged), `aws-cli-compatibility/`, `docker-demo-smoke/`, `fixtures/`; plus the Python gate suites, enumerated in `tests/gate-suites.txt` — the single edit point for the gate inventory, held to every documented surface by `tests/test_gate_inventory.py` (per-suite detail in the `tests/README.md` Suites table) |
 | `scripts/` | Operator tooling: `definition-of-done.sh`, `release-gate.sh`, `cut-release.sh`, drift check, starvation watch. See `scripts/README.md` |
 | `docs/` | ADRs, runbooks, notes, plan. `docs/plan/plan.md` is the architecture and phase record |
 | `config/drift-config.json` | Fleet drift-check configuration |
@@ -43,8 +43,8 @@ Deployment manifests do **not** live here. They live in
 go build ./...                       # must pass on every commit
 go vet ./...
 go test ./... -short                 # unit suite; integration tests skip without credentials
-scripts/definition-of-done.sh --fast # build + vet + python script tests (the local gate)
-scripts/definition-of-done.sh        # --fast plus `go test ./... -short` and per-page Agentation browser mounts (dashboard, demo, fleet)
+scripts/definition-of-done.sh --fast # hermetic local gate: build + vet + script tests + CLI contract (-short); no network, no browser; per-stage timings
+scripts/definition-of-done.sh        # full gate: --fast plus `go test ./... -short` and per-page Agentation browser mounts (dashboard, demo, fleet); `make dod-full`
 scripts/cli-contract-gate.sh         # executable CLI/companion contract parity gate
 scripts/release-gate.sh              # the gate CI and the Dockerfile run (crypto, backend, canary, handlers, config, cmd, image contract, publisher contract tests)
 make build                           # every cmd/ binary into bin/ with the version injected
@@ -82,19 +82,14 @@ make help                            # the rest of the targets
   default the code declares, or the row omits a bound or accepted value the
   code's validation enforces. Add or update the
   configuration-reference row in the same change as the code.
-- Python: `tests/test_drift_check.py`, `tests/test_toolchain_parity.py`,
-  `tests/test_compose_version_parity.py`,
-  `tests/test_image_contract_gate.py`, `tests/test_cut_release.py`,
-  `tests/test_restore_verifier_inventory.py`,
-  `tests/test_restore_verifier_scope_validation.py`,
-  `tests/test_prohibited_constructs.py`, `tests/test_gate_inventory.py`,
-  `tests/test_documentation_status.py`, `tests/test_publish_release.py`, and
-  `tests/test_docs_code_blocks.py`
-  (all run by the definition of done —
-  the inventory pin holds these documented lists, the `scripts/README.md`
-  gate section, the script's own header and the `tests/README.md` table to
-  the pytest invocation in `scripts/definition-of-done.sh`; the publisher
-  contract suite also runs in the release gate), via `python3 -m pytest`
+- Python: the gate suites enumerated in `tests/gate-suites.txt` — the
+  single edit point for the gate inventory; every listed suite runs in both
+  the `--fast` and the full definition of done
+  (`tests/test_gate_inventory.py` holds the inventory file, the script's
+  pytest invocation, the AGENTS.md map row and this bullet, the script's
+  own header, the `scripts/README.md` gate section, and the
+  `tests/README.md` Suites table to each other; the publisher contract
+  suite also runs in the release gate), via `python3 -m pytest`
   (the `pytest` shim has a stale shebang on NixOS hosts).
 - Prohibited deployment constructs are machine-enforced:
   `scripts/prohibited-constructs-gate.sh` fails the tree on `.github/workflows/*`

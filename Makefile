@@ -1,5 +1,5 @@
 # ARMOR Makefile
-# Targets: build, toolchain-check, toolchain-parity, compose-version-parity, image-contract-gate, test, test-integration, lint, docker, compat, test-docker-demo, dod, release, clean, help
+# Targets: build, toolchain-check, toolchain-parity, compose-version-parity, image-contract-gate, test, test-integration, lint, docker, compat, test-docker-demo, dod, dod-full, release, clean, help
 
 VERSION ?= $(shell cat VERSION)
 
@@ -33,7 +33,7 @@ BINARIES := $(notdir $(wildcard $(CMDDIR)/*))
 # Docker build arguments
 DOCKER_BUILD := docker build --build-arg VERSION=$(VERSION)
 
-.PHONY: all build toolchain-check toolchain-parity compose-version-parity image-contract-gate test test-integration lint docker compat compat-boto3 test-docker-demo dod release clean help
+.PHONY: all build toolchain-check toolchain-parity compose-version-parity image-contract-gate test test-integration lint docker compat compat-boto3 test-docker-demo dod dod-full release clean help
 
 all: build test lint
 
@@ -116,9 +116,13 @@ test-docker-demo:
 	@echo "Running Docker demo smoke test (requires Docker)..."
 	CGO_ENABLED=$(CGO_ENABLED) $(GO) test -v $(TESTDIR)/docker-demo-smoke/...
 
-## dod: Run the repository definition of done (fast lane: build, vet, script tests)
+## dod: Run the repository definition of done, fast lane (hermetic: build, vet, script tests, CLI contract; no network, no browser)
 dod:
 	scripts/definition-of-done.sh --fast
+
+## dod-full: Run the repository definition of done, full gate (adds go test -short and the Agentation browser mount smoke; needs Chromium and esm.sh)
+dod-full:
+	scripts/definition-of-done.sh
 
 ## release: Cut a release commit (VERSION + compose.yaml bump + CHANGELOG entry). Usage: make release V=0.1.1970
 release:
