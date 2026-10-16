@@ -490,7 +490,7 @@ walk-completion gate.
 ### Status
 **Rotation COMPLETE at the key layer and (per backend evidence) at the
 object layer; a full verification sweep is confirming the last of it — see
-[2026-09-13](#2026-09-13-backend-truth-the-manifest-census-was-blind) below,
+[2026-09-13](#2026-09-13-backend-truth--the-manifest-census-was-blind) below,
 which supersedes the pre-walk snapshot that follows.** OpenBao holds the new
 active MEK (fp `c2d3b3f6dd36f716`), the old key (`d8a7f8e55e33e399`) is the
 sole ring entry, the pod is on `0.1.1965` with the ring loaded, escrow v1

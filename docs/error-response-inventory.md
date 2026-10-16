@@ -200,5 +200,5 @@ Internal errors indicate server-side failures during request processing.
 
 ## Related Documentation
 
-- [Error Response Quality and Performance](/home/coding/ARMOR/docs/bf-5vghg8-error-response-quality-and-performance.md)
-- [ARMOR Architecture](/home/coding/ARMOR/README.md)
+- [Error Responses](error-responses.md)
+- [ARMOR Architecture](../README.md)

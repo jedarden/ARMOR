@@ -1,425 +1,169 @@
 # ARMOR
 
-[![release](https://img.shields.io/github/v/release/jedarden/ARMOR)](https://github.com/jedarden/ARMOR/releases/latest)
-
 **Authenticated Range-readable Managed Object Repository**
 
-ARMOR is an S3-compatible proxy server that encrypts data before storing it in
-[Backblaze B2](https://www.backblaze.com/cloud-storage) and serves downloads
-through Cloudflare for zero-egress cost. ARMOR exposes a tested S3 protocol
-surface, not a guarantee about every client or every AWS S3 operation. The
-source tree has focused test coverage for SigV4 authentication, plain and
-byte-range reads, prefix-scoped listing, overwrite, deletion, single-PUT
-writes, and the documented multipart cases. That coverage is not a claim that
-the corresponding capability currently works in every release or deployment.
-The image compatibility gate additionally exercises the configured AWS CLI,
-rclone, boto3, DuckDB/httpfs, litestream, and barman legs when it builds a
-release image. The release and deployment evidence boundary, known
-limitations, and per-client matrix are in
-[release status](docs/release-status.md) and
-[multipart compatibility](docs/multipart-client-compatibility.md).
-
-- **Zero-knowledge encryption** — data is encrypted before it leaves ARMOR; B2 only ever stores ciphertext (guaranteed for envelope v2/v3 objects; legacy v1 objects must be migrated first — see [Security model](#security-model))
-- **Zero egress fees** — downloads route through Cloudflare via the Bandwidth Alliance
-- **Seekable encryption** — AES-256-CTR with 64 KB blocks is designed to enable byte-range reads without decrypting the whole file; current range status is in [release status](docs/release-status.md)
-- **DuckDB-compatible** — query encrypted Parquet files with column pruning and predicate pushdown intact
-- **Multi-key routing** — different master keys for different path prefixes; automatic key selection is covered by tests, while named-key reads remain an active regression boundary (see [release status](docs/release-status.md))
-
-## Project status and contributing
-
-ARMOR is private infrastructure in production use. The source of truth is the
-private Forgejo instance at `git.ardenone.com/jedarden/ARMOR`; the GitHub
-repository `jedarden/ARMOR` is a read-only mirror updated on every commit.
-File issues on GitHub (the public surface); code changes land through Forgejo.
-Build, test, work-tracking and release conventions: [AGENTS.md](AGENTS.md).
-
-## Release status and known limitations
-
-`VERSION` identifies the source release currently described by this checkout;
-it does not prove that every fleet deployment runs that image. The repository
-has tests for fingerprinted-DEK decoding, v3 multipart reads, SigV4 (including
-AWS CLI-shaped requests), presigned/share GETs, and range reads, but those are
-coverage results rather than currently working-support evidence. Active P0
-regression records and their follow-up implementation beads leave named-key
-reads, wrapped-DEK decoding, multipart sidecar/DR verification, AWS CLI SigV4,
-presigned GET, and range reads unverified for an operator workflow. The
-[release-status register](docs/release-status.md) records the current evidence
-and cites the existing beads; it is the source of truth for promotion. Range
-correctness and a repeatable local large-object performance baseline are
-recorded in the [large-object range-read baseline](docs/performance/large-object-range-read-baseline.md).
-The [production B2/Cloudflare qualification](docs/performance/production-b2-cloudflare-2026-09-28.md)
-defines the repeatable workload, but its first live run produced no valid
-throughput numbers because the representative deployment did not complete the
-large-object verification GET. Do not infer a full AWS S3 contract or
-production performance from the tested operation matrix.
-See the [release-status and known-limitations register](docs/release-status.md)
-for the exact boundary and promotion evidence.
+ARMOR is an S3-compatible proxy. It encrypts objects before storing them in
+Backblaze B2 and serves reads through a Cloudflare domain. Clients use ARMOR
+credentials and an S3 endpoint; ARMOR holds the B2 credentials and master
+encryption key (MEK). Its source tests cover a scoped set of S3 operations,
+including single-PUT writes, reads, listing, and documented multipart cases.
 
 ## Install
 
-**Container image:**
+Install Docker with the Compose plugin, then clone this repository for its
+[`compose.yaml`](compose.yaml) and [`.env.example`](.env.example):
 
 ```bash
-docker pull ghcr.io/jedarden/armor:<version>
+git clone https://github.com/jedarden/ARMOR.git
+cd ARMOR
 ```
 
-`<version>` is a release counter such as `0.1.1970`; the current one is in the
-[`VERSION`](VERSION) file. Only pinned version tags are published — there is no
-`latest` or other floating tag.
-
-**From source** (Go 1.25+ per `go.mod`; contributors read [AGENTS.md](AGENTS.md)):
+Select an image tag that has been published. The [release-status
+register](docs/release-status.md) records `0.1.1975` as the latest published
+tag on its 2026-10-15 status date; check the releases before selecting a newer
+one. The checkout's [`VERSION`](VERSION) and Compose default can be ahead of
+published images. For the commands below, set the tag once:
 
 ```bash
-git clone https://github.com/jedarden/ARMOR.git && cd ARMOR
-make build                             # every cmd/ binary into bin/, version injected from VERSION
-scripts/definition-of-done.sh --fast   # build + vet + script tests, the local gate
+export ARMOR_VERSION=0.1.1975
+docker pull ghcr.io/jedarden/armor:"$ARMOR_VERSION"
 ```
 
-**Platform note:** published images are built for linux/amd64 only. On Apple
-Silicon, add `--platform linux/amd64` to `docker pull` and `docker run`.
+The published image targets linux/amd64. On Apple Silicon, set
+`DOCKER_DEFAULT_PLATFORM=linux/amd64` before pulling or starting Compose.
+To build from source instead, use Go as specified by `go.mod` and `make build`;
+[AGENTS.md](AGENTS.md) has the build and test commands.
 
-## Quick Start
+## 60-second demo
 
-Every release publishes `ghcr.io/jedarden/armor:<version>` — public, no
-credentials needed, and the only registry this document uses. (The same tags
-also go to a private Docker Hub namespace for fleet deployments, where
-anonymous pulls return 401; companion images are internal-only.)
-
-### The 60-second demo (Docker Compose)
-
-The tracked [`compose.yaml`](compose.yaml) runs the demo — ARMOR against a
-temporary filesystem backend with fixed, non-secret credentials; no B2,
-Cloudflare or AWS account needed:
+This profile stores data in a temporary filesystem and uses fixed demo
+credentials. It needs no B2 or Cloudflare account.
 
 ```bash
-docker compose --profile demo up -d
-docker compose --profile demo logs -f armor-demo   # watch it start
-docker compose --profile demo down                 # stop and remove
+docker compose --profile demo up -d armor-demo
+docker compose --profile demo ps
+docker run --rm --network container:$(docker compose --profile demo ps -q armor-demo) \
+  -e AWS_ACCESS_KEY_ID=armor -e AWS_SECRET_ACCESS_KEY=armor-demo-secret \
+  -e AWS_DEFAULT_REGION=us-east-1 amazon/aws-cli:2.29.0 \
+  --endpoint-url http://127.0.0.1:9000 s3 ls
+docker compose --profile demo down
 ```
 
-Compose publishes the demo's S3 port on the host (`9000`); the connectivity
-check below also works from the host with a local AWS CLI. For the container
-form, swap `container:armor-demo` for the compose container's ID:
-`container:$(docker compose --profile demo ps -q armor-demo)`.
+The demo exposes port 9000 and sets a fixed demo admin token. Its temporary
+MEK is lost when the process stops, so use the production steps for durable
+objects.
 
-### Local demo (plain Docker)
+## Production
 
-Start ARMOR in the background:
+These steps run one B2-backed instance with its S3 API on port 9000 and its
+admin API bound to host loopback on port 9001. Keep the chosen image tag in
+your shell or set `ARMOR_VERSION` in `.env`.
 
-```bash
-docker run -d --name armor-demo -p 9000:9000 -p 9001:9001 \
-  ghcr.io/jedarden/armor:<version> demo --listen 0.0.0.0:9000 --admin-listen 0.0.0.0:9001
-```
+1. **Prepare B2.** Create a bucket and an application key with access to it.
+   Record the bucket name, region, application key ID, and application key.
+   ARMOR uses the B2 S3 API for writes. For Cloudflare reads, configure the
+   bucket for public ciphertext downloads as described in the
+   [Cloudflare setup guide](docs/cloudflare-setup.md).
+2. **Prepare Cloudflare.** Create a proxied CNAME to the bucket's B2 download
+   hostname and set up the read path in the [Cloudflare setup
+   guide](docs/cloudflare-setup.md). Record the Cloudflare hostname without
+   `https://`. Set it as `ARMOR_CF_DOMAIN`. If you leave that variable empty,
+   ARMOR reads directly from B2 and B2 egress charges apply.
+3. **Create the environment file and keys.** The following generates a random
+   32-byte MEK and a separate admin bearer token directly into the ignored
+   `.env` file; it prints neither value. Back up the MEK securely before
+   writing objects. Losing it makes existing objects unreadable.
 
-Then verify connectivity with the official AWS CLI container (succeeds even
-when the bucket is empty) — and create and list the demo bucket the same way
-(`s3 mb s3://demo-bucket`, then `s3 ls s3://demo-bucket`):
+   ```bash
+   umask 077
+   cp -n .env.example .env
+   python3 - <<'PY'
+   from pathlib import Path
+   import secrets
 
-```bash
-docker run --rm --network container:armor-demo -e AWS_ACCESS_KEY_ID=armor \
-  -e AWS_SECRET_ACCESS_KEY=armor-demo-secret -e AWS_DEFAULT_REGION=us-east-1 \
-  amazon/aws-cli:2.29.0 --endpoint-url http://127.0.0.1:9000 s3 ls
-```
+   path = Path('.env')
+   values = path.read_text()
+   for name in ('ARMOR_MEK', 'ARMOR_ADMIN_TOKEN'):
+       values = values.replace(f'{name}=\n', f'{name}={secrets.token_hex(32)}\n', 1)
+   path.write_text(values)
+   PY
+   ```
 
-With the AWS CLI on the host, the check is equivalently
-`AWS_ACCESS_KEY_ID=armor AWS_SECRET_ACCESS_KEY=armor-demo-secret aws
---endpoint-url http://localhost:9000 s3 ls`; tear down with
-`docker rm -f armor-demo`.
+4. **Fill in the B2 and client credentials** in `.env`. Set
+   `ARMOR_B2_REGION`, `ARMOR_B2_ACCESS_KEY_ID`, `ARMOR_B2_SECRET_ACCESS_KEY`,
+   `ARMOR_BUCKET`, `ARMOR_CF_DOMAIN`, `ARMOR_AUTH_ACCESS_KEY`, and
+   `ARMOR_AUTH_SECRET_KEY`. Use distinct ARMOR client credentials; they are
+   separate from the B2 application key. [Required configuration](#required-configuration)
+   lists the minimum, and the [configuration reference](docs/configuration.md)
+   explains every setting. Set `ARMOR_VERSION` there if the shell export above
+   will not persist.
+5. **Start and verify.** Compose passes the MEK and admin token from `.env` to
+   the server. `armor check` loads that same environment and probes the bucket,
+   Cloudflare path, and MEK/canary state. An empty new bucket can produce
+   warnings until the canary exists; investigate any `FAIL` result.
 
-Both demo paths are guarded by an automated smoke test (`make
-test-docker-demo`), which replays these commands against the image pinned by
-[`VERSION`](VERSION) and fails when `compose.yaml`'s pinned tag drifts from it.
+   ```bash
+   docker compose --profile production up -d armor-production
+   docker compose --profile production exec -T armor-production /armor check
+   curl --fail http://127.0.0.1:9001/version
+   ```
 
-## Subcommands
+Keep `.env` out of version control. The admin token enables key management and
+format migration; follow the linked runbooks before using either operation.
 
-`armor help` prints the full list; `serve` is the default. The others: `demo`
-(temporary filesystem-backed instance), `check` (verify a deployment: config,
-backend connectivity, the Cloudflare path, MEK correctness via the canary),
-`client-config` (print known-good configuration for common S3 clients, see
-below), `decrypt` (offline recovery with only the MEK), `verify` (check
-objects for corruption), `migrate` (legacy envelopes to the current format)
-and `version`. The per-command reference — flags, inputs and outputs, exit
-codes, credential requirements, and safe-use notes — is
-[docs/cli-reference.md](docs/cli-reference.md).
+### Required configuration
 
-## Production Docker deployment
+| Variable | What to provide |
+|----------|-----------------|
+| `ARMOR_B2_REGION` | The bucket's B2 region, for example `us-east-005` |
+| `ARMOR_B2_ACCESS_KEY_ID`, `ARMOR_B2_SECRET_ACCESS_KEY` | The bucket-scoped B2 application key |
+| `ARMOR_BUCKET` | The B2 bucket name |
+| `ARMOR_CF_DOMAIN` | The Cloudflare read hostname; leave empty only if direct B2 reads are intended |
+| `ARMOR_MEK` | A stable 32-byte key encoded as 64 hex characters |
+| `ARMOR_AUTH_ACCESS_KEY`, `ARMOR_AUTH_SECRET_KEY` | Credentials that S3 clients use with ARMOR |
+| `ARMOR_ADMIN_TOKEN` | A separate bearer token for admin operations |
 
-For a B2-backed deployment, replace every placeholder with a value from your
-environment. Keep the same MEK when restarting an instance; losing it makes
-existing objects unreadable. Pin the image to a published version.
+## Clients
 
-```bash
-docker run -d --name armor \
-  -p 9000:9000 -p 127.0.0.1:9001:9001 \
-  -e ARMOR_B2_REGION=us-east-005 \
-  -e ARMOR_B2_ACCESS_KEY_ID=<b2-key-id> \
-  -e ARMOR_B2_SECRET_ACCESS_KEY=<b2-key-secret> \
-  -e ARMOR_BUCKET=<b2-bucket> \
-  -e ARMOR_CF_DOMAIN=<cloudflare-domain> \
-  -e ARMOR_MEK=<64-hex-character-mek> \
-  -e ARMOR_AUTH_ACCESS_KEY=<armor-access-key> \
-  -e ARMOR_AUTH_SECRET_KEY=<armor-secret-key> \
-  -e ARMOR_ADMIN_TOKEN=<admin-bearer-token> \
-  -e ARMOR_ADMIN_LISTEN=0.0.0.0:9001 \
-  ghcr.io/jedarden/armor:<version>
-```
+Point an S3 client at `http://<armor-host>:9000` and use the ARMOR client
+credentials from `.env`. Use path-style addressing. The [connection
+guide](docs/connection-guide.md) gives AWS CLI, rclone, boto3, DuckDB,
+litestream, and barman examples. `armor client-config --for aws-cli --endpoint
+http://<armor-host>:9000 --bucket <bucket>` prints the client settings for a
+specific endpoint; see the [CLI reference](docs/cli-reference.md).
 
-Without `ARMOR_ADMIN_TOKEN` the key-management and migration endpoints are
-disabled (fail-closed) — fine for a plain proxy, but there is no way to rotate
-keys. Verify a running instance with `armor check` (inside the container) or
-`curl http://127.0.0.1:9001/version`. The `production` profile of
-[`compose.yaml`](compose.yaml) runs the same configuration from a root `.env`
-(copy [`.env.example`](.env.example)) — see [docs/connection-guide.md](docs/connection-guide.md).
+## Operations
 
-## Client configuration
+The [documentation index](docs/README.md) links the operator guides. Start
+with [key rotation](docs/key-rotation-runbook.md), [format
+migration](docs/runbooks/format-migration.md), [disaster
+recovery](docs/disaster-recovery.md), and the [release
+process](docs/release-process.md). Keep the MEK and B2 credentials available
+to recovery tooling, and verify restores with the intended image and object
+population.
 
-`client-config` prints known-good, copy-pasteable configuration for common
-S3-compatible tools: endpoint URL, path-style addressing (required), a region
-placeholder (required by clients, unused by ARMOR), credential
-environment-variable names (never values), and the multipart contract in force.
+Legacy v1 objects have the counter defect recorded in [ADR-005](docs/adr/005-ctr-counter-stride-fix.md);
+the v2/v3 confidentiality guarantee applies to them only after migration.
+Follow the [migration reference](docs/research/migration/V3_Migration_Reference.md)
+before running `armor migrate --target v3`, then audit with `armor verify` or
+the [continuous restore verifier](docs/restore-verifier-deployment-guide.md).
 
-```bash
-armor client-config --for aws-cli --endpoint http://localhost:9000 --bucket my-bucket
-armor client-config --for rclone --endpoint http://localhost:9000
-# --for also accepts: boto3, duckdb, litestream, barman
-```
+### Subcommands
 
-Per-client walkthroughs: [docs/connection-guide.md](docs/connection-guide.md).
-DuckDB encrypted-Parquet queries: [docs/research/duckdb-encrypted-parquet.md](docs/research/duckdb-encrypted-parquet.md).
-
-## Architecture
-
-Uploads go client → ARMOR → B2: ARMOR encrypts, and B2 ingress is free.
-Downloads come back B2 → Cloudflare → ARMOR → client over the Cloudflare PNI
-link, so egress is free and the CDN only ever caches ciphertext. Storage is
-~$6–7/TB/month on B2; egress, B2 API calls and the Cloudflare free plan are
-$0, and optional zstd compression ([ADR-007](docs/adr/007-zstd-compression.md))
-shrinks compressible data a further 2–5×.
-
-Reads are seekable — AES-256-CTR in 64 KB blocks with per-block HMACs — so a
-range request decrypts only the blocks it touches; DuckDB's row-group and
-column-chunk reads keep column pruning and predicate pushdown effective.
-ARMOR is stateless: any instance with the same MEK, B2 credentials and
-Cloudflare domain can serve the same bucket, and all authoritative state
-(envelope metadata, key-rotation progress, provenance chain, manifest index)
-lives in B2 under the reserved `.armor/` prefix. The full design record —
-plan, phases, ADRs — starts at [docs/plan/plan.md](docs/plan/plan.md).
-
-## Encryption design
-
-A master key (MEK), stored locally and never uploaded, wraps a random per-file
-data encryption key (DEK); the wrapped DEK is stored alongside the object's
-ciphertext in B2. File data is AES-256-CTR in 64 KB blocks, each block
-authenticated by an HMAC-SHA256 recorded in the envelope — that is what makes
-reads seekable and tamper-evident.
-
-Key rotation re-wraps DEKs without re-uploading file data — metadata only.
-
-The zero-knowledge claim depends on the object's envelope version:
-
-- **v1 (legacy; no current release writes it)** — a CTR counter defect
-  ([ADR-005](docs/adr/005-ctr-counter-stride-fix.md)) reused keystream
-  between adjacent 64 KB blocks, so ciphertext alone reveals the XOR of the
-  plaintexts of any two adjacent blocks. v1 objects remain readable, but the
-  zero-knowledge claim does **not** apply to them until they are migrated.
-- **v2 (the 2024-08 fix)** — the counter advances by the full AES-block count
-  of each 64 KB block, so keystreams never overlap and the zero-knowledge
-  claim holds. Still readable, and selectable for new writes with
-  `ARMOR_FORMAT_VERSION=2`.
-- **v3 (the default write format)** —
-  [spec](docs/format/envelope-v3.md); keeps v2's non-overlapping counters,
-  gives each multipart part its own counter namespace, and adds
-  self-describing parts and optional per-block zstd compression.
-
-Migrating legacy objects re-encrypts them to v3 under fresh per-object keys:
-`armor migrate --admin-url http://127.0.0.1:9001 --target v3` (requires
-`ARMOR_ADMIN_TOKEN`; start with `--dry-run`). The operator procedure —
-safety gates, monitoring, failure recovery, and the per-bucket evidence
-record — is the [Format Migration
-Runbook](docs/runbooks/format-migration.md); per-format outcomes and known
-issues: [V3 Migration Reference](docs/research/migration/V3_Migration_Reference.md).
-Verify
-migrated objects with `armor verify` (offline audit; exits non-zero when any
-object is corrupted) or the continuous restore verifier
-([deployment guide](docs/restore-verifier-deployment-guide.md),
-[ADR-004](docs/adr/004-continuous-restore-verification.md)).
-
-## Security model
-
-| Threat | Mitigation |
-|--------|-----------|
-| B2 data breach | v2/v3 objects are AES-256-CTR encrypted with per-file DEKs — useless without the MEK. Legacy v1 objects are the exception: their keystream reuse ([ADR-005](docs/adr/005-ctr-counter-stride-fix.md)) lets ciphertext alone reveal plaintext XOR between adjacent blocks; migrate them (see [Encryption design](#encryption-design)) |
-| CDN or on-path inspection | Cached and transmitted content is ciphertext — the CDN sees only opaque blobs; TLS on the ARMOR listener |
-| ARMOR server compromise | MEK exposed: rotate immediately; per-file DEKs limit blast radius |
-| Ciphertext tampering (bit-flip, reorder, truncate) | Per-block HMAC-SHA256 detects modification; the block index is implicit in the offset and the HMAC table length validates the block count |
-| Unauthorized access | ARMOR-side SigV4 authentication plus prefix/verb ACLs (not B2 access control) |
-| V1 keystream reuse | Version 1 envelopes had a CTR counter bug (keystream reuse between adjacent blocks), so the zero-knowledge claim holds only after migration. Migrate with `armor migrate --target v3` ([runbook](docs/runbooks/format-migration.md)), then verify with `armor verify`. See [ADR-005](docs/adr/005-ctr-counter-stride-fix.md) |
-
-## Configuration reference
-
-ARMOR is configured entirely by environment variables. A new B2-backed
-deployment needs the variables below; everything else has a default or is
-optional. The complete reference — listeners, backend, encryption and keys,
-client authentication, caches, the manifest index, dashboard and pre-signed
-URLs, bucket aliases, multi-key routing, and the secondary backend — lives in
-[docs/configuration.md](docs/configuration.md).
-
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `ARMOR_B2_REGION` | With `b2` | — | B2 region (e.g., `us-east-005`) |
-| `ARMOR_B2_ACCESS_KEY_ID` | With `b2` | — | B2 application key ID |
-| `ARMOR_B2_SECRET_ACCESS_KEY` | With `b2` | — | B2 application key |
-| `ARMOR_BUCKET` | Yes | — | Bucket name (both backends) |
-| `ARMOR_CF_DOMAIN` | No | — | Cloudflare domain CNAMEd to the bucket; when set, reads go through Cloudflare (free egress, edge cache) instead of the B2 endpoint |
-| `ARMOR_MEK` | Yes | — | Master encryption key for the default key (hex, 32 bytes = 64 characters) |
-| `ARMOR_AUTH_ACCESS_KEY` / `ARMOR_AUTH_SECRET_KEY` | One of these | — | The default client credential; full access to `ARMOR_BUCKET` |
-
-## Authentication
-
-ARMOR credentials are separate from your B2 credentials: ARMOR validates
-clients locally and uses its own B2 credentials for the backend. The default
-client credential is `ARMOR_AUTH_ACCESS_KEY` / `ARMOR_AUTH_SECRET_KEY` (full
-access to `ARMOR_BUCKET`). Named credentials (`ARMOR_AUTH_<NAME>_ACCESS_KEY` /
-`ARMOR_AUTH_<NAME>_SECRET_KEY`) add an optional ACL, `bucket:prefix[:actions]`,
-comma-separated for multiple entries. Full ACL grammar, action verbs,
-append-only writers and the YAML credentials file:
-[docs/authentication.md](docs/authentication.md).
-
-## S3 API coverage
-
-Transforming operations (encryption/decryption applied): PutObject (streaming;
-`If-None-Match: *` create-only honored), GetObject (range reads), HeadObject,
-CopyObject (DEK re-wrapping, cross-bucket) and the full multipart set. These
-are the operation families covered by tests; current support status is bounded
-by the [release-status register](docs/release-status.md).
-Passthrough: ListObjectsV2 (size correction, `.armor/` filter), DeleteObject /
-DeleteObjects, ListBuckets, CreateBucket / DeleteBucket / HeadBucket, lifecycle
-configuration, Object Lock / Retention / Legal Hold. Per-operation comparison
-against AWS S3: [docs/s3-compliance-comparison.md](docs/s3-compliance-comparison.md).
-
-**Reserved namespace: `.armor/`.** Client operations targeting keys under this
-prefix return `403 AccessDenied`. It holds the provenance chain and chain
-heads, manifest deltas, multipart HMAC sidecars, key-rotation state, multipart
-crash-recovery state and canary objects (`.armor/chain/`, `.armor/manifest/`,
-`.armor/hmac/`, `.armor/rotation-state.json`, `.armor/multipart/`, `.armor/canary/`).
-
-## Multipart upload constraints
-
-With format version 3 (the default write format) the repository's multipart
-tests cover independent counter namespaces, arbitrary part ordering, concurrent
-uploads, and idempotent retries. The B2 rule still applies: non-final parts
-must be at least 5 MiB. Treat this as the tested v3 contract for the exact
-release image, not as fleet-wide or full-S3 release verification; see the
-[status register](docs/release-status.md).
-
-Format version 2 (legacy, `ARMOR_FORMAT_VERSION=2`) keeps
-[ADR-015](docs/adr/015-out-of-order-multipart-uniform-part-size.md)'s
-uniform-part-size contract, as amended by
-[ADR-011](docs/adr/011-barman-stays-on-armor-non-uniform-multipart.md):
-non-uniform part sizes switch the upload to non-uniform mode instead of
-failing, and a genuine contract contradiction poisons the upload with a 400 —
-loud, never silent. Per-format client behavior:
-[docs/multipart-client-compatibility.md](docs/multipart-client-compatibility.md).
-Existing v1/v2 objects migrate in place with `armor migrate --admin-url
-http://127.0.0.1:9001 --target v3` (requires `ARMOR_ADMIN_TOKEN`; start with
-`--dry-run`).
-
-## HTTP endpoints
-
-The S3 listener (`ARMOR_LISTEN`, default `:9000`) serves `/healthz` (liveness),
-`/readyz` (readiness — canary health, or always 200 when
-`ARMOR_CANARY_DISABLED=true`), `/version` (version JSON; every response carries
-`Server: ARMOR/<version>`) and `/share/<token>` (decrypted content for a
-pre-signed URL, `ARMOR_PRESIGN_ENABLED=true`); everything else is the
-SigV4-authenticated S3 API. See the [HTTP API Reference](docs/http-api-reference.md)
-for the complete operation, authentication, status, prefix, and safe-use
-contract.
+`armor help` lists `serve`, `demo`, `check`, `client-config`, `decrypt`,
+`verify`, `migrate`, and `version`. The [CLI reference](docs/cli-reference.md)
+documents flags, exit codes, credentials, and safe use.
 
 ### Admin API
 
-`ARMOR_ADMIN_LISTEN` (default `127.0.0.1:9001`). Routes marked *token* require
-`Authorization: Bearer <ARMOR_ADMIN_TOKEN>` and return 403 when none is
-configured; every gated call is audit-logged.
+The admin listener exposes health, version, and metrics endpoints. Token-gated
+routes cover key management, migration, and other operations. See the [HTTP API
+reference](docs/http-api-reference.md) for the route and authorization contract.
 
-- Open: `/healthz`, `/version`, `/metrics` (Prometheus,
-  [reference](docs/metrics.md)), `/armor/canary` (integrity status,
-  single-PUT and multipart)
-- *Token*: `/armor/audit` — provenance-chain walk
-  ([guide](docs/provenance-audit-walker.md)); `/admin/key/verify|rotate|ring|export`
-  — MEK verification, rotation ([runbook](docs/key-rotation-runbook.md)),
-  census, export (`?confirm=yes`); `/admin/format/migrate` — start or poll an
-  envelope-format migration; `/admin/manifest[/repair|/quarantine|/release]` —
-  manifest state and repair
-  ([operator guide](docs/notes/manifest-repair-quarantine.md)); `/admin/creds`
-  — configured credentials (access keys and ACLs, never secrets);
-  `/admin/provenance/compact`; `/admin/presign` — pre-signed share URL;
-  `/admin/b2/keys[/<id>]` — list, create, delete scoped B2 application keys
-- Dashboard auth: `/dashboard`, `/dashboard/...` — web dashboard and JSON API:
-  bucket browsing, encryption status, live metrics
-  ([docs/dashboard.md](docs/dashboard.md))
+## Status and limitations
 
-## Disaster recovery
-
-The `decrypt` subcommand recovers encrypted objects without a running ARMOR
-server — it needs the MEK and either B2 access or a local copy of the object,
-and self-verifies every block it decrypts. Multipart objects carry no envelope
-header, so recovery is verified by the per-block HMAC table rather than a
-whole-object digest: multipart objects completed on current versions also
-declare the true plaintext SHA-256 in their manifest metadata (which `armor
-verify` enforces), while multipart objects completed before that fix carry
-only an empty-string placeholder — treat them as declaring no digest and rely
-on the per-block HMAC verification.
-Full runbook: [docs/disaster-recovery.md](docs/disaster-recovery.md).
-
-The `verify` subcommand audits objects offline the same way: it unwraps
-fingerprinted wrapped DEKs with the active MEK or a `-escrow` ring (an object
-naming a fingerprint neither carries is an ERROR, not corruption), verifies
-multipart objects through their manifest and HMAC sidecar, writes one
-`-output` JSON row per object with the failure reason, and exits non-zero
-when any object is CORRUPTED or ends in ERROR — safe to gate scripts on.
-
-## Releases and versioning
-
-- Versions are `0.1.<counter>`; the counter only increases and carries no
-  SemVer meaning. What changed is in [`CHANGELOG.md`](CHANGELOG.md). A release
-  is one commit, `release: armor <version>`, produced by `scripts/cut-release.sh`
-  (it bumps `VERSION`, the `compose.yaml` `ARMOR_VERSION` defaults and
-  `CHANGELOG.md` together);
-  CI builds and publishes the images, verifies each tag exists in the registry,
-  runs the compatibility suite, then creates the `v<version>` git tag and the
-  Forgejo and GitHub releases. Nothing is tagged by hand.
-- Full procedure, fleet rollout and the fix-propagation checklist:
-  [docs/release-process.md](docs/release-process.md).
-
-## Repository structure
-
-| Path | What it is |
-|------|------------|
-| `cmd/` | The three binaries: `armor` (the server and its `serve`, `demo`, `check`, `decrypt`, `verify`, `migrate`, `client-config`, `version`, `help` subcommands), `restore-verifier`, `armor-fleet` |
-| `internal/` | All packages: `server` (S3 + admin handlers), `crypto`, `backend`, `config`, `keymanager`, `manifest`, `acl`, `canary`, `dashboard`, `presign`, `provenance`, `replication`, `restoreverifier`, `metrics`, `logging`, `b2keys`, `docsindex`, `version`, `testutil` |
-| `tests/` | Go suites outside the package tree — `integration/` (real B2, build-tagged), `aws-cli-compatibility/`, `docker-demo-smoke/`, `rbac/`, `performance/` — plus the pytest suites (`tests/test_*.py`) and migration `fixtures/` |
-| `scripts/` | Operator tooling: `definition-of-done.sh`, `release-gate.sh`, `cut-release.sh`, drift check, starvation watch ([scripts/README.md](scripts/README.md)) |
-| `docs/` | ADRs, runbooks, notes, plan — every file indexed by [docs/README.md](docs/README.md) |
-| `config/drift-config.json` | Fleet drift-check configuration |
-| `Dockerfile`, `Dockerfile.test`, `compose.yaml`, `.env.example` | The published image (final stage stays the armor server), the test image, and the Compose demo + production profiles |
-| `AGENTS.md` | Guide for contributors and agents: layout, gates, beads, commits, releases |
-| `VERSION`, `CHANGELOG.md`, `compose.yaml` | The release counter, its notes, and the Compose image pin; only `scripts/cut-release.sh` changes them |
-| `Makefile` | Build, test and release targets (`make help`) |
-
-Deployment manifests do **not** live here. They live in
-`jedarden/declarative-config` under
-`k8s/<cluster>/<namespace>/armor-deployment.y*ml` and `restore-verifier*.y*ml`,
-applied by ArgoCD.
-
-## Documentation
-
-- **[Documentation index](docs/README.md)** — every document, organized by audience (Operate, Design, Test, Archive)
-- [Configuration reference](docs/configuration.md) — every ARMOR_* environment variable, bucket aliases, multi-key routing, secondary backend
-- [AGENTS.md](AGENTS.md) — how to build, test, track work and release in this repository
-- [Release process](docs/release-process.md) — cutting a release, what CI publishes, fleet rollout, fix propagation
-- [Disaster recovery](docs/disaster-recovery.md) — MEK backup/escrow, restore drills, offline decryption, secondary failover
-- [Integration tests](tests/integration/README.md) — testing against real B2 + Cloudflare
-
-## License
-
-MIT
+The repository tests a defined S3 operation and client matrix. Publication
+proof, deployment verification, active regressions, and limits on range
+performance, multipart/DR checks, and named-key reads are tracked in the
+[release-status register](docs/release-status.md). Use that register for the
+exact image and deployment boundary before a production rollout.

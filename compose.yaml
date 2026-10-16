@@ -13,6 +13,9 @@ services:
   armor-demo:
     image: ghcr.io/jedarden/armor:${ARMOR_VERSION:-0.1.1988}
     profiles: [demo]
+    environment:
+      # Demo-only fixed credential; never reuse for production.
+      ARMOR_ADMIN_TOKEN: armor-demo-admin-token
     command:
       - demo
       - --listen
@@ -43,6 +46,9 @@ services:
       ARMOR_BUCKET: ${ARMOR_BUCKET:-}
       ARMOR_CF_DOMAIN: ${ARMOR_CF_DOMAIN:-}
       ARMOR_MEK: ${ARMOR_MEK:-}
+      # Fill ARMOR_ADMIN_TOKEN in .env before starting this profile; the
+      # README's production step generates it alongside the MEK.
+      ARMOR_ADMIN_TOKEN: ${ARMOR_ADMIN_TOKEN:-}
       ARMOR_AUTH_ACCESS_KEY: ${ARMOR_AUTH_ACCESS_KEY:-}
       ARMOR_AUTH_SECRET_KEY: ${ARMOR_AUTH_SECRET_KEY:-}
     ports:
