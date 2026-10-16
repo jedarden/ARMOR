@@ -98,29 +98,35 @@ Run the ARMOR S3-compatible server. This is the default command.
 
 ## `armor demo`
 
-Run a disposable local instance for trying ARMOR: filesystem backend, fixed
-demo credentials, a fresh random in-memory MEK.
+Run a local instance for trying ARMOR with a filesystem backend and generated
+dashboard credentials. With `-dir`, its MEK persists in a private file so data
+survives a restart; without `-dir`, it uses a disposable temporary directory
+and in-memory key.
 
 | Flag | Meaning |
 |------|---------|
 | `-dir` | Directory for the filesystem backend (default: a temp directory removed on exit) |
+| `-mek-file` | File for the persistent MEK (default: `<dir>/.armor-demo-mek` when `-dir` is set; relative custom paths are resolved inside `-dir`) |
 | `-listen` | S3 API listen address (default `127.0.0.1:9000`) |
 | `-admin-listen` | Admin API listen address (default `127.0.0.1:9001`) |
 
 - **Inputs:** the flags above; everything else is fixed by the command
   (backend `filesystem`, bucket `demo-bucket`, access key `armor`, secret key
-  `armor-demo-secret`).
-- **Outputs:** a startup banner with the listen addresses, the demo
-  credentials, and a ready-to-paste AWS CLI configuration, all through the
-  JSON logger on stdout.
+  `armor-demo-secret`), except dashboard username/password and admin token,
+  which can be supplied through `ARMOR_DASHBOARD_USER`,
+  `ARMOR_DASHBOARD_PASS`, and `ARMOR_ADMIN_TOKEN`.
+- **Outputs:** JSON startup logs include the listen addresses, dashboard URL,
+  dashboard credentials, admin token, and S3 credentials. A ready-to-paste AWS
+  CLI configuration follows as a plain-text block on stdout.
 - **Exit codes:** 0 on shutdown; 1 on setup failure (temp directory, config);
   2 on unexpected positional arguments.
-- **Credentials/keys:** none required — the command generates a random MEK and
-  prints the fixed demo credentials.
-- **Safe use:** never point real clients at a demo. The MEK lives only in the
-  process: with the default temp directory everything disappears on exit, and
-  with `-dir` the files persist but become permanently undecryptable once the
-  process is gone.
+- **Credentials/keys:** none required — the command generates the dashboard
+  credentials and admin token if they are not supplied, then prints them. The
+  MEK is generated on first use and saved with mode 0600 when a persistent MEK
+  file is selected.
+- **Safe use:** never point real clients at a demo. The dashboard and admin
+  credentials are printed to the terminal. Back up the MEK file with the demo
+  data; losing it makes the stored objects unreadable.
 
 ## `armor check`
 

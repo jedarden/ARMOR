@@ -5,11 +5,15 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"flag"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
+	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -20,8 +24,9 @@ import (
 
 // demo flags
 var (
-	demoDirFlag      string
-	demoListenFlag   string
+	demoDirFlag         string
+	demoMEKFileFlag     string
+	demoListenFlag      string
 	demoAdminListenFlag string
 )
 
@@ -29,13 +34,14 @@ func init() {
 	// demo-specific flags, on demo's own flag set
 	demoFlags := flag.NewFlagSet("demo", flag.ExitOnError)
 	demoFlags.StringVar(&demoDirFlag, "dir", "", "Directory for filesystem backend (default: temp directory, removed on exit)")
+	demoFlags.StringVar(&demoMEKFileFlag, "mek-file", "", "File for persistent MEK (default: <dir>/.armor-demo-mek when -dir is set)")
 	demoFlags.StringVar(&demoListenFlag, "listen", "127.0.0.1:9000", "S3 API listen address")
 	demoFlags.StringVar(&demoAdminListenFlag, "admin-listen", "127.0.0.1:9001", "Admin API listen address")
 
 	// Register demo command
 	registerCommand(Command{
 		Name:        "demo",
-		Description: "Start ARMOR in demo mode with filesystem backend and fixed credentials",
+		Description: "Start ARMOR demo with filesystem backend and generated dashboard credentials",
 		Flags:       demoFlags,
 		Func:        demo,
 	})
@@ -44,18 +50,10 @@ func init() {
 // demo implements the demo subcommand.
 func demo(fs *flag.FlagSet) {
 	if fs.NArg() > 0 {
-		fmt.Fprintf(os.Stderr, "Error: unexpected arguments after flags: %v\n", flag.Args())
-		fmt.Fprintf(os.Stderr, "Usage: armor demo [--dir DIR] [--listen ADDR] [--admin-listen ADDR]\n")
+		fmt.Fprintf(os.Stderr, "Error: unexpected arguments after flags: %v\n", fs.Args())
+		fmt.Fprintf(os.Stderr, "Usage: armor demo [--dir DIR] [--mek-file FILE] [--listen ADDR] [--admin-listen ADDR]\n")
 		os.Exit(2)
 	}
-
-	// Generate a random MEK in memory (32 bytes)
-	mek := make([]byte, 32)
-	if _, err := rand.Read(mek); err != nil {
-		fmt.Fprintf(os.Stderr, "failed to generate MEK: %v\n", err)
-		os.Exit(1)
-	}
-	mekHex := hex.EncodeToString(mek)
 
 	// Create temp directory if --dir not provided
 	tempDir := ""
@@ -78,19 +76,19 @@ func demo(fs *flag.FlagSet) {
 		}
 	}
 
-	// Set demo configuration via environment variables
-	os.Setenv("ARMOR_BACKEND", "filesystem")
-	os.Setenv("ARMOR_FS_PATH", demoDir)
-	os.Setenv("ARMOR_BUCKET", "demo-bucket")
-	os.Setenv("ARMOR_MEK", mekHex)
-	os.Setenv("ARMOR_AUTH_ACCESS_KEY", "armor")
-	os.Setenv("ARMOR_AUTH_SECRET_KEY", "armor-demo-secret")
-	os.Setenv("ARMOR_ALLOW_NO_CREDENTIALS", "true")
-	os.Setenv("ARMOR_LISTEN", demoListenFlag)
-	os.Setenv("ARMOR_ADMIN_LISTEN", demoAdminListenFlag)
+	mekFile := demoMEKFilePath(demoDir, demoDirFlag != "", demoMEKFileFlag)
+	mek, err := demoMEK(mekFile)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "failed to load demo MEK: %v\n", err)
+		if cleanupNeeded {
+			os.RemoveAll(tempDir)
+		}
+		os.Exit(1)
+	}
 
-	// Load configuration
-	cfg, err := config.Load()
+	// Set demo configuration via environment variables and load it through the
+	// same path used by the dashboard smoke test.
+	cfg, credentials, err := configureDemo(demoDir, hex.EncodeToString(mek), demoListenFlag, demoAdminListenFlag)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "failed to load configuration: %v\n", err)
 		if cleanupNeeded {
@@ -109,12 +107,17 @@ func demo(fs *flag.FlagSet) {
 	logger.WithField("listen", cfg.Listen).Info("S3 API")
 	logger.WithField("admin_listen", cfg.AdminListen).Info("Admin API")
 	logger.Info("")
-	logger.Info("Demo credentials:")
-	logger.Info("  Access Key ID: armor")
-	logger.Info("  Secret Access Key: armor-demo-secret")
-	logger.Info("")
+	logger.WithFields(map[string]interface{}{
+		"dashboard_user": credentials.dashboardUser,
+		"dashboard_pass": credentials.dashboardPass,
+		"admin_token":    credentials.adminToken,
+	}).Info("Demo dashboard credentials")
+	logger.WithField("url", dashboardURL(cfg.AdminListen)).Info("Dashboard")
+	logger.WithField("access_key_id", "armor").Info("S3 access key")
+	logger.WithField("secret_access_key", "armor-demo-secret").Info("S3 secret key")
 
-	// Print AWS CLI configuration
+	// The ready-to-paste AWS CLI block is plain text, separate from the JSON
+	// logger lines above.
 	printAWSCLIConfig(cfg.Listen, cfg.Bucket)
 
 	// Create server
@@ -180,6 +183,176 @@ func demo(fs *flag.FlagSet) {
 	}
 
 	logger.Info("ARMOR demo shutdown complete")
+}
+
+type demoCredentials struct {
+	dashboardUser string
+	dashboardPass string
+	adminToken    string
+}
+
+// configureDemo sets the demo's fixed S3 configuration, fills missing
+// dashboard credentials with random values, and returns the loaded config.
+func configureDemo(demoDir, mekHex, listen, adminListen string) (*config.Config, demoCredentials, error) {
+	credentials := demoCredentials{
+		dashboardUser: os.Getenv("ARMOR_DASHBOARD_USER"),
+		dashboardPass: os.Getenv("ARMOR_DASHBOARD_PASS"),
+		adminToken:    strings.TrimSpace(os.Getenv("ARMOR_ADMIN_TOKEN")),
+	}
+	if credentials.dashboardUser == "" {
+		id, err := randomDemoHex(4)
+		if err != nil {
+			return nil, demoCredentials{}, fmt.Errorf("generate dashboard username: %w", err)
+		}
+		credentials.dashboardUser = "demo-" + id
+	}
+	if credentials.dashboardPass == "" {
+		value, err := randomDemoHex(32)
+		if err != nil {
+			return nil, demoCredentials{}, fmt.Errorf("generate dashboard password: %w", err)
+		}
+		credentials.dashboardPass = value
+	}
+	if credentials.adminToken == "" {
+		value, err := randomDemoHex(32)
+		if err != nil {
+			return nil, demoCredentials{}, fmt.Errorf("generate admin token: %w", err)
+		}
+		credentials.adminToken = value
+	}
+
+	for name, value := range map[string]string{
+		"ARMOR_BACKEND":              "filesystem",
+		"ARMOR_FS_PATH":              demoDir,
+		"ARMOR_BUCKET":               "demo-bucket",
+		"ARMOR_MEK":                  mekHex,
+		"ARMOR_AUTH_ACCESS_KEY":      "armor",
+		"ARMOR_AUTH_SECRET_KEY":      "armor-demo-secret",
+		"ARMOR_ALLOW_NO_CREDENTIALS": "true",
+		"ARMOR_LISTEN":               listen,
+		"ARMOR_ADMIN_LISTEN":         adminListen,
+		"ARMOR_DASHBOARD_USER":       credentials.dashboardUser,
+		"ARMOR_DASHBOARD_PASS":       credentials.dashboardPass,
+		"ARMOR_ADMIN_TOKEN":          credentials.adminToken,
+	} {
+		if err := os.Setenv(name, value); err != nil {
+			return nil, demoCredentials{}, fmt.Errorf("set %s: %w", name, err)
+		}
+	}
+
+	cfg, err := config.Load()
+	if err != nil {
+		return nil, demoCredentials{}, err
+	}
+	return cfg, credentials, nil
+}
+
+func randomDemoHex(size int) (string, error) {
+	value := make([]byte, size)
+	if _, err := rand.Read(value); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(value), nil
+}
+
+// demoMEKFilePath resolves relative custom paths under -dir. With -dir and no
+// custom path, the MEK is persisted in the data directory. Without -dir, the
+// default MEK remains in memory so the temporary demo stays disposable.
+func demoMEKFilePath(demoDir string, persistentDir bool, requested string) string {
+	if requested == "" {
+		if persistentDir {
+			return filepath.Join(demoDir, ".armor-demo-mek")
+		}
+		return ""
+	}
+	if filepath.IsAbs(requested) || !persistentDir {
+		return requested
+	}
+	return filepath.Join(demoDir, requested)
+}
+
+// demoMEK returns a fresh key when no path is selected, or atomically creates
+// a mode-0600 key file and reuses its contents on subsequent runs.
+func demoMEK(path string) ([]byte, error) {
+	if path == "" {
+		key := make([]byte, 32)
+		if _, err := rand.Read(key); err != nil {
+			return nil, err
+		}
+		return key, nil
+	}
+
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return nil, fmt.Errorf("create MEK directory: %w", err)
+	}
+	if key, err := readDemoMEK(path); err == nil {
+		return key, nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return nil, err
+	}
+
+	key := make([]byte, 32)
+	if _, err := rand.Read(key); err != nil {
+		return nil, err
+	}
+	file, err := os.CreateTemp(dir, ".armor-demo-mek-*")
+	if err != nil {
+		return nil, fmt.Errorf("create temporary MEK file: %w", err)
+	}
+	tempPath := file.Name()
+	defer os.Remove(tempPath)
+	if err := file.Chmod(0o600); err != nil {
+		file.Close()
+		return nil, fmt.Errorf("set MEK file permissions: %w", err)
+	}
+	if _, err := file.WriteString(hex.EncodeToString(key)); err != nil {
+		file.Close()
+		return nil, fmt.Errorf("write MEK file: %w", err)
+	}
+	if err := file.Sync(); err != nil {
+		file.Close()
+		return nil, fmt.Errorf("sync MEK file: %w", err)
+	}
+	if err := file.Close(); err != nil {
+		return nil, fmt.Errorf("close MEK file: %w", err)
+	}
+	if err := os.Link(tempPath, path); err != nil {
+		if errors.Is(err, os.ErrExist) {
+			return readDemoMEK(path)
+		}
+		return nil, fmt.Errorf("install MEK file: %w", err)
+	}
+	return key, nil
+}
+
+func readDemoMEK(path string) ([]byte, error) {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("MEK path %s is not a regular file", path)
+	}
+	encoded, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read MEK file: %w", err)
+	}
+	key, err := hex.DecodeString(string(encoded))
+	if err != nil || len(key) != 32 {
+		return nil, fmt.Errorf("MEK file %s must contain exactly 64 hexadecimal characters", path)
+	}
+	if err := os.Chmod(path, 0o600); err != nil {
+		return nil, fmt.Errorf("set MEK file permissions: %w", err)
+	}
+	return key, nil
+}
+
+func dashboardURL(adminListen string) string {
+	if strings.HasPrefix(adminListen, ":") {
+		adminListen = "127.0.0.1" + adminListen
+	}
+	return (&url.URL{Scheme: "http", Host: adminListen, Path: "/dashboard"}).String()
 }
 
 // printAWSCLIConfig prints the AWS CLI configuration for connecting to the demo server.

@@ -6,25 +6,26 @@ The ARMOR web dashboard provides a visual interface for browsing encrypted bucke
 
 ### Local Development
 
-When running ARMOR locally, the dashboard is available on the admin port (default `127.0.0.1:9001`):
+When running `armor demo`, the dashboard is available on the admin port (default
+`127.0.0.1:9001`). The command prints a generated dashboard username and
+password, an admin token, and the dashboard URL. Open that URL in a browser and
+use the printed dashboard credentials when prompted:
 
 ```bash
-# A plain `armor demo` intentionally returns 403 here: it supplies neither a
-# dashboard credential nor ARMOR_ADMIN_TOKEN.
-curl -i http://localhost:9001/dashboard
+go run ./cmd/armor demo -dir ./armor-demo-data
 ```
 
-The `armor demo` command sets neither a dashboard credential
-(`ARMOR_DASHBOARD_USER`/`PASS`/`TOKEN`) nor `ARMOR_ADMIN_TOKEN`, so the bearer
-fallback described under [Security Notes](#security-notes) fails closed and
-this request gets `403 admin API disabled` against a plain `armor demo`
-instance. Set one of those environment variables before starting it to reach
-the dashboard locally.
+The demo stores its MEK in `./armor-demo-data/.armor-demo-mek` with mode 0600
+and reuses it on later runs, so objects written before a restart remain
+readable. A different relative `-mek-file` path is resolved under `-dir`; an
+absolute `-mek-file` path is used as given. Without `-dir`, the demo uses a
+temporary directory and an in-memory MEK, and removes the directory on exit.
 
-Or open in a browser:
-```
-http://localhost:9001/dashboard
-```
+To set the dashboard credentials yourself, export
+`ARMOR_DASHBOARD_USER` and `ARMOR_DASHBOARD_PASS` before starting the demo.
+The command uses those values and prints them with the dashboard URL. The
+separate `ARMOR_ADMIN_TOKEN` is also accepted and printed; when unset, the demo
+generates one for the session.
 
 ### Kubernetes Deployment
 

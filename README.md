@@ -50,8 +50,12 @@ docker compose --profile demo down
 ```
 
 The demo exposes port 9000 and sets a fixed demo admin token. Its temporary
-MEK is lost when the process stops, so use the production steps for durable
-objects.
+MEK is lost when the container stops, so this Compose profile is for disposable
+data. Run `go run ./cmd/armor demo -dir ./armor-demo-data` for the CLI demo. It
+prints generated dashboard credentials, an admin token, the dashboard URL, and
+S3 credentials. The command saves its MEK in a mode-600 file under that
+directory and reuses it after restarts. Its structured startup logs are JSON;
+the ready-to-paste AWS CLI configuration is printed as a plain text block.
 
 ## Production
 
