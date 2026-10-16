@@ -953,6 +953,16 @@ go test -v -run TestComprehensiveErrorVerification ./internal/server/
 - bf-5ppsfh: Authentication rejection response headers documentation
 - bf-58oib3: Invalid AWS credentials rejection testing
 
+### Backend HEAD/GET Failure Classification
+
+GetObject and HeadObject return `NoSuchKey`/404 only when the backend
+definitively reports that the object is absent. A backend timeout returns
+`RequestTimeout`/503, an upstream 5xx returns `ServiceUnavailable`/503, and
+an otherwise unclassified backend failure returns `InternalError`/500. The
+structured `s3_error` log records the resulting HTTP status and the backend
+failure detail in its message, so clients do not mistake a storage outage for
+an absent object.
+
 ---
 
 **End of Document**

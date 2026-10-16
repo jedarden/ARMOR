@@ -1058,6 +1058,27 @@ func (h *Handlers) putObjectStreaming(ctx context.Context, w http.ResponseWriter
 	}
 }
 
+// backendFailureResponse maps a backend Head/Get failure to the S3 error
+// code, message, and HTTP status the client should see. Only a definitive
+// not-found is a 404: backup and sync clients (rclone, litestream, barman)
+// treat 404 as "object absent" and may re-upload, skip a restore, or delete a
+// local copy, so a backend timeout or an upstream 5xx must surface as a
+// retryable 503 (or a 500 when the failure cannot be classified) instead of
+// masquerading as absence. The upstream failure text is kept in the message,
+// which the structured s3_error log carries with it.
+func backendFailureResponse(err error) (code, message string, status int) {
+	switch backend.ClassifyBackendError(err) {
+	case backend.BackendErrorNotFound:
+		return "NoSuchKey", fmt.Sprintf("Object not found: %v", err), http.StatusNotFound
+	case backend.BackendErrorTimeout:
+		return "RequestTimeout", fmt.Sprintf("Backend request timed out: %v", err), http.StatusServiceUnavailable
+	case backend.BackendErrorUnavailable:
+		return "ServiceUnavailable", fmt.Sprintf("Backend unavailable: %v", err), http.StatusServiceUnavailable
+	default:
+		return "InternalError", fmt.Sprintf("Failed to read object: %v", err), http.StatusInternalServerError
+	}
+}
+
 // GetObject handles S3 GetObject with decryption and range support.
 func (h *Handlers) GetObject(w http.ResponseWriter, r *http.Request, bucket, key string) {
 	ctx := r.Context()
@@ -1067,8 +1088,19 @@ func (h *Handlers) GetObject(w http.ResponseWriter, r *http.Request, bucket, key
 
 	// ADR-016: Try manifest first for multipart objects
 	var info *backend.ObjectInfo
-	manifestBody, manifestMeta, err := h.readManifest(ctx, bucket, key)
-	if err == nil && manifestBody != nil {
+	var err error
+	manifestBody, manifestMeta, manifestErr := h.readManifest(ctx, bucket, key)
+	if manifestErr != nil && !backend.IsNotFound(manifestErr) {
+		// The manifest read failed for a reason other than "no manifest was
+		// ever written" — a timeout or upstream 5xx. Falling back to the
+		// legacy path here would serve raw ciphertext for a multipart object
+		// or report an existing object absent, so surface the backend
+		// failure with the same classification the legacy head gets.
+		code, _, status := backendFailureResponse(manifestErr)
+		h.writeBackendError(w, r, code, fmt.Sprintf("Failed to read manifest: %v", manifestErr), status, manifestErr)
+		return
+	}
+	if manifestErr == nil && manifestBody != nil {
 		// Manifest exists - use it as the source of truth for metadata
 
 		// Operator quarantine gate (see manifest_repair.go). A quarantined
@@ -1130,7 +1162,8 @@ func (h *Handlers) GetObject(w http.ResponseWriter, r *http.Request, bucket, key
 	}
 
 	if err != nil && info == nil {
-		h.writeBackendError(w, r, "NoSuchKey", fmt.Sprintf("Object not found: %v", err), 404, err)
+		code, message, status := backendFailureResponse(err)
+		h.writeBackendError(w, r, code, message, status, err)
 		return
 	}
 
@@ -2350,7 +2383,8 @@ func (h *Handlers) HeadObject(w http.ResponseWriter, r *http.Request, bucket, ke
 	// Manifest miss or disabled: fall back to a B2 HeadObject call.
 	info, err := h.backend.Head(ctx, bucket, prefixedKey)
 	if err != nil {
-		h.writeError(w, r, "NoSuchKey", "Object not found", 404)
+		code, message, status := backendFailureResponse(err)
+		h.writeBackendError(w, r, code, message, status, err)
 		return
 	}
 

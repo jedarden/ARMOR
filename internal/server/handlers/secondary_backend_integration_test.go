@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/jedarden/armor/internal/backend"
@@ -811,7 +812,7 @@ func TestConfigUnset(t *testing.T) {
 	cfg := &config.Config{
 		BlockSize:            65536,
 		AuthAccessKey:        "test",
-		AuthSecretKey: "REMOVED-NOT-A-SECRET-VALUE",
+		AuthSecretKey:        "REMOVED-NOT-A-SECRET-VALUE",
 		SecondaryBackendType: "", // Empty = not configured (no secondary backend)
 		SecondaryBackendPath: "", // Empty when type is unset
 	}
@@ -1428,7 +1429,7 @@ func TestSecondaryBackendIntegrationWithConfig(t *testing.T) {
 		cfg := &config.Config{
 			BlockSize:            65536,
 			AuthAccessKey:        "test",
-			AuthSecretKey: "REMOVED-NOT-A-SECRET-VALUE",
+			AuthSecretKey:        "REMOVED-NOT-A-SECRET-VALUE",
 			SecondaryBackendType: "filesystem",
 			SecondaryBackendPath: t.TempDir(),
 		}
@@ -1475,7 +1476,7 @@ func TestSecondaryBackendIntegrationWithConfig(t *testing.T) {
 		cfg := &config.Config{
 			BlockSize:            65536,
 			AuthAccessKey:        "test",
-			AuthSecretKey: "REMOVED-NOT-A-SECRET-VALUE",
+			AuthSecretKey:        "REMOVED-NOT-A-SECRET-VALUE",
 			SecondaryBackendType: "", // Empty = disabled
 			SecondaryBackendPath: "", // Empty when disabled
 		}
@@ -1678,8 +1679,8 @@ func TestGetObjectChecksSecondaryBackendOnPrimaryFailure(t *testing.T) {
 	h.GetObject(wGet, reqGet, bucket, key)
 
 	// The current implementation does not implement secondary fallback for GetObject.
-	// This test verifies the current behavior (primary failure = 404) and documents
-	// that secondary fallback is not yet implemented.
+	// An unclassified primary failure is now surfaced as a server error rather
+	// than being misreported as an absent object.
 	switch wGet.Code {
 	case http.StatusOK:
 		t.Log("GetObject succeeded via secondary backend - fallback is implemented")
@@ -1687,8 +1688,11 @@ func TestGetObjectChecksSecondaryBackendOnPrimaryFailure(t *testing.T) {
 		if !bytes.Equal(wGet.Body.Bytes(), body) {
 			t.Errorf("content mismatch: got %q, want %q", wGet.Body.String(), string(body))
 		}
-	case http.StatusNotFound:
-		t.Log("GetObject returned 404 - secondary backend fallback not yet implemented (expected current behavior)")
+	case http.StatusInternalServerError:
+		t.Log("GetObject returned 500 - secondary backend fallback not yet implemented")
+		if !strings.Contains(wGet.Body.String(), "<Code>InternalError</Code>") {
+			t.Errorf("primary backend failure response = %q, want InternalError", wGet.Body.String())
+		}
 		// Verify the object exists in secondary (demonstrating it was there for potential fallback)
 		secBody, secInfo, err := secondaryBackend.Get(ctx, bucket, key)
 		if err != nil {
@@ -1700,7 +1704,7 @@ func TestGetObjectChecksSecondaryBackendOnPrimaryFailure(t *testing.T) {
 			}
 		}
 	default:
-		t.Errorf("unexpected status code: got %d, want 200 or 404", wGet.Code)
+		t.Errorf("unexpected status code: got %d, want 200 or 500", wGet.Code)
 	}
 }
 
