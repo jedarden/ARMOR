@@ -33,7 +33,7 @@ func main() {
 	}
 	if token == "" {
 		fmt.Fprintf(os.Stderr, "Error: SEAM token required via -seam-token flag or SEAM_TOKEN env var\n")
-		os.Exit(2)
+		os.Exit(1)
 	}
 
 	// Load targets

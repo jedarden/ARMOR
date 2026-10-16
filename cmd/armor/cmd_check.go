@@ -4,6 +4,7 @@ package main
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -18,20 +19,25 @@ import (
 )
 
 func init() {
-	// check takes no flags: it verifies the deployment's environmental
-	// configuration as loaded. registerCommand arms an empty flag set.
+	checkFlags := flag.NewFlagSet("check", flag.ExitOnError)
+	checkFlags.BoolVar(&checkJSONFlag, "json", false, "Print one JSON object per probe")
+
 	registerCommand(Command{
 		Name:        "check",
 		Description: "Verify ARMOR deployment: config, backend connectivity, Cloudflare path, MEK, and credentials",
+		Flags:       checkFlags,
 		Func:        check,
 	})
 }
 
+// checkJSONFlag arms `armor check --json`.
+var checkJSONFlag bool
+
 // CheckResult represents the result of a single check probe
 type CheckResult struct {
-	Name    string
-	Status  string // "PASS", "WARN", "FAIL"
-	Message string
+	Name    string `json:"name"`
+	Status  string `json:"status"` // "PASS", "WARN", "FAIL"
+	Message string `json:"detail"`
 }
 
 // check runs deployment verification checks
@@ -48,8 +54,8 @@ func check(fs *flag.FlagSet) {
 	cfg, err := config.Load()
 	if err != nil {
 		// Config errors should exit 1
-		for _, result := range runConfigProbe(nil) {
-			printCheckResult(result)
+		if printCheckResults(runConfigProbe(nil)) != nil {
+			fmt.Fprintf(os.Stderr, "Error: unable to encode check results as JSON\n")
 		}
 		fmt.Fprintf(os.Stderr, "\nConfig errors: %v\n", err)
 		os.Exit(1)
@@ -67,7 +73,6 @@ func check(fs *flag.FlagSet) {
 	anyFail := false
 	anyWarn := false
 	for _, result := range results {
-		printCheckResult(result)
 		switch result.Status {
 		case "FAIL":
 			anyFail = true
@@ -75,11 +80,15 @@ func check(fs *flag.FlagSet) {
 			anyWarn = true
 		}
 	}
+	if err := printCheckResults(results); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: unable to encode check results: %v\n", err)
+		os.Exit(1)
+	}
 
 	// Exit with appropriate code
 	if anyFail {
 		fmt.Fprintf(os.Stderr, "\nCheck FAILED: one or more probes failed\n")
-		os.Exit(2)
+		os.Exit(1)
 	} else if anyWarn {
 		fmt.Fprintf(os.Stderr, "\nCheck PASSED with warnings\n")
 		os.Exit(0)
@@ -92,6 +101,26 @@ func check(fs *flag.FlagSet) {
 // printCheckResult prints a single check result
 func printCheckResult(result CheckResult) {
 	fmt.Printf("[%s] %s: %s\n", result.Status, result.Name, result.Message)
+}
+
+// printCheckResults writes either the stable human output or one JSON object
+// per probe. JSON is newline-delimited so callers can process each probe as it
+// arrives without losing the one-result-per-probe shape.
+func printCheckResults(results []CheckResult) error {
+	if !checkJSONFlag {
+		for _, result := range results {
+			printCheckResult(result)
+		}
+		return nil
+	}
+
+	encoder := json.NewEncoder(os.Stdout)
+	for _, result := range results {
+		if err := encoder.Encode(result); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // printRedactedConfig prints the redacted configuration

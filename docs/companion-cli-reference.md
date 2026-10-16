@@ -57,7 +57,7 @@ Exit-code conventions used by both binaries:
 |------|---------|
 | 0 | Success: graceful SIGINT/SIGTERM shutdown; also the version and help paths |
 | 1 | Startup or runtime failure: invalid configuration, missing credentials, unreadable inputs, listener bind failure |
-| 2 | Usage error: undefined or malformed flag, missing required flag or credential |
+| 2 | Usage error: undefined or malformed flag, or missing required flag |
 
 ## `restore-verifier`
 
@@ -229,9 +229,9 @@ leg's error and skips the rest. A failed poll never stops the process.
 - **0** — graceful SIGINT/SIGTERM shutdown (HTTP drain capped at 5 seconds).
 - **1** — startup or runtime failure: targets file unreadable or
   unparseable, zero targets in it, an entry missing a required field, HTTP
-  listener bind failure, or a shutdown error.
-- **2** — missing `-targets`, or no SEAM token from flag and environment, or
-  an undefined flag.
+  listener bind failure, a shutdown error, or no SEAM token from flag and
+  environment.
+- **2** — missing `-targets` or an undefined flag.
 
 Positional arguments are ignored (see Shared behavior).
 

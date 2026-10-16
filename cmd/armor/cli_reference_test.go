@@ -18,6 +18,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"io/fs"
 	"net/http"
 	"net/http/httptest"
@@ -583,6 +584,77 @@ func TestCLIReferenceRequiredFlagAndCredentialExitsMatchBinary(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestCheckJSONAndProbeFailureExitContract(t *testing.T) {
+	fsRoot := t.TempDir()
+	env := armorReferenceEnv(t,
+		"ARMOR_BACKEND=filesystem",
+		"ARMOR_FS_PATH="+fsRoot,
+		"ARMOR_BUCKET=check-bucket",
+		"ARMOR_MEK="+strings.Repeat("ab", 32),
+		"ARMOR_AUTH_ACCESS_KEY=check-access",
+		"ARMOR_AUTH_SECRET_KEY=check-secret",
+	)
+
+	t.Run("probe failure exits 1", func(t *testing.T) {
+		res := runReference(t, env, "check")
+		if res.exitCode != 1 {
+			t.Fatalf("armor check with a missing bucket: exit = %d, want 1\nstdout: %s\nstderr: %s", res.exitCode, res.stdout, res.stderr)
+		}
+		if !strings.Contains(res.stdout, "[FAIL] backend:") {
+			t.Errorf("armor check failure did not report the failed probe on stdout:\n%s", res.stdout)
+		}
+	})
+
+	if err := os.Mkdir(filepath.Join(fsRoot, "check-bucket"), 0o755); err != nil {
+		t.Fatalf("create check bucket: %v", err)
+	}
+
+	t.Run("json emits one object per probe", func(t *testing.T) {
+		res := runReference(t, env, "check", "--json")
+		if res.exitCode != 0 {
+			t.Fatalf("armor check --json: exit = %d, want 0\nstdout: %s\nstderr: %s", res.exitCode, res.stdout, res.stderr)
+		}
+
+		wantNames := []string{"config", "backend", "cloudflare", "mek", "fingerprint"}
+		decoder := json.NewDecoder(strings.NewReader(res.stdout))
+		for _, wantName := range wantNames {
+			var object map[string]json.RawMessage
+			if err := decoder.Decode(&object); err != nil {
+				t.Fatalf("decode %s probe object: %v\nstdout: %s", wantName, err, res.stdout)
+			}
+			if len(object) != 3 {
+				t.Errorf("%s probe object fields = %v, want exactly name/status/detail", wantName, object)
+			}
+			for _, field := range []string{"name", "status", "detail"} {
+				if _, ok := object[field]; !ok {
+					t.Errorf("%s probe object missing %q: %v", wantName, field, object)
+				}
+			}
+			var name string
+			if err := json.Unmarshal(object["name"], &name); err != nil {
+				t.Fatalf("decode %s probe name: %v", wantName, err)
+			}
+			if name != wantName {
+				t.Errorf("probe name = %q, want %q", name, wantName)
+			}
+		}
+		var extra map[string]json.RawMessage
+		if err := decoder.Decode(&extra); err != io.EOF {
+			t.Errorf("JSON output contains more than one object per expected probe: decode error = %v, object = %v", err, extra)
+		}
+	})
+
+	t.Run("human output remains probe lines", func(t *testing.T) {
+		res := runReference(t, env, "check")
+		if res.exitCode != 0 {
+			t.Fatalf("armor check: exit = %d, want 0\nstdout: %s\nstderr: %s", res.exitCode, res.stdout, res.stderr)
+		}
+		if !strings.Contains(res.stdout, "[PASS] config:") || strings.Contains(res.stdout, `"name"`) {
+			t.Errorf("human check output changed unexpectedly:\n%s", res.stdout)
+		}
+	})
 }
 
 // documentedClientConfigTools extracts the tool list the reference documents

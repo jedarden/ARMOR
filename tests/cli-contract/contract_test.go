@@ -309,6 +309,28 @@ func TestDocumentedExitContract(t *testing.T) {
 	}
 }
 
+func TestFleetMissingTokenIsOperationalFailure(t *testing.T) {
+	bins := builtBinaries(t)
+	targets := filepath.Join(t.TempDir(), "targets.yaml")
+	const contents = `- name: contract-target
+  cluster: contract-cluster
+  namespace: contract-ns
+  service: armor
+  admin_port: 9001
+`
+	if err := os.WriteFile(targets, []byte(contents), 0o644); err != nil {
+		t.Fatalf("write targets file: %v", err)
+	}
+
+	res := runBinary(t, bins["armor-fleet"], cleanEnv(), "-targets", targets)
+	if res.exitCode != 1 {
+		t.Errorf("armor-fleet without SEAM token: exit = %d, want 1\n%s", res.exitCode, res.combined())
+	}
+	if !strings.Contains(res.stderr, "SEAM token required") {
+		t.Errorf("armor-fleet without SEAM token: stderr missing diagnostic:\n%s", res.stderr)
+	}
+}
+
 func TestDocumentedOutputEnvironmentAndSafetyContract(t *testing.T) {
 	bins := builtBinaries(t)
 	armor := bins["armor"]

@@ -331,7 +331,8 @@ func fleetSmokeTargets(t *testing.T) string {
 
 // TestFleetCLIReferenceUsageAndValidationMatchBinary pins the documented
 // exit codes: the help path exits 0, a missing required flag or credential
-// is a usage error (2), and every targets-file failure the reference names
+// is a usage error (2), a missing SEAM credential is a startup failure (1),
+// and every targets-file failure the reference names
 // exits 1 with the diagnostic it documents.
 func TestFleetCLIReferenceUsageAndValidationMatchBinary(t *testing.T) {
 	env := fleetReferenceEnv(t)
@@ -364,10 +365,10 @@ func TestFleetCLIReferenceUsageAndValidationMatchBinary(t *testing.T) {
 		}
 	})
 
-	t.Run("valid targets without a SEAM token exits 2", func(t *testing.T) {
+	t.Run("valid targets without a SEAM token exits 1", func(t *testing.T) {
 		_, stderr, code := runFleet(t, env, "-targets", fleetSmokeTargets(t))
-		if code != 2 {
-			t.Errorf("no token: exit = %d, want 2", code)
+		if code != 1 {
+			t.Errorf("no token: exit = %d, want 1", code)
 		}
 		if !strings.Contains(stderr, "SEAM token required") {
 			t.Errorf("no token: stderr missing the diagnostic:\n%s", stderr)

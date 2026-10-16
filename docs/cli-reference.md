@@ -126,7 +126,9 @@ demo credentials, a fresh random in-memory MEK.
 
 Verify a deployment's live configuration and connectivity. Read-only.
 
-- **Inputs:** no flags. Loads the same configuration the server would
+- **Inputs:** `--json` optionally switches probe output to one newline-delimited
+  JSON object per probe (`name`, `status`, `detail`) on stdout. Without it,
+  output remains human-readable. Both modes load the same configuration the server would
   (`config.Load`), so run it inside the container or with the deployment's
   environment.
 - **Probes:** `config` (required fields, credentials present), `backend`
@@ -137,10 +139,13 @@ Verify a deployment's live configuration and connectivity. Read-only.
   fails when any object names a MEK fingerprint absent from the active key and
   ring — the retire gate).
 - **Outputs:** a redacted configuration dump to stderr (bucket and key
-  identifiers render as fingerprints); one `[PASS|WARN|FAIL] probe: message`
-  line per probe on stdout; a final verdict line on stderr.
-- **Exit codes:** 0 all probes pass (warnings still pass); 2 any probe FAIL;
-  1 when the configuration itself fails to load.
+  identifiers render as fingerprints); without `--json`, one
+  `[PASS|WARN|FAIL] probe: message` line per probe on stdout; with `--json`,
+  one `{"name":"...","status":"...","detail":"..."}` object per probe
+  on stdout; a final verdict line remains on stderr.
+- **Exit codes:** 0 all probes pass (warnings still pass); 1 when a probe
+  fails or the configuration itself fails to load; 2 on an undefined flag or
+  unexpected positional argument.
 - **Credentials/keys:** the deployment's own environment: `ARMOR_MEK`, backend
   credentials, and the rest of [Configuration](configuration.md). The
   `cloudflare` and `mek` probes need canary objects (the server writes them
