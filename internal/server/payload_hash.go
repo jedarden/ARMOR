@@ -54,7 +54,7 @@ func classifyPayloadHashMode(value string) (payloadMode, error) {
 		return payloadDigest, nil
 	}
 	return payloadDigest, fmt.Errorf(
-		"Unsupported x-amz-content-sha256 value %q: supported modes are a hex-encoded SHA-256 digest, %s, or %s",
+		"unsupported x-amz-content-sha256 value %q: supported modes are a hex-encoded SHA-256 digest, %s, or %s",
 		value, unsignedPayloadHeader, streamingPayloadHeader)
 }
 

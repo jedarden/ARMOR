@@ -19,7 +19,7 @@ func TestAuthFileWatcherStopDoesNotHoldReloadMutex(t *testing.T) {
 		<-watcher.stopCh
 		// Model a reload that needs mu before its goroutine can exit.
 		watcher.mu.Lock()
-		watcher.mu.Unlock()
+		defer watcher.mu.Unlock()
 	}()
 
 	var callers sync.WaitGroup

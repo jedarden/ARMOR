@@ -37,7 +37,7 @@ import (
 
 // Parse parses a MEK ring specification into ring entries. It returns the
 // entries, one deprecation note per legacy entry (already human-readable),
-// and an error whose message starts with "Invalid MEK ring entry <n>" so the
+// and an error whose message starts with "invalid MEK ring entry <n>" so the
 // caller's diagnostics stay stable. An empty specification parses to no
 // entries and no error.
 func Parse(spec string) ([]crypto.RingKeyEntry, []string, error) {
@@ -92,7 +92,7 @@ func Parse(spec string) ([]crypto.RingKeyEntry, []string, error) {
 			notes = append(notes,
 				fmt.Sprintf("entry %d is a bare MEK (legacy restore-verifier form): key material on the command line lands in shell history and ps; pass fingerprint:key pairs, an @file, or the environment source", i))
 		default:
-			return nil, nil, fmt.Errorf("Invalid MEK ring entry %d: expected fingerprint:key (16 hex chars : 64 hex chars), got %d chars", i, len(entry))
+			return nil, nil, fmt.Errorf("invalid MEK ring entry %d: expected fingerprint:key (16 hex chars : 64 hex chars), got %d chars", i, len(entry))
 		}
 	}
 
@@ -104,14 +104,14 @@ func parsePaired(i int, fp, key string) (crypto.RingKeyEntry, error) {
 	fp = strings.TrimSpace(fp)
 	key = strings.TrimSpace(key)
 	if len(fp) != 16 || !isHex(fp) {
-		return crypto.RingKeyEntry{}, fmt.Errorf("Invalid MEK ring entry %d: fingerprint must be 16 hex chars, got %d chars", i, len(fp))
+		return crypto.RingKeyEntry{}, fmt.Errorf("invalid MEK ring entry %d: fingerprint must be 16 hex chars, got %d chars", i, len(fp))
 	}
 	mek, err := decodeKey(i, key)
 	if err != nil {
 		return crypto.RingKeyEntry{}, err
 	}
 	if actual := crypto.MEKFingerprint(mek); actual != fp {
-		return crypto.RingKeyEntry{}, fmt.Errorf("Invalid MEK ring entry %d: fingerprint %s does not match the key (key fingerprints to %s)", i, fp, actual)
+		return crypto.RingKeyEntry{}, fmt.Errorf("invalid MEK ring entry %d: fingerprint %s does not match the key (key fingerprints to %s)", i, fp, actual)
 	}
 	return crypto.RingKeyEntry{MEK: mek, Fingerprint: fp}, nil
 }
@@ -119,14 +119,14 @@ func parsePaired(i int, fp, key string) (crypto.RingKeyEntry, error) {
 // decodeKey hex-decodes one 64-char (32-byte) MEK.
 func decodeKey(i int, key string) ([]byte, error) {
 	if len(key) != 64 || !isHex(key) {
-		return nil, fmt.Errorf("Invalid MEK ring entry %d: MEK must be 64 hex chars (32 bytes), got %d chars", i, len(key))
+		return nil, fmt.Errorf("invalid MEK ring entry %d: MEK must be 64 hex chars (32 bytes), got %d chars", i, len(key))
 	}
 	mek, err := hex.DecodeString(key)
 	if err != nil {
-		return nil, fmt.Errorf("Invalid MEK ring entry %d: invalid hex: %w", i, err)
+		return nil, fmt.Errorf("invalid MEK ring entry %d: invalid hex: %w", i, err)
 	}
 	if len(mek) != 32 {
-		return nil, fmt.Errorf("Invalid MEK ring entry %d: got %d bytes, expected 32", i, len(mek))
+		return nil, fmt.Errorf("invalid MEK ring entry %d: got %d bytes, expected 32", i, len(mek))
 	}
 	return mek, nil
 }

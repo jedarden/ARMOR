@@ -46,7 +46,7 @@ func (b *b2CanaryBackend) CompleteMultipartUpload(ctx context.Context, bucket, k
 	b.mockBackend.mu.Lock()
 	lengths := make([]int, len(parts))
 	for i, part := range parts {
-		lengths[i] = len(b.mockBackend.multipartData[uploadID][part.PartNumber])
+		lengths[i] = len(b.multipartData[uploadID][part.PartNumber])
 	}
 	b.mockBackend.mu.Unlock()
 	for i := 0; i < len(lengths)-1; i++ {

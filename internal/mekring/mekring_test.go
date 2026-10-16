@@ -102,7 +102,7 @@ func TestParseRejectsBadEntriesWithoutEchoingThem(t *testing.T) {
 		{"short fingerprint", "abcd:" + testMEK, "fingerprint must be 16 hex chars"},
 		{"short key", testFP + ":" + strings.Repeat("ab", 31), "MEK must be 64 hex chars"},
 		{"non-hex key", testFP + ":" + notHexKey, "MEK must be 64 hex chars"},
-		{"non-hex bare entry", "zz-not-hex-ring-4leakcheck", "Invalid MEK ring entry 0"},
+		{"non-hex bare entry", "zz-not-hex-ring-4leakcheck", "invalid MEK ring entry 0"},
 		{"non-hex fingerprint", "zzzzzzzzzzzzzzzz:" + testMEK, "fingerprint must be 16 hex chars"},
 	}
 	for _, tc := range cases {

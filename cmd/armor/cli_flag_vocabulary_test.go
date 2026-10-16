@@ -58,8 +58,7 @@ func TestDeprecatedFlagAliasesPrintPointersAndStillWork(t *testing.T) {
 	if err := fs.Parse([]string{"-v", "-version", "3"}); err != nil {
 		t.Fatalf("parse deprecated aliases: %v", err)
 	}
-	var got string
-	got = captureStderr(t, func() {
+	got := captureStderr(t, func() {
 		printDeprecatedFlagPointers(fs, map[string]string{
 			"v":       "-verbose",
 			"version": "-envelope-version",
