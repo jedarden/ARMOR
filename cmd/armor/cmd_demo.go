@@ -17,6 +17,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/jedarden/armor/internal/backend"
 	"github.com/jedarden/armor/internal/config"
 	"github.com/jedarden/armor/internal/logging"
 	"github.com/jedarden/armor/internal/server"
@@ -91,6 +92,13 @@ func demo(fs *flag.FlagSet) {
 	cfg, credentials, err := configureDemo(demoDir, hex.EncodeToString(mek), demoListenFlag, demoAdminListenFlag)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "failed to load configuration: %v\n", err)
+		if cleanupNeeded {
+			os.RemoveAll(tempDir)
+		}
+		os.Exit(1)
+	}
+	if err := initializeDemoBucket(cfg); err != nil {
+		fmt.Fprintf(os.Stderr, "failed to initialize demo bucket: %v\n", err)
 		if cleanupNeeded {
 			os.RemoveAll(tempDir)
 		}
@@ -245,6 +253,17 @@ func configureDemo(demoDir, mekHex, listen, adminListen string) (*config.Config,
 		return nil, demoCredentials{}, err
 	}
 	return cfg, credentials, nil
+}
+
+func initializeDemoBucket(cfg *config.Config) error {
+	filesystem, err := backend.NewFSBackend(backend.FSConfig{BasePath: cfg.FSPath})
+	if err != nil {
+		return fmt.Errorf("create filesystem backend: %w", err)
+	}
+	if err := filesystem.CreateBucket(context.Background(), cfg.Bucket); err != nil {
+		return fmt.Errorf("create bucket %s: %w", cfg.Bucket, err)
+	}
+	return nil
 }
 
 func randomDemoHex(size int) (string, error) {

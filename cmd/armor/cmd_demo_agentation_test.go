@@ -2,7 +2,6 @@ package main
 
 import (
 	"bytes"
-	"context"
 	"encoding/hex"
 	"io"
 	"net/http"
@@ -15,7 +14,6 @@ import (
 
 	"github.com/jedarden/armor/internal/agentation"
 	"github.com/jedarden/armor/internal/agentation/agentationsmoke"
-	"github.com/jedarden/armor/internal/backend"
 	"github.com/jedarden/armor/internal/config"
 	"github.com/jedarden/armor/internal/server"
 	"github.com/jedarden/armor/internal/server/srvtest"
@@ -59,12 +57,8 @@ func newDemoAgentationServer(t *testing.T) (*server.Server, *httptest.Server, st
 	t.Helper()
 
 	cfg, credentials := demoConfigForTest(t, t.TempDir(), "127.0.0.1:0", "127.0.0.1:0")
-	seedBackend, err := backend.NewFSBackend(backend.FSConfig{BasePath: cfg.FSPath})
-	if err != nil {
-		t.Fatalf("create demo backend: %v", err)
-	}
-	if err := seedBackend.CreateBucket(context.Background(), cfg.Bucket); err != nil {
-		t.Fatalf("create demo bucket: %v", err)
+	if err := initializeDemoBucket(cfg); err != nil {
+		t.Fatalf("initialize demo bucket: %v", err)
 	}
 	srv, err := server.New(cfg)
 	if err != nil {
@@ -122,12 +116,8 @@ func TestDemoMEKFilePersistsWithPrivatePermissions(t *testing.T) {
 func TestDemoDirKeepsObjectsReadableAfterRestart(t *testing.T) {
 	demoDir := t.TempDir()
 	firstConfig, _ := demoConfigForTest(t, demoDir, "127.0.0.1:0", "127.0.0.1:0")
-	seedBackend, err := backend.NewFSBackend(backend.FSConfig{BasePath: firstConfig.FSPath})
-	if err != nil {
-		t.Fatalf("create demo backend: %v", err)
-	}
-	if err := seedBackend.CreateBucket(context.Background(), firstConfig.Bucket); err != nil {
-		t.Fatalf("create demo bucket: %v", err)
+	if err := initializeDemoBucket(firstConfig); err != nil {
+		t.Fatalf("initialize demo bucket: %v", err)
 	}
 	firstServer, err := server.New(firstConfig)
 	if err != nil {
