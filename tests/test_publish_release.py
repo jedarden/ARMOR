@@ -396,6 +396,17 @@ def test_release_body_never_mentions_a_floating_tag():
     assert ":latest" not in body
 
 
+def test_release_body_does_not_offer_missing_public_mirror():
+    body = pr.release_body(
+        VERSION, COMMIT, None,
+        [(f"{pr.PUBLIC_IMAGE}:{VERSION}", "public", None),
+         (f"ronaldraygun/armor:{VERSION}", "private", HUB_DIGEST)],
+    )
+    assert "public GHCR server image was unavailable" in body
+    assert f"docker pull {pr.PUBLIC_IMAGE}:{VERSION}" not in body
+    assert f"go install github.com/jedarden/armor/cmd/armor@v{VERSION}" in body
+
+
 # ------------------------------------------------------ contract pins
 # (armor-562d57c9) The four contract areas the release gate runs this
 # suite for: idempotency (above), version/tag consistency, release

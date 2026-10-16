@@ -365,17 +365,18 @@ def release_body(
     ]
     for ref, vis, digest in digests:
         lines.append(f"| `{ref}` | {vis} | `{digest}` |" if digest else f"| `{ref}` | {vis} | digest unavailable at publish time |")
-    lines += [
-        "",
-        "Only semver tags are published; there is no floating tag.",
-        "",
-        "```bash",
-        f"docker pull {PUBLIC_IMAGE}:{version}",
-        f"go install github.com/jedarden/armor/cmd/armor@v{version}",
-        "```",
-        "",
-        "The GHCR image is the public server image and the only public artifact. The `ronaldraygun/*` images (server, restore-verifier, fleet console) are private to the ardenone fleet.",
-    ]
+    lines += ["", "Only semver tags are published; there is no floating tag.", ""]
+    public_ref = f"{PUBLIC_IMAGE}:{version}"
+    public_ready = any(ref == public_ref and digest for ref, _, digest in digests)
+    if public_ready:
+        lines += ["```bash", f"docker pull {public_ref}",
+                  f"go install github.com/jedarden/armor/cmd/armor@v{version}", "```", ""]
+    else:
+        lines += ["The public GHCR server image was unavailable when this release was published.", "",
+                  "```bash", f"go install github.com/jedarden/armor/cmd/armor@v{version}", "```", ""]
+    lines.append(
+        "The GHCR image is the public server image and the only public artifact. The `ronaldraygun/*` images (server, restore-verifier, fleet console) are private to the ardenone fleet."
+    )
     return "\n".join(lines) + "\n"
 
 
