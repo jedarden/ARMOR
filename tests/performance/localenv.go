@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"encoding/xml"
 	"fmt"
 	"io"
@@ -17,6 +18,7 @@ import (
 
 	"github.com/jedarden/armor/internal/backend"
 	"github.com/jedarden/armor/internal/config"
+	"github.com/jedarden/armor/internal/crypto"
 	"github.com/jedarden/armor/internal/server"
 	"github.com/jedarden/armor/internal/server/srvtest"
 )
@@ -46,11 +48,12 @@ var localCredentials = struct {
 // served on a loopback httptest listener so clients measure the full HTTP
 // path, not an in-memory shortcut.
 type LocalEnv struct {
-	Name     string // scenario family label, e.g. "local-v3" / "local-v3-compressed"
-	BaseURL  string
-	Bucket   string
-	Backend  *CountingBackend
-	Compress bool
+	Name         string // scenario family label, e.g. "local-v3" / "local-v3-compressed"
+	BaseURL      string
+	Bucket       string
+	Backend      *CountingBackend
+	Compress     bool
+	WriteVersion int // effective version reported by the running server
 
 	// scenario bookkeeping used by the matrix runner while it measures.
 	scenarioName        string
@@ -60,9 +63,10 @@ type LocalEnv struct {
 	peakTempDisk        int64
 	results             []ScenarioResult
 
-	srv    *httptest.Server
-	fsDir  string
-	client *http.Client
+	srv        *httptest.Server
+	fsDir      string
+	client     *http.Client
+	rawBackend backend.Backend
 }
 
 // ParseSize parses "64KiB", "1MiB", "64MiB", "1GiB" (also plain bytes).
@@ -105,6 +109,14 @@ func MustParseSize(s string) int64 {
 // multipart unsupported there — the harness only runs single-PUT scenarios
 // against it).
 func NewLocalEnv(name string, compress bool) (*LocalEnv, error) {
+	return NewLocalEnvWithVersion(name, compress, 3)
+}
+
+// NewLocalEnvWithVersion pins and checks the in-process server's write format.
+func NewLocalEnvWithVersion(name string, compress bool, writeVersion int) (*LocalEnv, error) {
+	if writeVersion != 2 && writeVersion != 3 {
+		return nil, fmt.Errorf("perf: unsupported write version %d", writeVersion)
+	}
 	fsDir, err := os.MkdirTemp("", "armor-perf-fs-")
 	if err != nil {
 		return nil, fmt.Errorf("perf: temp backend dir: %w", err)
@@ -129,9 +141,10 @@ func NewLocalEnv(name string, compress bool) (*LocalEnv, error) {
 		Credentials: map[string]*config.Credential{
 			localCredentials.access: {AccessKey: localCredentials.access, SecretKey: localCredentials.secret},
 		},
-		CacheMaxEntries: 1000,
-		CacheTTL:        300,
-		Compress:        compress,
+		CacheMaxEntries:    1000,
+		CacheTTL:           300,
+		Compress:           compress,
+		FormatWriteVersion: writeVersion,
 	}
 	srv, err := server.NewWithBackend(cfg, counting)
 	if err != nil {
@@ -142,13 +155,14 @@ func NewLocalEnv(name string, compress bool) (*LocalEnv, error) {
 	httptestSrv := httptest.NewServer(srv.Handler())
 
 	env := &LocalEnv{
-		Name:     name,
-		BaseURL:  httptestSrv.URL,
-		Bucket:   benchBucket,
-		Backend:  counting,
-		Compress: compress,
-		srv:      httptestSrv,
-		fsDir:    fsDir,
+		Name:       name,
+		BaseURL:    httptestSrv.URL,
+		Bucket:     benchBucket,
+		Backend:    counting,
+		Compress:   compress,
+		srv:        httptestSrv,
+		fsDir:      fsDir,
+		rawBackend: fsBackend,
 		client: &http.Client{
 			Timeout: 30 * time.Minute,
 			Transport: &http.Transport{
@@ -157,6 +171,23 @@ func NewLocalEnv(name string, compress bool) (*LocalEnv, error) {
 			},
 		},
 	}
+	// Check the effective configuration through the server's public endpoint,
+	// not only the Config pointer used to construct it.
+	versionResp, err := env.client.Get(env.BaseURL + "/version")
+	if err != nil {
+		env.Close()
+		return nil, fmt.Errorf("perf: read effective server version: %w", err)
+	}
+	var versionInfo struct {
+		FormatWriteVersion int `json:"format_write_version"`
+	}
+	decodeErr := json.NewDecoder(versionResp.Body).Decode(&versionInfo)
+	versionResp.Body.Close()
+	if versionResp.StatusCode != http.StatusOK || decodeErr != nil || versionInfo.FormatWriteVersion != writeVersion {
+		env.Close()
+		return nil, fmt.Errorf("perf: server write version: requested %d, endpoint reported %d (status %d, decode %v)", writeVersion, versionInfo.FormatWriteVersion, versionResp.StatusCode, decodeErr)
+	}
+	env.WriteVersion = versionInfo.FormatWriteVersion
 	// CreateBucket over the real S3 path so the bucket exists for clients.
 	rec, err := env.do(http.MethodPut, "/"+env.Bucket, nil, nil)
 	if err != nil {
@@ -240,9 +271,13 @@ func (e *LocalEnv) PutObject(key string, body []byte) (PutResult, error) {
 	if rec.StatusCode != http.StatusOK {
 		return PutResult{}, fmt.Errorf("put %s: status %d: %s", key, rec.StatusCode, truncate(string(errBody)))
 	}
+	duration := time.Since(start)
+	if err := e.assertStoredVersion(key, false); err != nil {
+		return PutResult{}, err
+	}
 	return PutResult{
 		PlaintextSHA: hashHex(body),
-		Duration:     time.Since(start),
+		Duration:     duration,
 		Bytes:        int64(len(body)),
 	}, nil
 }
@@ -251,10 +286,10 @@ func (e *LocalEnv) PutObject(key string, body []byte) (PutResult, error) {
 type GetSample struct {
 	TTFB      time.Duration // time to first body byte
 	Duration  time.Duration
-	Bytes     int64         // payload bytes read
-	Received  []byte        // populated only when capture is requested
-	SHA256    string        // hash of the payload actually received
-	TotalReqs int           // client-side HTTP requests consumed (redirects etc. always 1 here)
+	Bytes     int64  // payload bytes read
+	Received  []byte // populated only when capture is requested
+	SHA256    string // hash of the payload actually received
+	TotalReqs int    // client-side HTTP requests consumed (redirects etc. always 1 here)
 }
 
 // GetObject performs one full GET through the service, capturing TTFB,
@@ -380,11 +415,61 @@ func (e *LocalEnv) MultipartPut(key string, parts [][]byte) (PutResult, error) {
 	if crec.StatusCode != http.StatusOK {
 		return PutResult{}, fmt.Errorf("complete multipart %s: status %d", key, crec.StatusCode)
 	}
+	duration := time.Since(start)
+	if err := e.assertStoredVersion(key, true); err != nil {
+		return PutResult{}, err
+	}
 	return PutResult{
 		PlaintextSHA: hashHex(concat(parts)),
-		Duration:     time.Since(start),
+		Duration:     duration,
 		Bytes:        int64(totalLen(parts)),
 	}, nil
+}
+
+// assertStoredVersion checks the stored metadata for every acknowledged write.
+// Single-PUT objects also carry an envelope header; multipart ciphertext has
+// no header, so its metadata is the authoritative format marker.
+func (e *LocalEnv) assertStoredVersion(key string, multipart bool) error {
+	metadataKey := key
+	if multipart {
+		metadataKey += ".armor-manifest"
+	}
+	info, err := e.rawBackend.Head(context.Background(), e.Bucket, metadataKey)
+	if err != nil {
+		return fmt.Errorf("perf: inspect stored %s: %w", metadataKey, err)
+	}
+	want := fmt.Sprint(e.WriteVersion)
+	if got := info.Metadata["x-amz-meta-armor-version"]; got != want {
+		return fmt.Errorf("perf: stored %s metadata version = %q, claimed %s", metadataKey, got, want)
+	}
+	if multipart {
+		if got := info.Metadata["x-amz-meta-armor-multipart"]; got != "true" {
+			return fmt.Errorf("perf: stored %s lacks multipart metadata marker", metadataKey)
+		}
+		if e.WriteVersion == 3 {
+			sidecar, err := backend.NewMultipartStateManager(e.rawBackend, e.Bucket).LoadHMACTableV3(context.Background(), key)
+			if err != nil {
+				return fmt.Errorf("perf: inspect stored %s multipart sidecar: %w", key, err)
+			}
+			if sidecar.Version != e.WriteVersion {
+				return fmt.Errorf("perf: stored %s sidecar version = %d, claimed %d", key, sidecar.Version, e.WriteVersion)
+			}
+		}
+		return nil
+	}
+	r, err := e.rawBackend.GetRange(context.Background(), e.Bucket, key, 0, crypto.HeaderSize)
+	if err != nil {
+		return fmt.Errorf("perf: read stored %s header: %w", key, err)
+	}
+	defer r.Close()
+	header, err := crypto.ReadEnvelopeHeader(r)
+	if err != nil {
+		return fmt.Errorf("perf: decode stored %s header: %w", key, err)
+	}
+	if int(header.Version) != e.WriteVersion {
+		return fmt.Errorf("perf: stored %s envelope version = %d, claimed %d", key, header.Version, e.WriteVersion)
+	}
+	return nil
 }
 
 // DeletePrefix deletes every object under BenchPrefix in the env's bucket and

@@ -15,7 +15,7 @@ throughput measurement.
 | ARMOR path | tailnet S3 edge `armor-iad-ci-ts.ardenone.com:8444` |
 | Public path | `b2-us-west-002.ardenone.com/file/iad-ci/<key>` |
 | Runner | `codinghome`, Linux amd64 |
-| Object format | v3, 64 KiB blocks, AES-GCM |
+| Object format | v3, 64 KiB blocks, AES-256-CTR + HMAC-SHA256 |
 | Default workload | 64 MiB synthetic incompressible object; 3 serialized PUTs; 5 full reads; 3 samples of 5 range shapes |
 | Range shapes | aligned 64 KiB, unaligned 32 KiB, aligned 1 MiB, aligned 8 MiB, suffix 64 KiB |
 | Credentials | read at runtime from OpenBao `rs-manager/iad-ci/armor` and `rs-manager/iad-ci/b2/iad-ci`; no values recorded |

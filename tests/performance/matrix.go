@@ -38,6 +38,8 @@ type MatrixConfig struct {
 	// Compressed adds the ADR-007 single-PUT compression scenarios
 	// (compressible payloads; ranges and multipart unsupported there).
 	Compressed bool
+	// WriteVersion selects the server write format (2 or 3). Zero defaults to 3.
+	WriteVersion int
 }
 
 // DefaultMatrixConfig returns the bounded default matrix.
@@ -51,45 +53,47 @@ func DefaultMatrixConfig() MatrixConfig {
 		PartSize:         8 << 20,
 		OutDir:           filepath.Join(os.TempDir(), "armor-perf-results"),
 		Compressed:       true,
+		WriteVersion:     3,
 	}
 }
 
 // ScenarioResult is one measured scenario.
 type ScenarioResult struct {
-	Name               string          `json:"name"`
-	ObjectBytes        int64           `json:"object_bytes"`
-	Samples            int             `json:"samples"`
-	ClientConcurrency  int             `json:"client_concurrency"`
-	AggregateMBps      float64         `json:"aggregate_mbps"`
-	MBpsP50            float64         `json:"mbps_p50"`
-	MBpsP95            float64         `json:"mbps_p95"`
-	TTFBMsP50          float64         `json:"ttfb_ms_p50"`
-	TTFBMsP95          float64         `json:"ttfb_ms_p95"`
-	CompletionMsP50    float64         `json:"completion_ms_p50"`
-	CompletionMsP95    float64         `json:"completion_ms_p95"`
+	Name               string           `json:"name"`
+	WriteVersion       int              `json:"write_version"`
+	ObjectBytes        int64            `json:"object_bytes"`
+	Samples            int              `json:"samples"`
+	ClientConcurrency  int              `json:"client_concurrency"`
+	AggregateMBps      float64          `json:"aggregate_mbps"`
+	MBpsP50            float64          `json:"mbps_p50"`
+	MBpsP95            float64          `json:"mbps_p95"`
+	TTFBMsP50          float64          `json:"ttfb_ms_p50"`
+	TTFBMsP95          float64          `json:"ttfb_ms_p95"`
+	CompletionMsP50    float64          `json:"completion_ms_p50"`
+	CompletionMsP95    float64          `json:"completion_ms_p95"`
 	BackendOpsDelta    map[string]int64 `json:"backend_ops_delta"`
 	BackendBytesDelta  map[string]int64 `json:"backend_bytes_delta"`
-	BackendMaxInflight int64           `json:"backend_max_inflight"`
-	CPUSeconds         float64         `json:"cpu_seconds"`
-	AllocBytes         uint64          `json:"alloc_bytes"`
-	Verified           bool            `json:"verified"`
-	VerifyNote         string          `json:"verify_note,omitempty"`
+	BackendMaxInflight int64            `json:"backend_max_inflight"`
+	CPUSeconds         float64          `json:"cpu_seconds"`
+	AllocBytes         uint64           `json:"alloc_bytes"`
+	Verified           bool             `json:"verified"`
+	VerifyNote         string           `json:"verify_note,omitempty"`
 }
 
 // RunReport is the full output of one matrix run.
 type RunReport struct {
-	GeneratedAt        string           `json:"generated_at"`
-	ARMORCommit        string           `json:"armor_commit"`
-	GoVersion          string           `json:"go_version"`
-	Environment        string           `json:"environment"`
-	ObjectFormat       string           `json:"object_format"`
-	CFStatus           string           `json:"cf_cache_status"`
-	TestLocation       string           `json:"test_location"`
-	Scenarios          []ScenarioResult `json:"scenarios"`
-	PeakRSSKiB         int64            `json:"peak_rss_kib"`
-	TempDiskPeakBytes  int64            `json:"temp_disk_peak_bytes"`
-	TempDiskDir        string           `json:"temp_disk_dir"`
-	Notes              []string         `json:"notes"`
+	GeneratedAt       string           `json:"generated_at"`
+	ARMORCommit       string           `json:"armor_commit"`
+	GoVersion         string           `json:"go_version"`
+	Environment       string           `json:"environment"`
+	ObjectFormat      string           `json:"object_format"`
+	CFStatus          string           `json:"cf_cache_status"`
+	TestLocation      string           `json:"test_location"`
+	Scenarios         []ScenarioResult `json:"scenarios"`
+	PeakRSSKiB        int64            `json:"peak_rss_kib"`
+	TempDiskPeakBytes int64            `json:"temp_disk_peak_bytes"`
+	TempDiskDir       string           `json:"temp_disk_dir"`
+	Notes             []string         `json:"notes"`
 }
 
 // RunBaseline executes the bounded default (or configured) matrix against
@@ -105,18 +109,19 @@ func RunBaseline(cfg MatrixConfig) (*RunReport, error) {
 		return nil, err
 	}
 
-	v3, err := NewLocalEnv("local-v3", false)
+	version := cfg.effectiveWriteVersion()
+	primary, err := NewLocalEnvWithVersion(fmt.Sprintf("local-v%d", version), false, version)
 	if err != nil {
 		return nil, err
 	}
-	defer v3.Close()
-	if err := runMatrixAgainst(v3, cfg, false); err != nil {
+	defer primary.Close()
+	if err := runMatrixAgainst(primary, cfg, false); err != nil {
 		return nil, err
 	}
 
 	var compressed *LocalEnv
 	if cfg.Compressed {
-		compressed, err = NewLocalEnv("local-v3-compressed", true)
+		compressed, err = NewLocalEnvWithVersion(fmt.Sprintf("local-v%d-compressed", version), true, version)
 		if err != nil {
 			return nil, err
 		}
@@ -135,14 +140,14 @@ func RunBaseline(cfg MatrixConfig) (*RunReport, error) {
 		ARMORCommit:  commit,
 		GoVersion:    runtime.Version(),
 		Environment:  environment(),
-		ObjectFormat: "v3 envelope (single-PUT and multipart), 64 KiB blocks; AES-GCM",
+		ObjectFormat: fmt.Sprintf("v%d envelope (single-PUT%s), 64 KiB blocks; AES-256-CTR + HMAC-SHA256", version, map[bool]string{true: " and multipart", false: ""}[version == 3]),
 		CFStatus:     "n/a (local loopback; no Cloudflare in path)",
 		TestLocation: "tests/performance (in-process service over filesystem backend)",
-		Scenarios:    append(append([]ScenarioResult{}, v3.results...), compressedResults(compressed)...),
-		TempDiskDir:  v3.fsDir,
+		Scenarios:    append(append([]ScenarioResult{}, primary.results...), compressedResults(compressed)...),
+		TempDiskDir:  primary.fsDir,
 	}
 	report.PeakRSSKiB = peakRSSKiB()
-	report.TempDiskPeakBytes = v3.peakTempDisk
+	report.TempDiskPeakBytes = primary.peakTempDisk
 	if compressed != nil && compressed.peakTempDisk > report.TempDiskPeakBytes {
 		report.TempDiskPeakBytes = compressed.peakTempDisk
 	}
@@ -175,6 +180,9 @@ func compressedResults(e *LocalEnv) []ScenarioResult {
 }
 
 func (c MatrixConfig) validate() error {
+	if v := c.effectiveWriteVersion(); v != 2 && v != 3 {
+		return fmt.Errorf("perf: write version %d must be 2 or 3", v)
+	}
 	if len(c.Sizes) == 0 {
 		return fmt.Errorf("perf: no sizes configured")
 	}
@@ -189,9 +197,17 @@ func (c MatrixConfig) validate() error {
 	return nil
 }
 
-// runMatrixAgainst runs the uncompressed v3 scenario matrix on env.
+func (c MatrixConfig) effectiveWriteVersion() int {
+	if c.WriteVersion == 0 {
+		return 3
+	}
+	return c.WriteVersion
+}
+
+// runMatrixAgainst runs the uncompressed scenario matrix on env.
 func runMatrixAgainst(env *LocalEnv, cfg MatrixConfig, _ bool) error {
 	ctx := context.Background()
+	format := fmt.Sprintf("v%d", env.WriteVersion)
 	for _, sizeStr := range cfg.Sizes {
 		size := MustParseSize(sizeStr)
 		body := SyntheticBody(int(size))
@@ -203,12 +219,12 @@ func runMatrixAgainst(env *LocalEnv, cfg MatrixConfig, _ bool) error {
 			return err
 		}
 		// cold: first GET of this key.
-		if err := measureRead(env, cfg, fmt.Sprintf("read-full-cold/v3/%s", strings.ToLower(sizeStr)),
+		if err := measureRead(env, cfg, fmt.Sprintf("read-full-cold/%s/%s", format, strings.ToLower(sizeStr)),
 			readKey, "", sha, size, 1, 1); err != nil {
 			return err
 		}
 		// warm: repeated GETs.
-		if err := measureRead(env, cfg, fmt.Sprintf("read-full-warm/v3/%s", strings.ToLower(sizeStr)),
+		if err := measureRead(env, cfg, fmt.Sprintf("read-full-warm/%s/%s", format, strings.ToLower(sizeStr)),
 			readKey, "", sha, size, cfg.ReadSamples, 1); err != nil {
 			return err
 		}
@@ -239,9 +255,9 @@ func runMatrixAgainst(env *LocalEnv, cfg MatrixConfig, _ bool) error {
 			rng   string
 			bytes int64
 		}{
-			{"read-range-aligned/v3/" + strings.ToLower(sizeStr), fmt.Sprintf("bytes=%d-%d", alignedOff, alignedOff+alignedLen-1), alignedLen},
-			{"read-range-unaligned/v3/" + strings.ToLower(sizeStr), fmt.Sprintf("bytes=%d-%d", unalignedOff, unalignedOff+unalignedLen-1), unalignedLen},
-			{"read-range-suffix/v3/" + strings.ToLower(sizeStr), fmt.Sprintf("bytes=-%d", suffixLen), suffixLen},
+			{"read-range-aligned/" + format + "/" + strings.ToLower(sizeStr), fmt.Sprintf("bytes=%d-%d", alignedOff, alignedOff+alignedLen-1), alignedLen},
+			{"read-range-unaligned/" + format + "/" + strings.ToLower(sizeStr), fmt.Sprintf("bytes=%d-%d", unalignedOff, unalignedOff+unalignedLen-1), unalignedLen},
+			{"read-range-suffix/" + format + "/" + strings.ToLower(sizeStr), fmt.Sprintf("bytes=-%d", suffixLen), suffixLen},
 		} {
 			if err := measureRange(env, cfg, sc.name, readKey, sc.rng, sc.bytes, rangeSamples); err != nil {
 				return err
@@ -249,7 +265,7 @@ func runMatrixAgainst(env *LocalEnv, cfg MatrixConfig, _ bool) error {
 		}
 
 		// --- write: single-PUT, verified by service read-back ---
-		if err := measureWrite(env, cfg, fmt.Sprintf("write-single-put/v3/%s", strings.ToLower(sizeStr)),
+		if err := measureWrite(env, cfg, fmt.Sprintf("write-single-put/%s/%s", format, strings.ToLower(sizeStr)),
 			size, cfg.WriteSamples, nil); err != nil {
 			return err
 		}
@@ -269,7 +285,7 @@ func runMatrixAgainst(env *LocalEnv, cfg MatrixConfig, _ bool) error {
 				shas[i] = sha
 			}
 			if err := measureConcurrentReads(env, cfg,
-				fmt.Sprintf("read-full-warm/v3/%s/clients=%d", strings.ToLower(sizeStr), conc),
+				fmt.Sprintf("read-full-warm/%s/%s/clients=%d", format, strings.ToLower(sizeStr), conc),
 				keys, shas, size, cfg.ReadSamples); err != nil {
 				return err
 			}
@@ -279,7 +295,7 @@ func runMatrixAgainst(env *LocalEnv, cfg MatrixConfig, _ bool) error {
 	// --- multipart writes at the largest configured size (bounded: one size) ---
 	bigStr := cfg.Sizes[len(cfg.Sizes)-1]
 	big := MustParseSize(bigStr)
-	if big >= 8*cfg.PartSize {
+	if env.WriteVersion == 3 && big >= 8*cfg.PartSize {
 		nParts := int(big / cfg.PartSize)
 
 		// single-client multipart
@@ -303,6 +319,7 @@ func runMatrixAgainst(env *LocalEnv, cfg MatrixConfig, _ bool) error {
 // compressible payloads, single-PUT only (ranges and multipart are
 // unsupported on this path by design).
 func runCompressedScenarios(env *LocalEnv, cfg MatrixConfig) error {
+	format := fmt.Sprintf("v%d", env.WriteVersion)
 	for _, sizeStr := range cfg.Sizes {
 		size := MustParseSize(sizeStr)
 		body := SyntheticCompressible(int(size))
@@ -311,7 +328,7 @@ func runCompressedScenarios(env *LocalEnv, cfg MatrixConfig) error {
 		if _, err := env.PutObject(key, body); err != nil {
 			return err
 		}
-		if err := measureRead(env, cfg, fmt.Sprintf("read-full-warm/compressed/%s", strings.ToLower(sizeStr)),
+		if err := measureRead(env, cfg, fmt.Sprintf("read-full-warm/compressed/%s/%s", format, strings.ToLower(sizeStr)),
 			key, "", sha, size, cfg.ReadSamples, 1); err != nil {
 			return err
 		}
@@ -319,7 +336,7 @@ func runCompressedScenarios(env *LocalEnv, cfg MatrixConfig) error {
 		if size >= 64<<20 {
 			writes = 2
 		}
-		if err := measureWriteOnKey(env, cfg, fmt.Sprintf("write-single-put/compressed/%s", strings.ToLower(sizeStr)),
+		if err := measureWriteOnKey(env, cfg, fmt.Sprintf("write-single-put/compressed/%s/%s", format, strings.ToLower(sizeStr)),
 			key, body, sha, writes); err != nil {
 			return err
 		}
@@ -371,6 +388,7 @@ func (e *LocalEnv) endScenario(baseCounts, baseBytes map[string]int64, baseSys s
 	}
 	r := ScenarioResult{
 		Name:               e.scenarioName,
+		WriteVersion:       e.WriteVersion,
 		ObjectBytes:        e.scenarioObjectBytes,
 		Samples:            e.scenarioSamples,
 		ClientConcurrency:  e.scenarioConc,
@@ -728,13 +746,13 @@ func renderMarkdown(r *RunReport) string {
 	fmt.Fprintf(&b, "# ARMOR performance baseline — %s\n\n", r.GeneratedAt)
 	fmt.Fprintf(&b, "- ARMOR commit: `%s`\n- Go: %s\n- Environment: %s\n- Object format: %s\n- CF-Cache-Status: %s\n- Test location: %s\n- Peak RSS: %d MiB\n- Temp-disk peak: %d MiB (%s)\n\n",
 		r.ARMORCommit, r.GoVersion, r.Environment, r.ObjectFormat, r.CFStatus, r.TestLocation, r.PeakRSSKiB/1024, r.TempDiskPeakBytes/(1024*1024), r.TempDiskDir)
-	b.WriteString("| scenario | object B | samples | clients | agg MB/s | MB/s p50 | MB/s p95 | TTFB p50 ms | completion p50 ms | completion p95 ms | backend GET/range | backend PUT/parts | max inflight | verified |\n")
-	b.WriteString("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|\n")
+	b.WriteString("| scenario | write version | object B | samples | clients | agg MB/s | MB/s p50 | MB/s p95 | TTFB p50 ms | completion p50 ms | completion p95 ms | backend GET/range | backend PUT/parts | max inflight | verified |\n")
+	b.WriteString("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|\n")
 	for _, s := range r.Scenarios {
 		reads := s.BackendOpsDelta[opGet] + s.BackendOpsDelta[opGetRange]
 		puts := s.BackendOpsDelta[opPut] + s.BackendOpsDelta[opUploadPart]
-		fmt.Fprintf(&b, "| %s | %d | %d | %d | %.1f | %.1f | %.1f | %.2f | %.2f | %.2f | %d | %d | %d | %v |\n",
-			s.Name, s.ObjectBytes, s.Samples, s.ClientConcurrency, s.AggregateMBps, s.MBpsP50, s.MBpsP95,
+		fmt.Fprintf(&b, "| %s | v%d | %d | %d | %d | %.1f | %.1f | %.1f | %.2f | %.2f | %.2f | %d | %d | %d | %v |\n",
+			s.Name, s.WriteVersion, s.ObjectBytes, s.Samples, s.ClientConcurrency, s.AggregateMBps, s.MBpsP50, s.MBpsP95,
 			s.TTFBMsP50, s.CompletionMsP50, s.CompletionMsP95, reads, puts, s.BackendMaxInflight, s.Verified)
 	}
 	b.WriteString("\n")

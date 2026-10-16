@@ -51,6 +51,13 @@ func TestRecordedBaseline(t *testing.T) {
 	if v := os.Getenv("ARMOR_PERF_OUT"); v != "" {
 		cfg.OutDir = v
 	}
+	if v := os.Getenv("ARMOR_PERF_WRITE_VERSION"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || (n != 2 && n != 3) {
+			t.Fatalf("ARMOR_PERF_WRITE_VERSION=%q must be 2 or 3", v)
+		}
+		cfg.WriteVersion = n
+	}
 	if os.Getenv("ARMOR_PERF_NO_COMPRESS") == "1" {
 		cfg.Compressed = false
 	}

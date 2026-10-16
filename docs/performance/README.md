@@ -24,13 +24,15 @@ run) as current production throughput**; re-run the harness.
 
 ## What is measured
 
-Scenario families (all against the v3 envelope, 64 KiB blocks, AES-GCM):
+Scenario families use the selected v2 or v3 single-PUT envelope (v3 by
+default), 64 KiB blocks, and AES-256-CTR + HMAC-SHA256. Multipart scenarios
+use v3. Every local result records its effective write version.
 
 - **Reads** — full GET (cold = first GET of the key after its write; warm =
   repeated GETs of the same key), and range GETs: block-aligned,
   unaligned, and suffix (`bytes=-N`). Each sample is hash-verified against
   the payload that was written.
-- **Writes** — v3 single-PUT; v3 multipart (sequential parts within one
+- **Writes** — selected-version single-PUT; v3 multipart (sequential parts within one
   upload, 8 MiB parts ≥ the ADR-015 5 MiB uniform minimum); concurrent
   multipart across 4 clients. Every acknowledged write is verified by
   re-reading the object through the **ordinary service GET** (full object,
@@ -49,7 +51,9 @@ measures a block-aligned 64 KiB read, an unaligned 32 KiB read, aligned 1 MiB
 and 8 MiB reads, and a 64 KiB suffix. It warms each range once, compares every
 sample with the exact plaintext slice, and writes
 `large-range-results.{json,md}`. Set `ARMOR_PERF_LARGE_OBJECT=1GiB` to make the
-same run exercise a 1 GiB object.
+same run exercise a 1 GiB object. The v3 run also measures multipart ranges,
+including a read across a part boundary. Set `ARMOR_PERF_BACKEND_RTT_MS` to
+inject a fixed delay per backend call for a controlled latency comparison.
 
 Per scenario the harness records: payload MB/s (aggregate, p50, p95),
 time-to-first-byte p50/p95, completion latency p50/p95, backend
@@ -65,11 +69,17 @@ No credentials, no network, no B2. The service runs in-process over a
 temp filesystem backend (honors `TMPDIR`):
 
 ```bash
-# bounded default matrix (~15 s): 64KiB/1MiB/64MiB, writes verified via service read-back
-ARMOR_PERF_RUN=1 go test ./tests/performance/ -run TestRecordedBaseline -v -timeout 40m
+# verified uncompressed matrix: 64KiB/1MiB/64MiB, writes checked by service read-back
+ARMOR_PERF_RUN=1 ARMOR_PERF_NO_COMPRESS=1 go test ./tests/performance/ -run TestRecordedBaseline -v -count=1 -timeout 40m
+
+# v2 comparison, explicitly labelled in every output row
+ARMOR_PERF_RUN=1 ARMOR_PERF_NO_COMPRESS=1 ARMOR_PERF_WRITE_VERSION=2 go test ./tests/performance/ -run TestRecordedBaseline -v -count=1 -timeout 40m
 
 # focused large-object range report (default: one 64 MiB object, five samples)
-ARMOR_PERF_RUN=1 go test ./tests/performance/ -run TestLargeObjectRangeReadBaseline -v -timeout 40m
+ARMOR_PERF_RUN=1 go test ./tests/performance/ -run TestLargeObjectRangeReadBaseline -v -count=1 -timeout 40m
+
+# focused v2 comparison
+ARMOR_PERF_RUN=1 ARMOR_PERF_WRITE_VERSION=2 go test ./tests/performance/ -run TestLargeObjectRangeReadBaseline -v -count=1 -timeout 40m
 
 # results (JSON + markdown) land in:
 #   $ARMOR_PERF_OUT/results.{json,md}   (default: <os.TempDir>()/armor-perf-results)
@@ -80,11 +90,13 @@ Knobs (all optional):
 | Variable | Default | Meaning |
 |---|---|---|
 | `ARMOR_PERF_SIZES` | `64KiB,1MiB,64MiB` | comma list (`KiB`/`MiB`/`GiB`; 1 GiB opt-in) |
+| `ARMOR_PERF_WRITE_VERSION` | `3` | local single-PUT format: `2` or `3`; the v3 run also measures multipart |
 | `ARMOR_PERF_READ_SAMPLES` | `7` | warm-read samples per read scenario |
 | `ARMOR_PERF_WRITE_SAMPLES` | `3` | samples per write scenario |
 | `ARMOR_PERF_PART` | `8MiB` | uniform multipart part size (≥ 5 MiB, ADR-015) |
 | `ARMOR_PERF_MULTIPART_CLIENTS` | `4` | clients in the concurrent-multipart scenario |
-| `ARMOR_PERF_NO_COMPRESS` | unset | `1` skips the compressed-path scenarios |
+| `ARMOR_PERF_BACKEND_RTT_MS` | `0` | fixed per-backend-call delay in the focused large-range run only |
+| `ARMOR_PERF_NO_COMPRESS` | unset | `1` runs the currently verified uncompressed comparison; unset includes the compressed diagnostic rows |
 | `ARMOR_PERF_OUT` | `<tmp>/armor-perf-results` | output directory |
 | `ARMOR_PERF_COMMIT` | VCS build info | commit stamp when running from an export (exports carry no VCS metadata) |
 
@@ -185,74 +197,88 @@ It is intentionally separate from the full read/write matrix because range
 work is dominated by the requested span, block alignment, metadata/table
 fetches, and backend round trips rather than whole-object throughput.
 
-## Recorded baseline — 2026-09-18
+For `armor-5694713b`, `armor-98864f12`, `armor-272299ca`, and
+`armor-73564f97`, before/after throughput claims must cite this harness's
+command and report rows. Record the `write_version`, write path, object and
+range sizes, sample counts, injected RTT, source commit, and environment on
+both sides. Use the v3 single-PUT and multipart rows for changes to those
+paths; use the [small-object request-count and latency suite](small-object-get-baseline.md)
+for small full-GET changes. The original 2026-09-18 local rows were v2
+despite their `v3` labels and cannot serve as v3 before numbers.
 
-Measured from a clean export of ARMOR `4c062f0a` (the harness itself lands in
-the following commit; nothing in the harness changed the measured code).
-Raw JSON: produced by `ARMOR_PERF_RUN=1 ARMOR_PERF_COMMIT=4c062f0a
-go test ./tests/performance/ -run TestRecordedBaseline` — 29 scenarios,
-10.7 s wall.
+## Corrected local matrix baseline — 2026-10-15
 
-- Environment: codinghome, linux/amd64, GOMAXPROCS=20 (i5-13500, 14 cores),
-  Go 1.25.0, loopback + local temp filesystem backend
-- Peak RSS 550 MiB; peak temp-disk 1225 MiB (harness-owned, removed after)
-- Sample counts are per-row; p50/p95 over per-sample values
+The 2026-09-18 matrix was labelled v3 but the local server wrote v2. Its old
+v3 rows are withdrawn. These replacement runs used a clean export of server
+source `4ba4cb11` with only the `armor-2af339bc` performance harness changes
+overlaid; the server source was unchanged. Host: codinghome, Linux amd64,
+Go 1.26.5, GOMAXPROCS=20; loopback and temporary filesystem backend,
+64 KiB encryption blocks, AES-256-CTR + HMAC-SHA256. Each stored object
+header or multipart manifest and the running server version were checked
+against the row label. Both published runs disabled compression; v2 had 21
+verified rows and v3 had 23 verified rows. The v3 run includes sequential
+and four-client multipart writes. Values are local measurements, not B2 or
+Cloudflare throughput.
 
-| scenario | B | n | cl | agg MB/s | p50 MB/s | p95 MB/s | TTFB p50 ms | compl p50 ms | p95 ms | verified |
-|---|---|---|---|---|---|---|---|---|---|---|
-| read-full-cold/v3/64kib | 64K | 1 | 1 | 100.6 | 100.6 | 100.6 | 0.55 | 0.62 | 0.62 | ✓ |
-| read-full-warm/v3/64kib | 64K | 7 | 1 | 87.7 | 94.5 | 108.4 | 0.61 | 0.66 | 1.05 | ✓ |
-| read-range-aligned/v3/64kib | 32K | 7 | 1 | 47.8 | 42.3 | 71.6 | 0.69 | 0.74 | 0.79 | ✓ |
-| read-range-unaligned/v3/64kib | 32K | 7 | 1 | 58.5 | 56.3 | 65.7 | 0.50 | 0.55 | 0.60 | ✓ |
-| read-range-suffix/v3/64kib | 64K | 7 | 1 | 108.9 | 107.2 | 147.7 | 0.52 | 0.58 | 0.73 | ✓ |
-| write-single-put/v3/64kib | 64K | 3 | 1 | 72.0 | 75.3 | 82.5 | — | 0.83 | 1.02 | ✓ |
-| read-warm/v3/64kib/clients=4 | 64K | 28 | 4 | 199.5 | 58.8 | 99.2 | 0.93 | 1.05 | 1.39 | ✓ |
-| read-full-cold/v3/1mib | 1M | 1 | 1 | 341.2 | 341.2 | 341.2 | 0.65 | 2.93 | 2.93 | ✓ |
-| read-full-warm/v3/1mib | 1M | 7 | 1 | 397.0 | 398.2 | 451.2 | 0.46 | 2.51 | 2.83 | ✓ |
-| read-range-aligned/v3/1mib | 64K | 7 | 1 | 84.7 | 88.0 | 103.7 | 0.64 | 0.71 | 0.92 | ✓ |
-| read-range-unaligned/v3/1mib | 32K | 7 | 1 | 37.7 | 36.4 | 58.2 | 0.82 | 0.86 | 1.30 | ✓ |
-| read-range-suffix/v3/1mib | 64K | 7 | 1 | 73.6 | 70.8 | 116.8 | 0.82 | 0.88 | 1.28 | ✓ |
-| write-single-put/v3/1mib | 1M | 3 | 1 | 104.5 | 107.1 | 113.7 | — | 9.34 | 10.58 | ✓ |
-| read-warm/v3/1mib/clients=4 | 1M | 28 | 4 | 942.1 | 290.3 | 327.4 | 0.85 | 3.41 | 6.93 | ✓ |
-| read-full-cold/v3/64mib | 64M | 1 | 1 | 489.3 | 489.3 | 489.3 | 0.51 | 130.80 | 130.80 | ✓ |
-| read-full-warm/v3/64mib | 64M | 7 | 1 | 541.3 | 557.0 | 587.5 | 0.53 | 114.90 | 129.44 | ✓ |
-| read-range-aligned/v3/64mib | 64K | 3 | 1 | 109.9 | 109.7 | 115.9 | 0.50 | 0.57 | 0.60 | ✓ |
-| read-range-unaligned/v3/64mib | 32K | 3 | 1 | 61.6 | 61.0 | 63.0 | 0.46 | 0.51 | 0.51 | ✓ |
-| read-range-suffix/v3/64mib | 64K | 3 | 1 | 134.4 | 137.4 | 141.6 | 0.39 | 0.46 | 0.50 | ✓ |
-| write-single-put/v3/64mib | 64M | 3 | 1 | 233.1 | 229.2 | 250.8 | — | 279.22 | 289.29 | ✓ |
-| read-warm/v3/64mib/clients=4 | 64M | 28 | 4 | 1443.7 | 367.7 | 432.3 | 0.64 | 164.41 | 226.02 | ✓ |
-| write-multipart/v3/64mib (8×8MiB) | 64M | 3 | 1 | 51.7 | 95.9 | 126.6 | — | 590.00 | 769.21 | ✓ |
-| write-multipart-concurrent/v3/64mib/clients=4 | 64M | 2 | 4 | 74.5 | 100.2 | 301.0 | — | 639.29 | 917.83 | ✓ |
-| compressed rows (6 scenarios) | — | — | — | see known finding F1 | | | | | | ✗ |
+| Write version | Scenario | Payload | n | Clients | Aggregate MB/s | TTFB p50 ms | Completion p50 / p95 ms | Verified |
+|---|---|---:|---:|---:|---:|---:|---:|---|
+| v2 | `read-full-cold/v2/64kib` | 64 KiB | 1 | 1 | 145.7 | 0.37 | 0.43 / 0.43 | yes |
+| v2 | `read-full-warm/v2/64kib` | 64 KiB | 7 | 1 | 75.1 | 0.61 | 0.68 / 1.49 | yes |
+| v2 | `read-range-aligned/v2/64kib` | 32 KiB | 7 | 1 | 43.1 | 0.60 | 0.66 / 1.22 | yes |
+| v2 | `read-range-unaligned/v2/64kib` | 32 KiB | 7 | 1 | 51.9 | 0.54 | 0.62 / 0.70 | yes |
+| v2 | `read-range-suffix/v2/64kib` | 64 KiB | 7 | 1 | 105.1 | 0.48 | 0.64 / 0.72 | yes |
+| v2 | `write-single-put/v2/64kib` | 64 KiB | 3 | 1 | 48.6 | — | 1.22 / 1.68 | yes |
+| v2 | `read-full-warm/v2/64kib/clients=4` | 64 KiB | 28 | 4 | 151.6 | 0.89 | 0.96 / 4.62 | yes |
+| v2 | `read-full-cold/v2/1mib` | 1 MiB | 1 | 1 | 406.5 | 0.39 | 2.46 / 2.46 | yes |
+| v2 | `read-full-warm/v2/1mib` | 1 MiB | 7 | 1 | 405.8 | 0.53 | 2.54 / 2.68 | yes |
+| v2 | `read-range-aligned/v2/1mib` | 64 KiB | 7 | 1 | 105.3 | 0.52 | 0.60 / 0.73 | yes |
+| v2 | `read-range-unaligned/v2/1mib` | 32 KiB | 7 | 1 | 61.7 | 0.44 | 0.49 / 0.62 | yes |
+| v2 | `read-range-suffix/v2/1mib` | 64 KiB | 7 | 1 | 109.5 | 0.48 | 0.57 / 0.67 | yes |
+| v2 | `write-single-put/v2/1mib` | 1 MiB | 3 | 1 | 120.8 | — | 8.48 / 8.56 | yes |
+| v2 | `read-full-warm/v2/1mib/clients=4` | 1 MiB | 28 | 4 | 1265.5 | 0.76 | 3.03 / 3.65 | yes |
+| v2 | `read-full-cold/v2/64mib` | 64 MiB | 1 | 1 | 459.2 | 0.60 | 139.38 / 139.38 | yes |
+| v2 | `read-full-warm/v2/64mib` | 64 MiB | 7 | 1 | 518.0 | 0.56 | 123.61 / 129.60 | yes |
+| v2 | `read-range-aligned/v2/64mib` | 64 KiB | 3 | 1 | 107.6 | 0.53 | 0.60 / 0.61 | yes |
+| v2 | `read-range-unaligned/v2/64mib` | 32 KiB | 3 | 1 | 53.5 | 0.53 | 0.58 / 0.65 | yes |
+| v2 | `read-range-suffix/v2/64mib` | 64 KiB | 3 | 1 | 106.0 | 0.53 | 0.61 / 0.63 | yes |
+| v2 | `write-single-put/v2/64mib` | 64 MiB | 3 | 1 | 235.3 | — | 276.05 / 279.70 | yes |
+| v2 | `read-full-warm/v2/64mib/clients=4` | 64 MiB | 28 | 4 | 1757.5 | 0.53 | 143.50 / 153.02 | yes |
+| v3 | `read-full-cold/v3/64kib` | 64 KiB | 1 | 1 | 100.5 | 0.55 | 0.62 / 0.62 | yes |
+| v3 | `read-full-warm/v3/64kib` | 64 KiB | 7 | 1 | 75.0 | 0.64 | 0.69 / 1.54 | yes |
+| v3 | `read-range-aligned/v3/64kib` | 32 KiB | 7 | 1 | 33.2 | 0.91 | 0.96 / 1.30 | yes |
+| v3 | `read-range-unaligned/v3/64kib` | 32 KiB | 7 | 1 | 42.6 | 0.67 | 0.71 / 1.07 | yes |
+| v3 | `read-range-suffix/v3/64kib` | 64 KiB | 7 | 1 | 104.6 | 0.51 | 0.57 / 0.81 | yes |
+| v3 | `write-single-put/v3/64kib` | 64 KiB | 3 | 1 | 74.0 | — | 0.85 / 0.93 | yes |
+| v3 | `read-full-warm/v3/64kib/clients=4` | 64 KiB | 28 | 4 | 192.8 | 0.96 | 1.09 / 1.76 | yes |
+| v3 | `read-full-cold/v3/1mib` | 1 MiB | 1 | 1 | 329.3 | 0.66 | 3.04 / 3.04 | yes |
+| v3 | `read-full-warm/v3/1mib` | 1 MiB | 7 | 1 | 280.5 | 0.70 | 3.21 / 4.88 | yes |
+| v3 | `read-range-aligned/v3/1mib` | 64 KiB | 7 | 1 | 112.6 | 0.44 | 0.58 / 0.92 | yes |
+| v3 | `read-range-unaligned/v3/1mib` | 32 KiB | 7 | 1 | 51.1 | 0.55 | 0.61 / 0.92 | yes |
+| v3 | `read-range-suffix/v3/1mib` | 64 KiB | 7 | 1 | 128.3 | 0.40 | 0.45 / 0.66 | yes |
+| v3 | `write-single-put/v3/1mib` | 1 MiB | 3 | 1 | 166.8 | — | 6.44 / 6.64 | yes |
+| v3 | `read-full-warm/v3/1mib/clients=4` | 1 MiB | 28 | 4 | 765.3 | 0.95 | 4.94 / 6.14 | yes |
+| v3 | `read-full-cold/v3/64mib` | 64 MiB | 1 | 1 | 414.1 | 0.61 | 154.56 / 154.56 | yes |
+| v3 | `read-full-warm/v3/64mib` | 64 MiB | 7 | 1 | 394.3 | 0.66 | 163.13 / 179.91 | yes |
+| v3 | `read-range-aligned/v3/64mib` | 64 KiB | 3 | 1 | 90.3 | 0.62 | 0.68 / 0.78 | yes |
+| v3 | `read-range-unaligned/v3/64mib` | 32 KiB | 3 | 1 | 53.3 | 0.56 | 0.60 / 0.61 | yes |
+| v3 | `read-range-suffix/v3/64mib` | 64 KiB | 3 | 1 | 120.4 | 0.45 | 0.52 / 0.58 | yes |
+| v3 | `write-single-put/v3/64mib` | 64 MiB | 3 | 1 | 245.4 | — | 260.58 / 269.23 | yes |
+| v3 | `read-full-warm/v3/64mib/clients=4` | 64 MiB | 28 | 4 | 1402.0 | 0.68 | 180.13 / 190.67 | yes |
+| v3 | `write-multipart/v3/64mib` | 64 MiB | 3 | 1 | 52.4 | — | 455.50 / 835.85 | yes |
+| v3 | `write-multipart-concurrent/v3/64mib/clients=4` | 64 MiB | 2 | 4 | 78.2 | — | 590.60 / 995.08 | yes |
 
-Headline local-shape facts (useful comparators for optimization beads):
+The 64 MiB warm full-GET row measured 518.0 MB/s for v2 and 394.3 MB/s
+for v3 in these separate local runs. Use the focused range baseline for
+backend request counts; the matrix rows include cryptography, loopback HTTP,
+and filesystem effects. The local matrix does not establish production
+capacity or a stable cross-version throughput ratio.
 
-- Full-GET service reads sustain **~540 MB/s** at 64 MiB single-client
-  locally, **~1.4 GB/s** aggregate at 4 clients — the service layer is not
-  the throughput ceiling; the 2026-08-08 production figures were network/
-  block-fetch-bound, not crypto-bound.
-- Range reads are selective: a 64 KiB suffix of a 64 MiB object costs ~0.5 ms
-  and 15 backend calls, not a full-object fetch (pinned by
-  `TestSuffixRangeFetchesOnlyTail`).
-- Multipart write (sequential parts) is ~4.2× slower than single-PUT per byte
-  locally (51.7 vs 233.1 MB/s agg) — per-part overhead dominates at 8 MiB
-  parts on local disk; concurrent clients only partially amortize it (74.5
-  MB/s at 4 clients).
-
-## Known findings at record time (pre-existing on `4c062f0a`)
-
-- **F1 — compressed read path broken.** Full GET of a compressed object
-  returns 200 but the payload fails SHA-256 verification; server logs
-  `decompression streaming error: HMAC table too short at block 0 (zstd)`.
-  ARMOR's own `share_decompress` tests fail on the same clean export. The
-  compressed rows above are recorded honestly (verified=false). A separate
-  bead should track the repair; rerun `ARMOR_PERF_RUN=1` after it lands to
-  fill the compressed rows.
-- **F2 — concurrent part uploads to one upload ID refused.** Uploading
-  multiple parts of the same multipart upload concurrently can fail with
-  503 on committed main. The harness therefore models write concurrency at
-  the client level; revisit if concurrent same-upload parts are ever
-  supported.
+A diagnostic v3 run with compression enabled failed verification for the
+1 MiB and 64 MiB compressed rows (`invalid v3 trailer offset` or plaintext
+SHA mismatch). Its four-client multipart write row also failed during
+part listing; that row passed in the uncompressed rerun above. Neither
+failed row is used as throughput evidence. Compression needs a separately
+verified result before it can be included in a comparison.
 
 ## Cleanup and credentials policy
 

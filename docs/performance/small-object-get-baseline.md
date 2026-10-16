@@ -26,12 +26,12 @@ GET through the HTTP surface over a call-recording backend and asserts the
 exact call sequence. A change that adds a round trip fails CI; a change that
 removes one updates the pin **and this table in the same bead**.
 
-| Object shape | Backend calls | Sequence |
-|---|---|---|
-| single-PUT v1 | **6** | manifest GET (404 miss) → HEAD → header GetRange → header re-read GetRange → HMAC-table GetRange → data GetRange |
-| single-PUT v2 | **6** | same as v1 (v1/v2 share the inline-HMAC read path) |
-| single-PUT v3 | **6** | manifest GET (404 miss) → HEAD → header GetRange → header re-read GetRange → trailer block-table GetRange → data GetRange |
-| multipart v3 | **4 + 1/part** | manifest GET (hit) → freshness HEAD → metadata HEAD → HMAC sidecar GetDirect → one GetRange per part |
+| Write version | Object shape | Backend calls | Sequence |
+|---|---|---|---|
+| v1 | single-PUT | **6** | manifest GET (404 miss) → HEAD → header GetRange → header re-read GetRange → HMAC-table GetRange → data GetRange |
+| v2 | single-PUT | **6** | same as v1 (v1/v2 share the inline-HMAC read path) |
+| v3 | single-PUT | **6** | manifest GET (404 miss) → HEAD → header GetRange → header re-read GetRange → trailer block-table GetRange → data GetRange |
+| v3 | multipart | **4 + 1/part** | manifest GET (hit) → freshness HEAD → metadata HEAD → HMAC sidecar GetDirect → one GetRange per part |
 
 Notes for anyone lowering these:
 
@@ -62,26 +62,28 @@ ARMOR_SMALL_OBJECT_BENCH=1 go test ./internal/server/handlers/ \
   -run TestSmallObjectFullGETLatencyMatrix -v -count=1 -timeout 45m
 ```
 
-Environment: codinghome (13th Gen Intel i5-13500, 14 logical cores),
-go1.25.14 linux/amd64, 2026-09-28. RTT = **74 ms** per backend call
+Environment: codinghome, go1.26.5 linux/amd64, 2026-10-15 (clean source
+export). RTT = **74 ms** per backend call
 (the measured cluster→`us-west-002` round trip in
 [docs/plan/plan.md](../plan/plan.md) ADR-013 note;
 `ARMOR_SMALL_OBJECT_BENCH_RTT_MS` overrides). v2 and v3 writes, 64 KiB
-blocks, block cache and footer cache as configured by the test harness.
+blocks, AES-256-CTR + HMAC-SHA256, and the block and footer caches configured
+by the test harness.
 
-p50 / p95 (ms) and objects/s per cell — **n = max(2×concurrency, 32) GETs per
-cell, each GET verified to make exactly 6 backend calls**:
+p50 / p95 (ms) and inverse mean latency per client (shown as /s) per cell.
+These rates are not aggregate throughput. **n = max(2×concurrency, 32) GETs
+per cell, each GET verified to make exactly 6 backend calls**:
 
-| Version | Size | c=1 | c=16 | c=64 | c=256 |
+| Write version | Size | c=1 | c=16 | c=64 | c=256 |
 |---|---|---|---|---|---|
-| v2 | 4 KiB | 445.3 / 445.5 · 2.25/s | 446.2 / 447.2 · 2.24/s | 448.8 / 450.9 · 2.23/s | 448.8 / 454.7 · 2.23/s |
-| v2 | 32 KiB | 445.3 / 445.6 · 2.25/s | 447.1 / 450.8 · 2.23/s | 448.5 / 450.1 · 2.23/s | 451.2 / 458.0 · 2.21/s |
-| v2 | 256 KiB | 446.0 / 447.5 · 2.24/s | 447.9 / 449.6 · 2.23/s | 450.7 / 455.2 · 2.22/s | 455.8 / 476.1 · 2.18/s |
-| v2 | 1 MiB | 448.0 / 449.3 · 2.23/s | 451.7 / 456.9 · 2.21/s | 458.5 / 475.6 · 2.17/s | 482.8 / 543.7 · 2.04/s |
-| v3 | 4 KiB | 445.3 / 445.5 · 2.25/s | 445.4 / 445.6 · 2.24/s | 446.0 / 446.1 · 2.24/s | 449.7 / 452.2 · 2.22/s |
-| v3 | 32 KiB | 445.3 / 445.7 · 2.25/s | 446.5 / 447.0 · 2.24/s | 449.0 / 450.6 · 2.23/s | 450.2 / 457.1 · 2.22/s |
-| v3 | 256 KiB | 446.9 / 448.0 · 2.24/s | 449.6 / 451.7 · 2.22/s | 453.3 / 458.5 · 2.21/s | 475.0 / 528.9 · 2.09/s |
-| v3 | 1 MiB | 454.3 / 465.8 · 2.19/s | 478.0 / 566.0 · 1.99/s | 546.4 / 703.2 · 1.76/s | 625.2 / 765.6 · 1.57/s |
+| v2 | 4 KiB | 445.2 / 445.3 · 2.25/s | 446.4 / 447.1 · 2.24/s | 447.7 / 449.3 · 2.23/s | 450.9 / 453.7 · 2.22/s |
+| v2 | 32 KiB | 445.3 / 446.1 · 2.24/s | 447.2 / 447.7 · 2.24/s | 448.2 / 449.2 · 2.23/s | 450.8 / 454.8 · 2.22/s |
+| v2 | 256 KiB | 446.0 / 447.7 · 2.24/s | 447.1 / 448.6 · 2.23/s | 452.0 / 454.4 · 2.21/s | 453.0 / 472.7 · 2.19/s |
+| v2 | 1 MiB | 447.9 / 450.0 · 2.23/s | 453.3 / 456.4 · 2.20/s | 456.0 / 469.1 · 2.18/s | 474.6 / 514.3 · 2.09/s |
+| v3 | 4 KiB | 445.2 / 445.3 · 2.25/s | 445.4 / 445.5 · 2.25/s | 446.3 / 446.4 · 2.24/s | 450.2 / 451.9 · 2.22/s |
+| v3 | 32 KiB | 445.3 / 445.7 · 2.25/s | 447.3 / 448.0 · 2.24/s | 448.0 / 449.3 · 2.23/s | 453.7 / 458.6 · 2.20/s |
+| v3 | 256 KiB | 446.1 / 446.9 · 2.24/s | 448.3 / 450.6 · 2.23/s | 452.9 / 456.3 · 2.21/s | 456.6 / 475.9 · 2.18/s |
+| v3 | 1 MiB | 448.3 / 449.2 · 2.23/s | 455.1 / 457.6 · 2.20/s | 463.6 / 475.1 · 2.16/s | 485.4 / 535.7 · 2.04/s |
 
 Reading:
 
@@ -90,11 +92,10 @@ Reading:
   short: the measured count is 6.
 - Object size is irrelevant below ~1 MiB — the round trips are the latency,
   exactly the claim this baseline pins.
-- Client concurrency scales essentially linearly for small objects (no
-  shared lock in the read path at these sizes); the only degradation is
-  1 MiB × c≥64, where AES-GCM throughput starts to contend on the benchmark
-  host. The in-memory backend has no bandwidth term, so even that is pure
-  compute, not network.
+- Per-client latency stays near six RTTs as concurrency rises for small
+  objects. At 1 MiB and high concurrency it rises modestly; this in-memory
+  backend has no bandwidth term, so local compute and scheduling account for
+  the added time.
 - At 1 ms injected RTT the same matrix runs in seconds and is a quick
   sanity check when re-pinning counts.
 
@@ -125,6 +126,10 @@ cache 1000 entries/300 s. Object set per cycle cell is a random sample of
 real artifacts; bodies are plaintext sizes (p50 ≈ 13–15 KB, ~0.87 of the
 sample ≤ 64 KiB).
 
+The probe did not inspect the envelope version of each pre-existing object.
+The configured v3 write default does not establish the format of every object
+in this set, so these production observations are version-unattributed.
+
 Harvest command (results are the `[armor-get-probe]` JSON lines):
 
 ```sh
@@ -135,11 +140,11 @@ kubectl --server=http://traefik-ord-devimprint:8001 \
 First full cycle, 2026-09-28 06:57–07:02 UTC (300 / 800 / 1 600 GETs at
 c=1 / 8 / 32), all objects and the ≤ 64 KiB subpopulation:
 
-| Cell | n (ok) | errors | objs/s | p50 ms | p95 ms | p99 ms | ≤64 KiB p50 / p95 / p99 ms |
-|---|---|---|---|---|---|---|---|
-| c=1 | 295 | 2×404, 3×500 | 1.55 | 587.9 | 952.9 | 1418.8 | 563.3 / 868.7 / 1303.5 |
-| c=8 | 799 | 1×500 | 12.22 | 582.8 | 976.3 | 1604.9 | 569.3 / 884.1 / 1161.7 |
-| c=32 | 1600 | 0 | 44.79 | 599.9 | 1029.5 | 1459.0 | 577.2 / 928.1 / 1242.8 |
+| Write version | Cell | n (ok) | errors | objs/s | p50 ms | p95 ms | p99 ms | ≤64 KiB p50 / p95 / p99 ms |
+|---|---|---|---|---|---|---|---|---|
+| uninspected | c=1 | 295 | 2×404, 3×500 | 1.55 | 587.9 | 952.9 | 1418.8 | 563.3 / 868.7 / 1303.5 |
+| uninspected | c=8 | 799 | 1×500 | 12.22 | 582.8 | 976.3 | 1604.9 | 569.3 / 884.1 / 1161.7 |
+| uninspected | c=32 | 1600 | 0 | 44.79 | 599.9 | 1029.5 | 1459.0 | 577.2 / 928.1 / 1242.8 |
 
 Reading:
 

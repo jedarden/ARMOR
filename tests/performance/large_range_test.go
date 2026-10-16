@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -32,15 +33,32 @@ func TestLargeObjectRangeReadBaseline(t *testing.T) {
 
 	objectSize := envSize(t, "ARMOR_PERF_LARGE_OBJECT", "64MiB")
 	samples := envPositiveInt(t, "ARMOR_PERF_READ_SAMPLES", 5)
+	backendRTTMs := 0
+	if configured := os.Getenv("ARMOR_PERF_BACKEND_RTT_MS"); configured != "" {
+		parsed, err := strconv.Atoi(configured)
+		if err != nil || parsed < 0 {
+			t.Fatalf("ARMOR_PERF_BACKEND_RTT_MS=%q must be a nonnegative integer", configured)
+		}
+		backendRTTMs = parsed
+	}
+	writeVersion := 3
+	if selected := os.Getenv("ARMOR_PERF_WRITE_VERSION"); selected != "" {
+		parsed, err := strconv.Atoi(selected)
+		if err != nil || (parsed != 2 && parsed != 3) {
+			t.Fatalf("ARMOR_PERF_WRITE_VERSION=%q must be 2 or 3", selected)
+		}
+		writeVersion = parsed
+	}
 	if objectSize < 40<<20 {
 		t.Fatalf("large-object benchmark requires at least 40MiB, got %d bytes", objectSize)
 	}
 
-	env, err := NewLocalEnv("large-object-range-v3", false)
+	env, err := NewLocalEnvWithVersion(fmt.Sprintf("large-object-range-v%d", writeVersion), false, writeVersion)
 	if err != nil {
 		t.Fatalf("boot local env: %v", err)
 	}
 	defer env.Close()
+	env.Backend.Delay = time.Duration(backendRTTMs) * time.Millisecond
 
 	body := SyntheticBody(int(objectSize))
 	key := fmt.Sprintf("%slarge-range-%d", BenchPrefix, objectSize)
@@ -50,7 +68,7 @@ func TestLargeObjectRangeReadBaseline(t *testing.T) {
 
 	results := make([]largeRangeResult, 0, len(largeRangeSpecs(objectSize)))
 	for _, spec := range largeRangeSpecs(objectSize) {
-		result, err := measureLargeRange(env, key, body, spec, samples)
+		result, err := measureLargeRange(env, key, body, spec, samples, "single-put")
 		if err != nil {
 			t.Fatalf("measure %s: %v", spec.Name, err)
 		}
@@ -59,19 +77,52 @@ func TestLargeObjectRangeReadBaseline(t *testing.T) {
 			t.Errorf("range %s failed verification: %s", spec.Name, result.VerifyNote)
 		}
 	}
+	if writeVersion == 3 {
+		multipartKey := fmt.Sprintf("%slarge-range-multipart-%d", BenchPrefix, objectSize)
+		const partSize = 8 << 20
+		parts := make([][]byte, 0, (len(body)+partSize-1)/partSize)
+		for offset := 0; offset < len(body); offset += partSize {
+			end := offset + partSize
+			if end > len(body) {
+				end = len(body)
+			}
+			parts = append(parts, body[offset:end])
+		}
+		if _, err := env.MultipartPut(multipartKey, parts); err != nil {
+			t.Fatalf("multipart put %s: %v", multipartKey, err)
+		}
+		boundaryStart := int64(partSize - 32<<10)
+		boundarySpec := largeRangeSpec{
+			Name:          "cross-part-boundary-64KiB",
+			Header:        fmt.Sprintf("bytes=%d-%d", boundaryStart, boundaryStart+(64<<10)-1),
+			Start:         boundaryStart,
+			ResponseBytes: 64 << 10,
+		}
+		for _, spec := range []largeRangeSpec{largeRangeSpecs(objectSize)[2], boundarySpec, largeRangeSpecs(objectSize)[4]} {
+			result, err := measureLargeRange(env, multipartKey, body, spec, samples, "multipart")
+			if err != nil {
+				t.Fatalf("measure multipart %s: %v", spec.Name, err)
+			}
+			results = append(results, result)
+			if !result.Verified {
+				t.Errorf("multipart range %s failed verification: %s", spec.Name, result.VerifyNote)
+			}
+		}
+	}
 
 	report := largeRangeReport{
 		GeneratedAt:  time.Now().UTC().Format(time.RFC3339),
 		ARMORCommit:  benchmarkCommit(),
 		GoVersion:    runtime.Version(),
 		Environment:  environment(),
-		ObjectFormat: "v3 single-PUT envelope, 64 KiB blocks; AES-GCM",
+		ObjectFormat: fmt.Sprintf("v%d single-PUT%s envelope, 64 KiB blocks; AES-256-CTR + HMAC-SHA256", writeVersion, map[bool]string{true: " and multipart", false: ""}[writeVersion == 3]),
 		ObjectBytes:  objectSize,
 		Samples:      samples,
+		BackendRTTMs: backendRTTMs,
 		TestLocation: "tests/performance (in-process service over filesystem backend)",
 		Scenarios:    results,
 		Notes: []string{
-			"the object is synthetic incompressible data and is written once through the real authenticated S3 path",
+			"each object is synthetic incompressible data and is written once through the real authenticated S3 path",
 			"each range is warmed once before measurement; latency and backend bytes are warm-metadata samples",
 			"backend bytes are the bytes requested from the instrumented backend by Get/GetRange, including envelope metadata and ciphertext/HMAC ranges",
 			"local loopback and filesystem results are a service-shape baseline, not B2, Cloudflare, or production throughput evidence",
@@ -136,6 +187,8 @@ func largeRangeSpecs(objectSize int64) []largeRangeSpec {
 
 type largeRangeResult struct {
 	Name                       string  `json:"name"`
+	WriteVersion               int     `json:"write_version"`
+	WritePath                  string  `json:"write_path"`
 	Range                      string  `json:"range"`
 	ObjectBytes                int64   `json:"object_bytes"`
 	ResponseBytes              int64   `json:"response_bytes"`
@@ -159,12 +212,13 @@ type largeRangeReport struct {
 	ObjectFormat string             `json:"object_format"`
 	ObjectBytes  int64              `json:"object_bytes"`
 	Samples      int                `json:"samples"`
+	BackendRTTMs int                `json:"backend_rtt_ms"`
 	TestLocation string             `json:"test_location"`
 	Scenarios    []largeRangeResult `json:"scenarios"`
 	Notes        []string           `json:"notes"`
 }
 
-func measureLargeRange(env *LocalEnv, key string, body []byte, spec largeRangeSpec, samples int) (largeRangeResult, error) {
+func measureLargeRange(env *LocalEnv, key string, body []byte, spec largeRangeSpec, samples int, writePath string) (largeRangeResult, error) {
 	// Warm metadata before taking the counters so backend bytes measure the
 	// range workload rather than the one-time object-header lookup.
 	warm, err := env.GetRange(key, spec.Header, true)
@@ -197,6 +251,8 @@ func measureLargeRange(env *LocalEnv, key string, body []byte, spec largeRangeSp
 	backendBytes := (fetchedBytes[opGet] - baseBytes[opGet]) + (fetchedBytes[opGetRange] - baseBytes[opGetRange])
 	return largeRangeResult{
 		Name:                       spec.Name,
+		WriteVersion:               env.WriteVersion,
+		WritePath:                  writePath,
 		Range:                      spec.Header,
 		ObjectBytes:                int64(len(body)),
 		ResponseBytes:              spec.ResponseBytes,
@@ -227,14 +283,14 @@ func writeLargeRangeReport(outDir string, report largeRangeReport) error {
 
 	var b strings.Builder
 	fmt.Fprintf(&b, "# ARMOR large-object range baseline — %s\n\n", report.GeneratedAt)
-	fmt.Fprintf(&b, "- ARMOR commit: `%s`\n- Go: %s\n- Environment: %s\n- Object: %d bytes (%s)\n- Format: %s\n- Samples per row: %d\n- Location: %s\n\n",
-		report.ARMORCommit, report.GoVersion, report.Environment, report.ObjectBytes, formatBytes(report.ObjectBytes), report.ObjectFormat, report.Samples, report.TestLocation)
+	fmt.Fprintf(&b, "- ARMOR commit: `%s`\n- Go: %s\n- Environment: %s\n- Object: %d bytes (%s)\n- Format: %s\n- Samples per row: %d\n- Injected backend RTT: %d ms per call\n- Location: %s\n\n",
+		report.ARMORCommit, report.GoVersion, report.Environment, report.ObjectBytes, formatBytes(report.ObjectBytes), report.ObjectFormat, report.Samples, report.BackendRTTMs, report.TestLocation)
 	b.WriteString("All rows are warm-metadata samples. Backend bytes include every byte returned by the instrumented Get/GetRange calls; the ratio is backend bytes divided by response bytes across all samples.\n\n")
-	b.WriteString("| range | response | latency p50 ms | latency p95 ms | backend fetches/sample | backend bytes/sample | backend/response | verified |\n")
-	b.WriteString("|---|---:|---:|---:|---:|---:|---:|---|\n")
+	b.WriteString("| write version | write path | range | response | latency p50 ms | latency p95 ms | backend fetches/sample | backend bytes/sample | backend/response | verified |\n")
+	b.WriteString("|---|---|---|---:|---:|---:|---:|---:|---:|---|\n")
 	for _, s := range report.Scenarios {
-		fmt.Fprintf(&b, "| %s (`%s`) | %s | %.2f | %.2f | %.1f | %s | %.2fx | %v |\n",
-			s.Name, s.Range, formatBytes(s.ResponseBytes), s.LatencyMsP50, s.LatencyMsP95, s.BackendFetchesPerSample, formatBytes(int64(s.BackendBytesPerSample)), s.BackendToResponseByteRatio, s.Verified)
+		fmt.Fprintf(&b, "| v%d | %s | %s (`%s`) | %s | %.2f | %.2f | %.1f | %s | %.2fx | %v |\n",
+			s.WriteVersion, s.WritePath, s.Name, s.Range, formatBytes(s.ResponseBytes), s.LatencyMsP50, s.LatencyMsP95, s.BackendFetchesPerSample, formatBytes(int64(s.BackendBytesPerSample)), s.BackendToResponseByteRatio, s.Verified)
 	}
 	b.WriteString("\n")
 	for _, note := range report.Notes {

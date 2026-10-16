@@ -208,47 +208,80 @@ func TestCompressedPathSeparation(t *testing.T) {
 // and every sample must verify. It is not a timing assertion — it only proves
 // the harness plumbing (scenarios, verification, output files) works.
 func TestBaselineTinyMatrix(t *testing.T) {
-	outDir := t.TempDir()
-	cfg := MatrixConfig{
-		Sizes:            []string{"64KiB"},
-		ReadSamples:      1,
-		WriteSamples:     1,
-		ClientConcs:      []int{2},
-		MultipartClients: 2,
-		PartSize:         8 << 20,
-		OutDir:           outDir,
-		// Compressed scenarios stay out of the CI smoke: the compressed read
-		// path has a pre-existing round-trip defect on committed main (see
-		// TestCompressedPathSeparation). The opt-in baseline measures it.
-		Compressed: false,
+	for _, version := range []int{2, 3} {
+		t.Run(fmt.Sprintf("v%d", version), func(t *testing.T) {
+			outDir := t.TempDir()
+			cfg := MatrixConfig{
+				Sizes:            []string{"64KiB"},
+				ReadSamples:      1,
+				WriteSamples:     1,
+				ClientConcs:      []int{2},
+				MultipartClients: 2,
+				PartSize:         8 << 20,
+				OutDir:           outDir,
+				WriteVersion:     version,
+				// The compressed path is exercised separately by its focused check.
+				Compressed: false,
+			}
+			report, err := RunBaseline(cfg)
+			if err != nil {
+				t.Fatalf("tiny baseline: %v", err)
+			}
+			if len(report.Scenarios) == 0 {
+				t.Fatalf("tiny baseline produced no scenarios")
+			}
+			names := map[string]bool{}
+			for _, s := range report.Scenarios {
+				if s.Samples <= 0 {
+					t.Errorf("scenario %s: samples = %d", s.Name, s.Samples)
+				}
+				if !s.Verified || s.WriteVersion != version {
+					t.Errorf("scenario %s: version=%d verified=%v: %s", s.Name, s.WriteVersion, s.Verified, s.VerifyNote)
+				}
+				t.Logf("Baseline | scenario=%s | write_version=v%d | verified=%v", s.Name, s.WriteVersion, s.Verified)
+				names[s.Name] = true
+			}
+			for _, want := range []string{
+				fmt.Sprintf("read-full-cold/v%d/64kib", version),
+				fmt.Sprintf("read-full-warm/v%d/64kib", version),
+				fmt.Sprintf("read-range-suffix/v%d/64kib", version),
+				fmt.Sprintf("write-single-put/v%d/64kib", version),
+				fmt.Sprintf("read-full-warm/v%d/64kib/clients=2", version),
+			} {
+				if !names[want] {
+					t.Errorf("missing scenario %q; got %v", want, keysOf(names))
+				}
+			}
+			for _, f := range []string{"results.json", "results.md"} {
+				if _, err := os.Stat(filepath.Join(outDir, f)); err != nil {
+					t.Errorf("baseline output missing %s: %v", f, err)
+				}
+			}
+		})
 	}
-	report, err := RunBaseline(cfg)
-	if err != nil {
-		t.Fatalf("tiny baseline: %v", err)
-	}
-	if len(report.Scenarios) == 0 {
-		t.Fatalf("tiny baseline produced no scenarios")
-	}
-	names := map[string]bool{}
-	for _, s := range report.Scenarios {
-		if s.Samples <= 0 {
-			t.Errorf("scenario %s: samples = %d", s.Name, s.Samples)
+	t.Run("v3-multipart", func(t *testing.T) {
+		env, err := NewLocalEnvWithVersion("baseline-v3-multipart", false, 3)
+		if err != nil {
+			t.Fatal(err)
 		}
-		if !s.Verified {
-			t.Errorf("scenario %s failed verification: %s", s.Name, s.VerifyNote)
+		defer env.Close()
+		parts := [][]byte{SyntheticBody(5 << 20), SyntheticBody(5 << 20)}
+		key := BenchPrefix + "tiny-v3-multipart"
+		if _, err := env.MultipartPut(key, parts); err != nil {
+			t.Fatal(err)
 		}
-		names[s.Name] = true
-	}
-	for _, want := range []string{"read-full-cold/v3/64kib", "read-full-warm/v3/64kib", "read-range-suffix/v3/64kib", "write-single-put/v3/64kib", "read-full-warm/v3/64kib/clients=2"} {
-		if !names[want] {
-			t.Errorf("missing scenario %q; got %v", want, keysOf(names))
+		got, err := env.GetRange(key, "bytes=-4096", false)
+		if err != nil || got.SHA256 != hashHex(parts[1][len(parts[1])-4096:]) {
+			t.Fatalf("v3 multipart range verification: sample=%+v err=%v", got, err)
 		}
-	}
-	for _, f := range []string{"results.json", "results.md"} {
-		if _, err := os.Stat(filepath.Join(outDir, f)); err != nil {
-			t.Errorf("baseline output missing %s: %v", f, err)
+		boundaryStart := len(parts[0]) - 4096
+		boundaryBody := append(append([]byte(nil), parts[0][boundaryStart:]...), parts[1][:4096]...)
+		got, err = env.GetRange(key, fmt.Sprintf("bytes=%d-%d", boundaryStart, boundaryStart+len(boundaryBody)-1), false)
+		if err != nil || got.SHA256 != hashHex(boundaryBody) {
+			t.Fatalf("v3 multipart boundary range verification: sample=%+v err=%v", got, err)
 		}
-	}
+		t.Logf("Baseline | write_version=v%d | write_path=multipart | range=cross-part-boundary-8KiB | verified=true", env.WriteVersion)
+	})
 }
 
 // TestUncommittedPayloadRoundTrip guards the harness itself: capture-mode GET
