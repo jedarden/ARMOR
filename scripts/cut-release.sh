@@ -64,6 +64,22 @@ if [ "$BRANCH" != "main" ]; then
 fi
 
 PREV_TAG="$(git describe --tags --abbrev=0 --match 'v[0-9]*' 2>/dev/null || true)"
+
+# The publisher creates tags through Forgejo after a successful image build.
+# A checkout that has not fetched that tag would repeat old commits in the
+# next CHANGELOG entry. Read the authoritative origin tags without changing
+# this checkout; fail with a useful instruction if local tags are stale.
+if git remote get-url origin >/dev/null 2>&1; then
+  if ! REMOTE_TAGS="$(git ls-remote --tags --refs origin)"; then
+    echo "error: cannot read release tags from origin; retry before cutting" >&2
+    exit 2
+  fi
+  REMOTE_LATEST="$(printf '%s\n' "$REMOTE_TAGS" | sed -n 's#.*refs/tags/\(v[0-9][^ ]*\)$#\1#p' | sort -V | tail -1)"
+  if [ "$REMOTE_LATEST" != "$PREV_TAG" ]; then
+    echo "error: local release tags lag origin ($PREV_TAG vs $REMOTE_LATEST); run git fetch --tags origin" >&2
+    exit 2
+  fi
+fi
 if [ -n "$PREV_TAG" ]; then
   RANGE="$PREV_TAG..HEAD"
 else

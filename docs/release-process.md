@@ -44,6 +44,7 @@ Pre-conditions, on `main` in a checkout whose index is clean:
 
 ```bash
 git pull --rebase origin main
+git fetch --tags origin
 scripts/definition-of-done.sh          # build, vet, script tests, short Go suite: must be green
 ```
 
@@ -60,6 +61,9 @@ The script
   must contain nothing but `VERSION`, the `compose.yaml` `ARMOR_VERSION`
   defaults and `CHANGELOG.md`; other agents' unstaged
   edits in the shared checkout are left alone),
+- checks the newest reachable local release tag against origin and refuses
+  stale tags with a `git fetch --tags origin` instruction, so a published
+  release cannot be repeated in the next changelog entry,
 - rewrites every `${ARMOR_VERSION:-...}` default in `compose.yaml` to the new
   version, so the tracked demo and production compositions ship pinned to this
   release (`scripts/compose-version-parity.sh` — in the definition of done,

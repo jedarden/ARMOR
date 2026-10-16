@@ -342,6 +342,40 @@ def test_next_cut_after_tag_does_not_repeat_previous_release_notes(tmp_path):
     assert changelog.count(f"## {following} (") == 1
 
 
+def test_cut_refuses_stale_local_tag_until_origin_tag_is_fetched(tmp_path):
+    """A published tag missing from this checkout must not repeat old notes."""
+    root = make_repo(tmp_path)
+    assert cut(root, NEW, "--no-push").returncode == 0
+
+    remote = tmp_path / "origin.git"
+    subprocess.run(["git", "init", "--bare", str(remote)], check=True,
+                   capture_output=True, text=True, env=GIT_ENV)
+    git(root, "remote", "add", "origin", str(remote))
+    git(root, "push", "origin", "main")
+    git(root, "tag", "-a", f"v{NEW}", "-m", f"v{NEW}")
+    git(root, "push", "origin", f"v{NEW}")
+    git(root, "tag", "-d", f"v{NEW}")
+    post_tag = "fix(server): repair post-release read (armor-ccc3333)"
+    commit_file(root, "post-tag.txt", post_tag)
+    head = git_out(root, "rev-parse", "HEAD")
+
+    following = "0.1.10000"
+    stale = cut(root, following, "--no-push")
+    assert stale.returncode == 2
+    assert "git fetch --tags origin" in stale.stderr
+    assert git_out(root, "rev-parse", "HEAD") == head
+    assert (root / "VERSION").read_text().strip() == NEW
+
+    git(root, "fetch", "--tags", "origin")
+    fresh = cut(root, following, "--no-push")
+    assert fresh.returncode == 0, fresh.stdout + fresh.stderr
+    newest = (root / "CHANGELOG.md").read_text().split(
+        f"## {following} (", 1)[1].split(f"## {NEW} (", 1)[0]
+    assert f"- {post_tag}" in newest
+    assert FEAT not in newest
+    assert FIX not in newest
+
+
 # ---------------------------------------------------------------------------
 # invalid input: malformed and non-newer versions
 # ---------------------------------------------------------------------------
