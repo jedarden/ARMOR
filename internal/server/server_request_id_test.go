@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/jedarden/armor/internal/config"
@@ -86,7 +87,7 @@ func TestS3ErrorResponsesIncludeRequestId(t *testing.T) {
 		XMLName  xml.Name `xml:"Error"`
 		Code     string   `xml:"Code"`
 		Message  string   `xml:"Message"`
-		RequestID string  `xml:"RequestId"`
+		RequestID string   `xml:"RequestId"`
 	}
 
 	if err := xml.Unmarshal(body, &errorResponse); err != nil {
@@ -97,8 +98,10 @@ func TestS3ErrorResponsesIncludeRequestId(t *testing.T) {
 	if errorResponse.Code != "AccessDenied" {
 		t.Errorf("Expected error code 'AccessDenied', got '%s'", errorResponse.Code)
 	}
-	if errorResponse.Message != "Access Denied" {
-		t.Errorf("Expected error message 'Access Denied', got '%s'", errorResponse.Message)
+	for _, want := range []string{"GET", "/test"} {
+		if !strings.Contains(errorResponse.Message, want) {
+			t.Errorf("Expected AccessDenied message to contain %q, got '%s'", want, errorResponse.Message)
+		}
 	}
 
 	// Verify RequestId XML element is present

@@ -243,7 +243,7 @@ func TestCompressionSmoke_CompressedObjectRange(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read compressed range rejection: %v", err)
 	}
-	if !bytes.Contains(body, []byte("Range reads unsupported on compressed objects")) {
+	if !bytes.Contains(body, []byte("compressed, so byte-range reads are unavailable")) {
 		t.Fatalf("compressed range rejection did not explain unsupported seeking: %s", body)
 	}
 }

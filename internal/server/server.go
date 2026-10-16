@@ -39,6 +39,7 @@ import (
 	"github.com/jedarden/armor/internal/replication"
 	"github.com/jedarden/armor/internal/server/handlers"
 	"github.com/jedarden/armor/internal/server/middleware"
+	"github.com/jedarden/armor/internal/server/s3errors"
 )
 
 // loggerWriter adapts the structured logging.Logger to the io.Writer interface
@@ -1903,13 +1904,22 @@ func (s *Server) writeError(w http.ResponseWriter, r *http.Request, code, messag
 	// Extract request IDs from context
 	requestID := middleware.GetRequestID(r.Context())
 	extendedID := middleware.GetExtendedID(r.Context())
+	errorEntry := s3errors.Resolve(code, s3errors.Request{
+		Method:    r.Method,
+		Path:      r.URL.Path,
+		RequestID: requestID,
+		Status:    statusCode,
+	}, message)
 
 	// Store error code in context for access in logCompletedRequest
 	ctx := middleware.SetErrorCode(r.Context(), code)
 	*r = *r.WithContext(ctx)
 
-	// Log structured S3 error event before writing response
-	logS3Error(s.logger, r, code, message, statusCode)
+	// Log structured S3 error event before writing response when logging is
+	// configured. Minimal handler tests and embedders may omit a logger.
+	if s.logger != nil {
+		logS3Error(s.logger, r, code, errorEntry.LogDetail, statusCode)
+	}
 
 	// Set headers
 	w.Header().Set("Content-Type", "application/xml")
@@ -1924,7 +1934,7 @@ func (s *Server) writeError(w http.ResponseWriter, r *http.Request, code, messag
 	// Build XML response
 	var codeBuf, msgBuf, ridBuf bytes.Buffer
 	xml.EscapeText(&codeBuf, []byte(code))
-	xml.EscapeText(&msgBuf, []byte(message))
+	xml.EscapeText(&msgBuf, []byte(errorEntry.ClientMessage))
 	xml.EscapeText(&ridBuf, []byte(requestID))
 
 	if requestID != "" {
@@ -2398,7 +2408,7 @@ func (s *Server) handleShareRangeRequest(w http.ResponseWriter, r *http.Request,
 			"range":      rangeHeader,
 			"compressed": armorMeta.Compressed,
 		}).Warn("share/range request rejected: range reads unsupported on compressed objects")
-		http.Error(w, "Range reads unsupported on compressed objects", http.StatusRequestedRangeNotSatisfiable)
+		http.Error(w, "This object is compressed, so byte-range reads are unavailable. Retry without the Range header or upload the object without compression.", http.StatusRequestedRangeNotSatisfiable)
 		return
 	}
 

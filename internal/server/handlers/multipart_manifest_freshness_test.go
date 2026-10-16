@@ -114,8 +114,8 @@ func TestGetObjectManifestCiphertextFreshnessOrdering(t *testing.T) {
 		if code != http.StatusInternalServerError {
 			t.Fatalf("GetObject returned %d for overwritten ciphertext, want 500: %s", code, body)
 		}
-		if !strings.Contains(body, "Stale manifest") {
-			t.Errorf("GetObject error %q does not mention the stale manifest", body)
+		if !strings.Contains(body, "could not complete this request") {
+			t.Errorf("GetObject error %q does not contain client-safe retry guidance", body)
 		}
 	})
 }

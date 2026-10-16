@@ -42,6 +42,7 @@ import (
 	"github.com/jedarden/armor/internal/provenance"
 	"github.com/jedarden/armor/internal/replication"
 	"github.com/jedarden/armor/internal/server/middleware"
+	"github.com/jedarden/armor/internal/server/s3errors"
 )
 
 // ProvenanceRecorder records uploads in the provenance chain.
@@ -212,6 +213,31 @@ func New(cfg *config.Config, be backend.Backend, cache *backend.MetadataCache, f
 // WithProvenance adds provenance support to handlers.
 func (h *Handlers) WithProvenance(p ProvenanceRecorder) {
 	h.provenance = p
+}
+
+// recordProvenanceUpload records a per-object provenance entry (the fallback
+// used when the manifest is disabled) and surfaces a failure as a chain gap
+// instead of discarding it: the object is already durably stored, so the
+// client's request must not fail, but the audit chain is now missing this
+// key. The gap is logged at WARN with the key and error and counted on
+// armor_provenance_record_failures_total so it cannot present as a complete
+// chain (docs/provenance-audit-walker.md reports such keys as untracked).
+func (h *Handlers) recordProvenanceUpload(ctx context.Context, key, plaintextSHA256, operation string) {
+	if err := h.provenance.RecordUpload(ctx, key, plaintextSHA256, operation); err != nil {
+		if h.logger != nil {
+			h.logger.WithFields(map[string]interface{}{
+				"event":     "provenance_record_failure",
+				"operation": operation,
+				"key":       key,
+				"error":     err.Error(),
+			}).Warn("provenance RecordUpload failed; audit chain gap for this key")
+		} else {
+			log.Printf("Warning: provenance RecordUpload failed (%s %s): %v — audit chain gap", operation, key, err)
+		}
+		if h.metrics != nil {
+			h.metrics.IncProvenanceRecordFailures()
+		}
+	}
 }
 
 // WithManifest wires a ManifestRecorder into the handlers so that successful
@@ -453,7 +479,7 @@ func (h *Handlers) PutObject(w http.ResponseWriter, r *http.Request, bucket, key
 	ctx := r.Context()
 	createOnly, validCondition := putObjectCreateOnly(r)
 	if !validCondition {
-		h.writeError(w, r, "InvalidArgument", "PutObject supports only If-None-Match: *", http.StatusBadRequest)
+		h.writeError(w, r, "InvalidArgument", "Conditional uploads support only If-None-Match: *", http.StatusBadRequest)
 		return
 	}
 
@@ -527,7 +553,7 @@ func (h *Handlers) PutObject(w http.ResponseWriter, r *http.Request, bucket, key
 	// Format: v2:<fp16>:<base64>
 	parts := strings.SplitN(wrappedDEKStr, ":", 3)
 	if len(parts) != 3 || parts[0] != "v2" {
-		h.writeError(w, r, "InternalError", "Invalid wrapped DEK format from WrapDEKWithFingerprint", 500)
+		h.writeError(w, r, "InternalError", "wrapped DEK format validation failed", 500)
 		return
 	}
 	mekFingerprint := parts[1]
@@ -742,7 +768,7 @@ func (h *Handlers) PutObject(w http.ResponseWriter, r *http.Request, bucket, key
 	// Record provenance (fallback when manifest is disabled)
 	if h.manifest == nil && h.provenance != nil && h.provenance.ShouldRecord(key) {
 		plaintextSHAHex := hex.EncodeToString(plaintextSHA[:])
-		_ = h.provenance.RecordUpload(provenance.WithTimings(ctx, provTimings), key, plaintextSHAHex, "put")
+		h.recordProvenanceUpload(provenance.WithTimings(ctx, provTimings), key, plaintextSHAHex, "put")
 	}
 
 	// Publish the PUT latency split to the request context (the in-place
@@ -868,7 +894,7 @@ func (h *Handlers) putObjectStreaming(ctx context.Context, w http.ResponseWriter
 	parts := strings.SplitN(wrappedDEKStr, ":", 3)
 	if len(parts) != 3 || parts[0] != "v2" {
 		tmpFile.Close()
-		h.writeError(w, r, "InternalError", "Invalid wrapped DEK format from WrapDEKWithFingerprint", 500)
+		h.writeError(w, r, "InternalError", "wrapped DEK format validation failed", 500)
 		return
 	}
 	mekFingerprint := parts[1]
@@ -1073,7 +1099,7 @@ func (h *Handlers) putObjectStreaming(ctx context.Context, w http.ResponseWriter
 	// Record provenance (fallback when manifest is disabled)
 	if h.manifest == nil && h.provenance != nil && h.provenance.ShouldRecord(key) {
 		plaintextSHAHex := hex.EncodeToString(plaintextSHA[:])
-		_ = h.provenance.RecordUpload(provenance.WithTimings(ctx, provTimings), key, plaintextSHAHex, "put-streaming")
+		h.recordProvenanceUpload(provenance.WithTimings(ctx, provTimings), key, plaintextSHAHex, "put-streaming")
 	}
 
 	// Publish the PUT latency split to the request context (the in-place
@@ -1179,7 +1205,7 @@ func (h *Handlers) GetObject(w http.ResponseWriter, r *http.Request, bucket, key
 		// object indefinitely. Checked before the freshness gate so a
 		// quarantined-and-stale manifest still gets the definitive verdict.
 		if reason, quarantined := manifestQuarantineState(manifestMeta); quarantined {
-			h.writeError(w, r, "AccessDenied", fmt.Sprintf("Object is quarantined by the operator and cannot be read: %s (release with POST /admin/manifest/release)", reason), http.StatusForbidden)
+			h.writeError(w, r, "AccessDenied", fmt.Sprintf("object is quarantined and cannot be read; operator action is required: %s", reason), http.StatusForbidden)
 			return
 		}
 
@@ -1191,7 +1217,7 @@ func (h *Handlers) GetObject(w http.ResponseWriter, r *http.Request, bucket, key
 				// resolves, the operator repairs or quarantines via the admin
 				// endpoints named in the message — the ones operators grep
 				// for during exactly this outage.
-				h.writeError(w, r, "InternalError", fmt.Sprintf("Stale manifest: %v (repair with POST /admin/manifest/repair or quarantine with POST /admin/manifest/quarantine)", verifyErr), 500)
+				h.writeError(w, r, "InternalError", fmt.Sprintf("manifest verification failed; operator repair or quarantine is required: %v", verifyErr), 500)
 				return
 			}
 		}
@@ -2643,7 +2669,7 @@ func (h *Handlers) CopyObject(w http.ResponseWriter, r *http.Request, dstBucket,
 		// Parse v2 format to extract fingerprint and wrapped DEK bytes
 		parts := strings.SplitN(wrappedDEKStr, ":", 3)
 		if len(parts) != 3 || parts[0] != "v2" {
-			h.writeError(w, r, "InternalError", "Invalid wrapped DEK format from WrapDEKWithFingerprint", 500)
+			h.writeError(w, r, "InternalError", "wrapped DEK format validation failed", 500)
 			return
 		}
 		dstMekFingerprint := parts[1]
@@ -2689,7 +2715,7 @@ func (h *Handlers) CopyObject(w http.ResponseWriter, r *http.Request, dstBucket,
 
 		// Record provenance for the copy
 		if h.provenance != nil && h.provenance.ShouldRecord(dstKey) {
-			_ = h.provenance.RecordUpload(ctx, dstKey, armorMeta.PlaintextSHA, "copy")
+			h.recordProvenanceUpload(ctx, dstKey, armorMeta.PlaintextSHA, "copy")
 		}
 
 		// Invalidate cache for destination
@@ -3273,7 +3299,7 @@ func (h *Handlers) CreateMultipartUpload(w http.ResponseWriter, r *http.Request,
 	// Format: v2:<fp16>:<base64>
 	parts := strings.SplitN(wrappedDEKStr, ":", 3)
 	if len(parts) != 3 || parts[0] != "v2" {
-		h.writeError(w, r, "InternalError", "Invalid wrapped DEK format from WrapDEKWithFingerprint", 500)
+		h.writeError(w, r, "InternalError", "wrapped DEK format validation failed", 500)
 		return
 	}
 	mekFingerprint := parts[1]
@@ -3416,12 +3442,12 @@ func (h *Handlers) UploadPart(w http.ResponseWriter, r *http.Request, bucket, ke
 	// Parse part number
 	partNumberStr := r.URL.Query().Get("partNumber")
 	if partNumberStr == "" {
-		h.writeError(w, r, "InvalidRequest", "Missing partNumber", 400)
+		h.writeError(w, r, "InvalidRequest", "Missing part number", 400)
 		return
 	}
 	partNumber, err := strconv.ParseInt(partNumberStr, 10, 32)
 	if err != nil || partNumber < 1 || partNumber > 10000 {
-		h.writeError(w, r, "InvalidRequest", "Invalid partNumber", 400)
+		h.writeError(w, r, "InvalidRequest", "Invalid part number", 400)
 		return
 	}
 
@@ -4436,7 +4462,7 @@ func (h *Handlers) CompleteMultipartUpload(w http.ResponseWriter, r *http.Reques
 
 	// Record provenance (fallback when manifest is disabled)
 	if h.manifest == nil && h.provenance != nil && h.provenance.ShouldRecord(key) {
-		_ = h.provenance.RecordUpload(ctx, key, plaintextSHAHex, "multipart")
+		h.recordProvenanceUpload(ctx, key, plaintextSHAHex, "multipart")
 	}
 
 	// Build XML response
@@ -5131,6 +5157,12 @@ func (h *Handlers) writeErrorCause(w http.ResponseWriter, r *http.Request, code,
 
 	// Extract request ID from middleware context
 	requestID := middleware.GetRequestID(r.Context())
+	errorEntry := s3errors.Resolve(code, s3errors.Request{
+		Method:    r.Method,
+		Path:      r.URL.Path,
+		RequestID: requestID,
+		Status:    statusCode,
+	}, message)
 
 	// Build resource path from request URL
 	resource := r.URL.Path
@@ -5142,7 +5174,7 @@ func (h *Handlers) writeErrorCause(w http.ResponseWriter, r *http.Request, code,
 	// Build XML response
 	var codeBuf, msgBuf, ridBuf, resBuf bytes.Buffer
 	xml.EscapeText(&codeBuf, []byte(code))
-	xml.EscapeText(&msgBuf, []byte(message))
+	xml.EscapeText(&msgBuf, []byte(errorEntry.ClientMessage))
 	xml.EscapeText(&ridBuf, []byte(requestID))
 	xml.EscapeText(&resBuf, []byte(resource))
 
@@ -5169,7 +5201,7 @@ func (h *Handlers) writeErrorCause(w http.ResponseWriter, r *http.Request, code,
 		}
 	}
 	if h.logger != nil {
-		h.logS3Error(r, code, message, statusCode)
+		h.logS3Error(r, code, errorEntry.LogDetail, statusCode)
 	}
 }
 

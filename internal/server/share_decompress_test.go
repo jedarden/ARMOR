@@ -689,7 +689,7 @@ func TestShareGET_RangeRequestWithCompression(t *testing.T) {
 		t.Fatalf("Failed to read response body: %v", err)
 	}
 	errorMsg := string(body)
-	if !strings.Contains(errorMsg, "Range reads unsupported on compressed objects") {
+	if !strings.Contains(errorMsg, "compressed, so byte-range reads are unavailable") {
 		t.Errorf("Expected error message about range reads on compressed objects, got: %s", errorMsg)
 	}
 }

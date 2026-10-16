@@ -660,7 +660,7 @@ func TestGetObjectRangeCompressed(t *testing.T) {
 
 	// Verify error message mentions compression
 	body := w.Body.String()
-	if !strings.Contains(body, "Range reads unsupported on compressed objects") {
+	if !strings.Contains(body, "compressed, so byte-range reads are unavailable") {
 		t.Errorf("expected error message about range reads on compressed objects, got: %s", body)
 	}
 }

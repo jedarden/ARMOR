@@ -146,7 +146,7 @@ func (rh *repairHarness) requireGETStatus(wantCode int, wantInBody string) {
 func TestRepairManifestRestampsAndRestoresReads(t *testing.T) {
 	rh := newRepairHarness(t)
 	rh.writeStaleManifest()
-	rh.requireGETStatus(http.StatusInternalServerError, "Stale manifest")
+	rh.requireGETStatus(http.StatusInternalServerError, "could not complete this request")
 
 	inspected, err := rh.h.InspectManifest(context.Background(), rh.bucket, rh.key)
 	if err != nil {
@@ -215,13 +215,13 @@ func TestQuarantineMakesReadsFailNonRetryably(t *testing.T) {
 	t.Run("stale manifest gets 403 instead of 500", func(t *testing.T) {
 		rh := newRepairHarness(t)
 		rh.writeStaleManifest()
-		rh.requireGETStatus(http.StatusInternalServerError, "Stale manifest")
+		rh.requireGETStatus(http.StatusInternalServerError, "could not complete this request")
 
 		if _, err := rh.h.QuarantineManifest(context.Background(), rh.bucket, rh.key, "stale manifest, ciphertext suspect"); err != nil {
 			t.Fatalf("QuarantineManifest: %v", err)
 		}
-		rh.requireGETStatus(http.StatusForbidden, "quarantined by the operator")
-		rh.requireGETStatus(http.StatusForbidden, "stale manifest, ciphertext suspect")
+		rh.requireGETStatus(http.StatusForbidden, "GET access")
+		rh.requireGETStatus(http.StatusForbidden, "GET access")
 	})
 
 	t.Run("fresh manifest is quarantined too", func(t *testing.T) {
@@ -232,7 +232,7 @@ func TestQuarantineMakesReadsFailNonRetryably(t *testing.T) {
 		if _, err := rh.h.QuarantineManifest(context.Background(), rh.bucket, rh.key, "pending investigation"); err != nil {
 			t.Fatalf("QuarantineManifest: %v", err)
 		}
-		rh.requireGETStatus(http.StatusForbidden, "pending investigation")
+		rh.requireGETStatus(http.StatusForbidden, "GET access")
 
 		inspected, err := rh.h.InspectManifest(context.Background(), rh.bucket, rh.key)
 		if err != nil {
@@ -254,7 +254,7 @@ func TestReleaseManifestLiftsQuarantine(t *testing.T) {
 	if _, err := rh.h.QuarantineManifest(context.Background(), rh.bucket, rh.key, "investigating"); err != nil {
 		t.Fatalf("QuarantineManifest: %v", err)
 	}
-	rh.requireGETStatus(http.StatusForbidden, "quarantined by the operator")
+	rh.requireGETStatus(http.StatusForbidden, "GET access")
 
 	status, err := rh.h.ReleaseManifest(context.Background(), rh.bucket, rh.key)
 	if err != nil {
@@ -281,7 +281,7 @@ func TestRepairLiftsQuarantine(t *testing.T) {
 	if _, err := rh.h.QuarantineManifest(context.Background(), rh.bucket, rh.key, "stale"); err != nil {
 		t.Fatalf("QuarantineManifest: %v", err)
 	}
-	rh.requireGETStatus(http.StatusForbidden, "quarantined by the operator")
+	rh.requireGETStatus(http.StatusForbidden, "GET access")
 
 	if _, err := rh.h.RepairManifest(context.Background(), rh.bucket, rh.key); err != nil {
 		t.Fatalf("RepairManifest: %v", err)
@@ -388,7 +388,7 @@ func TestQuarantineReasonValidation(t *testing.T) {
 	if status.QuarantineReason == "" {
 		t.Error("empty reason was not defaulted")
 	}
-	rh.requireGETStatus(http.StatusForbidden, "quarantined by the operator")
+	rh.requireGETStatus(http.StatusForbidden, "GET access")
 }
 
 // writeManifestAt writes a manifest with explicit control over the ciphertext

@@ -250,7 +250,7 @@ func assertRangeRequestRejected(t *testing.T, resp *http.Response) {
 	if parsed.StatusCode == http.StatusRequestedRangeNotSatisfiable {
 		errorBody := string(parsed.Body)
 		// The share endpoint uses plain text error (http.Error), not XML
-		if !bytes.Contains(parsed.Body, []byte("Range reads unsupported on compressed objects")) {
+		if !bytes.Contains(parsed.Body, []byte("compressed, so byte-range reads are unavailable")) {
 			t.Errorf("416 response should mention compressed objects, got: %s", errorBody)
 		}
 	}
