@@ -16,6 +16,47 @@ Entries before 0.1.1958 were written by hand on the Forgejo releases and are
 reproduced here; entries from 0.1.1958 on were reconstructed from git history
 on 2026-09-18 (bead armor-43ec803f).
 
+## 0.1.1991 (2026-10-16)
+
+- docs(error-responses): document client-message catalogue split (armor-a2a75c17)
+- docs(agent-guide): add change recipes, env-gate table, fixtures README (armor-12633103)
+- fix(config): avoid watcher shutdown deadlock (armor-d7da5b14)
+- fix(provenance): surface failed record appends (armor-1fbac49b)
+- refactor(server): move error-swarm test scaffolding out of the production package (armor-3aede3d5)
+- fix(armor-a2a75c17): keep expectation diff focused
+- fix(armor-a2a75c17): align safe error expectations
+- fix(armor-a2a75c17): isolate catalogue commit
+- wip(armor-a2a75c17): catalog safe S3 error messages
+- fix(canary): keep standalone v2 fallback for small test probes (armor-8e3a912e)
+- fix(auth): verify payload hash, reject unknown streaming modes (armor-328896ea)
+- feat(cli): one flag vocabulary, argv secret rejection (armor-b1e3a56b)
+- build(gates): hermetic --fast, per-stage timings, dod-full, single gate inventory (armor-2c918e99)
+- fix(canary): exercise configured v3 read and multipart paths (armor-8e3a912e)
+- docs(armor-a31eb033): collapse four error docs into docs/error-responses.md
+- docs(release): record repaired publication state (armor-5f0b4d23)
+- fix(handlers): retire multipart locks after upload lifecycle (armor-e9c41870)
+- fix(demo): create configured bucket on startup (armor-147954c9)
+- fix(handlers): classify backend HEAD failures (armor-ef22a431)
+- wip(armor-147954c9): persist demo keys and expose dashboard credentials
+- fix(release): mark unavailable public mirror in release body (armor-5f0b4d23)
+- docs(observability): link ARMOR Grafana dashboard (armor-93b7ec4c)
+- fix(release): backfill image-backed cuts and dedupe notes (armor-5f0b4d23)
+- wip(armor-59799692): fix check exits and add JSON
+- fix(backend): encode CopySource key segments (armor-fa1e62c9)
+- test(auth): sign bounded admin presign query (armor-dd488efb)
+- wip(armor-3a98d0b0): complete scrubber runbook repair
+- docs(readme): give operators one production path (armor-977bc620)
+- fix(auth): bound S3 presigned URL expiry (armor-dd488efb)
+- fix(performance): measure actual v2 and v3 formats (armor-2af339bc)
+- fix(server): classify client disconnects (armor-2171d100)
+- docs(armor-3a98d0b0): name ARMOR_DASHBOARD_CREDENTIAL for upload/download
+- fix(server): preflight create-only PUTs (armor-5b108d4b)
+- fix(auth): constant-time credential comparisons (armor-6e741335)
+- docs(armor-3a98d0b0): repair scrubber-corrupted commands in runbooks
+- test(docsindex): use archive files outside its own git root (armor-f880b45d)
+- docs(status): reconcile release evidence with bead state (armor-f880b45d)
+- fix(rotation): reject body MEKs and remove dashboard trigger (armor-6b62d076)
+
 ## 0.1.1990 (2026-10-16)
 
 - docs(error-responses): document client-message catalogue split (armor-a2a75c17)
