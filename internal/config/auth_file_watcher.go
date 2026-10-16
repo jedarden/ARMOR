@@ -30,6 +30,7 @@ type AuthFileWatcher struct {
 	lastMtime    time.Time
 	pollInterval time.Duration
 	stopCh       chan struct{}
+	stopOnce     sync.Once
 	wg           sync.WaitGroup
 	mu           sync.Mutex
 }
@@ -105,19 +106,9 @@ func (w *AuthFileWatcher) Stop() {
 		return
 	}
 
-	w.mu.Lock()
-	defer w.mu.Unlock()
-
-	// Use sync.Once to ensure we only close the channel once
-	// This prevents panic on multiple Stop() calls
-	select {
-	case <-w.stopCh:
-		// Already stopped
-		return
-	default:
-		close(w.stopCh)
-	}
-
+	// A reload may be waiting for mu. Never hold it while waiting for the
+	// polling goroutine, or Stop and checkAndReload can deadlock.
+	w.stopOnce.Do(func() { close(w.stopCh) })
 	w.wg.Wait()
 
 	slog.Info("stopped ARMOR_AUTH_FILE hot-reload watcher", "path", w.path)

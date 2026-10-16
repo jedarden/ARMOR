@@ -5,10 +5,42 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 )
+
+func TestAuthFileWatcherStopDoesNotHoldReloadMutex(t *testing.T) {
+	watcher := &AuthFileWatcher{stopCh: make(chan struct{})}
+	watcher.wg.Add(1)
+	go func() {
+		defer watcher.wg.Done()
+		<-watcher.stopCh
+		// Model a reload that needs mu before its goroutine can exit.
+		watcher.mu.Lock()
+		watcher.mu.Unlock()
+	}()
+
+	var callers sync.WaitGroup
+	callers.Add(2)
+	for range 2 {
+		go func() {
+			defer callers.Done()
+			watcher.Stop()
+		}()
+	}
+	done := make(chan struct{})
+	go func() {
+		callers.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Stop held the reload mutex while waiting for the watcher")
+	}
+}
 
 // TestAuthFileWatcher_BasicReload tests that a file rewrite triggers reload
 // and the new credential authenticates within one poll interval.
