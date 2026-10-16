@@ -25,6 +25,10 @@ the remediation is discoverable from the log line during the outage.
 ## Inspect first
 
 ```bash
+export ARMOR_ADMIN_TOKEN="$(
+  bao-as <bao-instance> bao kv get -field=admin_token \
+    "secret/rs-manager/<cluster>/armor/admin"
+)"
 curl -s -H "Authorization: Bearer $ARMOR_ADMIN_TOKEN" \
   'http://<armor-admin>/admin/manifest?key=<object-key>' | jq .
 ```
@@ -49,6 +53,10 @@ manifest key.
 ### Repair — re-stamp completedAt
 
 ```bash
+export ARMOR_ADMIN_TOKEN="$(
+  bao-as <bao-instance> bao kv get -field=admin_token \
+    "secret/rs-manager/<cluster>/armor/admin"
+)"
 curl -s -X POST -H "Authorization: Bearer $ARMOR_ADMIN_TOKEN" \
   'http://<armor-admin>/admin/manifest/repair?key=<object-key>' | jq .
 ```
@@ -65,6 +73,10 @@ GetObject applies, so a 200 with `fresh: true` means reads have resumed.
 ### Quarantine — definitive non-retryable error
 
 ```bash
+export ARMOR_ADMIN_TOKEN="$(
+  bao-as <bao-instance> bao kv get -field=admin_token \
+    "secret/rs-manager/<cluster>/armor/admin"
+)"
 curl -s -X POST -H "Authorization: Bearer $ARMOR_ADMIN_TOKEN" \
   'http://<armor-admin>/admin/manifest/quarantine?key=<object-key>&reason=ciphertext+overwritten+pending+review' | jq .
 ```
@@ -80,6 +92,10 @@ quarantined-and-stale manifest gets the 403, not the 500).
 ### Release — lift a quarantine
 
 ```bash
+export ARMOR_ADMIN_TOKEN="$(
+  bao-as <bao-instance> bao kv get -field=admin_token \
+    "secret/rs-manager/<cluster>/armor/admin"
+)"
 curl -s -X POST -H "Authorization: Bearer $ARMOR_ADMIN_TOKEN" \
   'http://<armor-admin>/admin/manifest/release?key=<object-key>' | jq .
 ```

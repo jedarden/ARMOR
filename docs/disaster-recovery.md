@@ -49,6 +49,11 @@ break-glass escrow package: the **default** MEK and all retired keys in its
 ring, in hex, **plus the live B2 credentials and bucket configuration**.
 
 ```bash
+export ARMOR_ADMIN_TOKEN="$(
+  bao-as <bao-instance> bao kv get -field=admin_token \
+    "secret/rs-manager/<cluster>/armor/admin"
+)"
+
 # Export the default MEK (escrow package includes B2 credentials)
 curl -s -H "Authorization: Bearer $ARMOR_ADMIN_TOKEN" \
   "http://localhost:9001/admin/key/export?confirm=yes"
@@ -180,11 +185,17 @@ Before rotating the MEK, you MUST:
 1. **Export the current MEK and capture the ring** and verify both complete
    successfully:
    ```bash
+   # The runtime image is `scratch`; curl runs on the operator host.
+   kubectl port-forward svc/armor -n <namespace> 9001:9001 &
+   export ARMOR_ADMIN_TOKEN="$(
+     bao-as <bao-instance> bao kv get -field=admin_token \
+       "secret/rs-manager/<cluster>/armor/admin"
+   )"
+
    # Export the active MEK (escrow package includes B2 credentials)
-   kubectl exec deploy/armor -n <namespace> -- \
-     curl -s -H "Authorization: Bearer $ARMOR_ADMIN_TOKEN" \
-       "http://localhost:9001/admin/key/export?confirm=yes" \
-       > /secure/path/mek-backup-$(date +%Y%m%d).json
+   curl -s -H "Authorization: Bearer $ARMOR_ADMIN_TOKEN" \
+     "http://localhost:9001/admin/key/export?confirm=yes" \
+     > /secure/path/mek-backup-$(date +%Y%m%d).json
 
    # Verify the export is valid JSON and carries the MEK and B2 block
    jq -e '.mek and .b2.secret_key' /secure/path/mek-backup-*.json
@@ -197,9 +208,8 @@ Before rotating the MEK, you MUST:
      /secure/path/mek-backup-*.json
 
    # Record the fingerprints the live ring actually holds (no key material)
-   kubectl exec deploy/armor -n <namespace> -- \
-     curl -s -H "Authorization: Bearer $ARMOR_ADMIN_TOKEN" \
-       "http://localhost:9001/admin/key/ring" | jq .
+   curl -s -H "Authorization: Bearer $ARMOR_ADMIN_TOKEN" \
+     "http://localhost:9001/admin/key/ring" | jq .
    ```
 
 2. **Escrow the MEK ring as a unit** in your secure location of choice.
@@ -220,9 +230,8 @@ for path in sys.argv[1:]:
 print(' '.join(sorted(fps)))" /secure/path/mek-ring-*.hex)
 
    # Fingerprints the live cluster holds
-   live_fps=$(kubectl exec deploy/armor -n <namespace> -- \
-     curl -s -H "Authorization: Bearer $ARMOR_ADMIN_TOKEN" \
-       "http://localhost:9001/admin/key/ring" | jq -r '[.keys[].ring_fps[]] | sort | join(" ")')
+   live_fps=$(curl -s -H "Authorization: Bearer $ARMOR_ADMIN_TOKEN" \
+     "http://localhost:9001/admin/key/ring" | jq -r '[.keys[].ring_fps[]] | sort | join(" ")')
    echo "escrowed: $escrowed_fps"
    echo "live:     $live_fps"
    # The two lists must match before you rotate
@@ -230,8 +239,8 @@ print(' '.join(sorted(fps)))" /secure/path/mek-ring-*.hex)
 
 4. **Verify canary health** to ensure current MEK is valid:
    ```bash
-   kubectl exec deploy/armor -n <namespace> -- \
-     curl -s http://localhost:9001/admin/key/verify | jq .
+   curl -s -H "Authorization: Bearer $ARMOR_ADMIN_TOKEN" \
+     http://localhost:9001/admin/key/verify | jq .
    ```
 
 **Only proceed with rotation after all four steps complete successfully.**
@@ -467,15 +476,14 @@ docker run -d \
 The canary is a self-healing integrity monitor that ARMOR maintains in the bucket. Verifying the canary confirms the MEK is correct and the full pipeline (encryption → B2 → Cloudflare → decryption) is working.
 
 ```bash
-# Via kubectl
-kubectl exec deploy/armor -- curl -s http://localhost:9001/admin/key/verify | jq .
-
-# Via Docker
-docker exec armor-container curl -s http://localhost:9001/admin/key/verify | jq .
-
-# Via port-forward
-kubectl port-forward svc/armor 9001:9001
-curl -s http://localhost:9001/admin/key/verify | jq .
+# The runtime image is `scratch`; curl runs on the operator host.
+kubectl port-forward svc/armor -n <namespace> 9001:9001 &
+export ARMOR_ADMIN_TOKEN="$(
+  bao-as <bao-instance> bao kv get -field=admin_token \
+    "secret/rs-manager/<cluster>/armor/admin"
+)"
+curl -s -H "Authorization: Bearer $ARMOR_ADMIN_TOKEN" \
+  http://localhost:9001/admin/key/verify | jq .
 ```
 
 **Expected response:**
@@ -849,6 +857,11 @@ To resume rotation, simply POST to the `/admin/key/rotate` endpoint again:
 # Rotation will automatically resume from .armor/rotation-state.json
 # (run against a port-forward or proxy to the pod — the ARMOR image is
 # `scratch` and has no curl, so this cannot run via `kubectl exec`)
+kubectl port-forward svc/armor -n <namespace> 9001:9001 &
+export ARMOR_ADMIN_TOKEN="$(
+  bao-as <bao-instance> bao kv get -field=admin_token \
+    "secret/rs-manager/<cluster>/armor/admin"
+)"
 curl -s -X POST http://localhost:9001/admin/key/rotate \
   -H "Authorization: Bearer $ARMOR_ADMIN_TOKEN" | jq .
 ```
@@ -1341,16 +1354,26 @@ Regularly test that you can retrieve and use the escrowed MEK (or MEK ring, for 
 
 ```bash
 # 1. Retrieve from escrow
-mek=$(retrieve-from-escrow)
+armor_env_file=$(mktemp)
+chmod 600 "$armor_env_file"
+trap 'rm -f "$armor_env_file"' EXIT
+printf 'ARMOR_MEK=%s\n' "$(retrieve-from-escrow)" > "$armor_env_file"
 
 # 2. Deploy test ARMOR instance with retrieved MEK
 docker run -d --name armor-test \
-  -e ARMOR_MEK=$mek \
+  -p 9001:9001 \
+  --env-file "$armor_env_file" \
   -e ARMOR_BUCKET=test-bucket \
   ... (other config)
 
-# 3. Verify against canary
-docker exec armor-test curl -s http://localhost:9001/admin/key/verify | jq .
+# 3. Verify against canary from the operator host. The ARMOR image is
+#    `scratch`, so it has no curl; the published admin port is the path in.
+export ARMOR_ADMIN_TOKEN="$(
+  bao-as <bao-instance> bao kv get -field=admin_token \
+    "secret/rs-manager/<cluster>/armor/admin"
+)"
+curl -s -H "Authorization: Bearer $ARMOR_ADMIN_TOKEN" \
+  http://localhost:9001/admin/key/verify | jq .
 
 # 4. Clean up
 docker stop armor-test && docker rm armor-test
@@ -1408,6 +1431,10 @@ done
 #    first — the ARMOR image is `scratch` and has no curl, so this cannot
 #    run via `kubectl exec`)
 kubectl port-forward deploy/armor 9001:9001 &
+export ARMOR_ADMIN_TOKEN="$(
+  bao-as <bao-instance> bao kv get -field=admin_token \
+    "secret/rs-manager/<cluster>/armor/admin"
+)"
 curl -X POST http://localhost:9001/admin/key/rotate \
   -H "Authorization: Bearer $ARMOR_ADMIN_TOKEN" &
 
@@ -1436,6 +1463,11 @@ done
 ```bash
 # Export MEK (the full response also carries B2 credentials — escrow it whole,
 # or extract .mek only if the B2 block is escrowed separately)
+kubectl port-forward svc/armor -n <namespace> 9001:9001 &
+export ARMOR_ADMIN_TOKEN="$(
+  bao-as <bao-instance> bao kv get -field=admin_token \
+    "secret/rs-manager/<cluster>/armor/admin"
+)"
 curl -s -H "Authorization: Bearer $ARMOR_ADMIN_TOKEN" \
   "http://localhost:9001/admin/key/export?confirm=yes" | jq -r '.mek' > mek-backup-$(date +%Y%m%d).hex
 
@@ -1456,6 +1488,11 @@ the approved secret escrow:
 
 ```bash
 # Export the active MEK and every default-key ring key as one unit
+kubectl port-forward svc/armor -n <namespace> 9001:9001 &
+export ARMOR_ADMIN_TOKEN="$(
+  bao-as <bao-instance> bao kv get -field=admin_token \
+    "secret/rs-manager/<cluster>/armor/admin"
+)"
 curl -s -H "Authorization: Bearer $ARMOR_ADMIN_TOKEN" \
   "http://localhost:9001/admin/key/export?confirm=yes" \
   > mek-ring-backup-$(date +%Y%m%d).json
@@ -1465,9 +1502,8 @@ jq -e '.mek and .active_key_fingerprint and (.ring_keys | type == "array")' \
   mek-ring-backup-*.json
 
 # Record which fingerprints the live ring holds (no key material in this output)
-kubectl exec deploy/armor -n <namespace> -- \
-  curl -s -H "Authorization: Bearer $ARMOR_ADMIN_TOKEN" \
-    "http://localhost:9001/admin/key/ring" | jq . > mek-ring-census-$(date +%Y%m%d).json
+curl -s -H "Authorization: Bearer $ARMOR_ADMIN_TOKEN" \
+  "http://localhost:9001/admin/key/ring" | jq . > mek-ring-census-$(date +%Y%m%d).json
 
 # Verify checksums
 sha256sum mek-ring-backup-*.json mek-ring-census-*.json
@@ -1484,11 +1520,19 @@ aws secretsmanager create-secret \
 ### Verify MEK
 
 ```bash
-# Via admin API
-kubectl exec deploy/armor -- curl -s http://localhost:9001/admin/key/verify | jq .
+# The runtime image is `scratch`; curl runs on the operator host.
+kubectl port-forward svc/armor -n <namespace> 9001:9001 &
+export ARMOR_ADMIN_TOKEN="$(
+  bao-as <bao-instance> bao kv get -field=admin_token \
+    "secret/rs-manager/<cluster>/armor/admin"
+)"
 
-# Via canary status
-kubectl exec deploy/armor -- curl -s http://localhost:9001/armor/canary | jq .
+# Via admin API
+curl -s -H "Authorization: Bearer $ARMOR_ADMIN_TOKEN" \
+  http://localhost:9001/admin/key/verify | jq .
+
+# Via canary status (the endpoint is public, but the token is harmless)
+curl -s http://localhost:9001/armor/canary | jq .
 ```
 
 ### Check Rotation Status (v0.1.1922+)
@@ -1499,6 +1543,10 @@ kubectl exec deploy/armor -- curl -s http://localhost:9001/armor/canary | jq .
 # ARMOR image is `scratch` and has no curl, so this cannot run via
 # `kubectl exec`
 kubectl port-forward deploy/armor -n <namespace> 9001:9001 &
+export ARMOR_ADMIN_TOKEN="$(
+  bao-as <bao-instance> bao kv get -field=admin_token \
+    "secret/rs-manager/<cluster>/armor/admin"
+)"
 curl -s -H "Authorization: Bearer $ARMOR_ADMIN_TOKEN" \
   "http://localhost:9001/admin/key/ring" | jq .
 

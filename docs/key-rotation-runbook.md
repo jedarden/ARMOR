@@ -122,7 +122,8 @@ Every replica loads **both** `ARMOR_MEK` (the new active key) and
 - A restart mid-rotation is harmless — all replicas always have all valid keys
 
 ```bash
-kubectl rollout restart deployment/armor -n <namespace>
+# Apply the restart through the deployment's declarative-config change and let
+# ArgoCD reconcile it; do not mutate an ArgoCD-managed Deployment directly.
 kubectl rollout status deployment/armor -n <namespace>
 ```
 
@@ -140,13 +141,17 @@ using the active key already loaded from config.
 # Via kubectl port-forward (curl runs on your machine, not in the pod —
 # the ARMOR image is `scratch` and has no curl or shell)
 kubectl port-forward deploy/armor -n <namespace> 9001:9001 &
+export ARMOR_ADMIN_TOKEN="$(
+  bao-as <bao-instance> bao kv get -field=admin_token \
+    "secret/rs-manager/<cluster>/armor/admin"
+)"
 curl -s -X POST http://localhost:9001/admin/key/rotate \
-  -H "Authorization: Bearer $(bao kv get -field=admin_token secret/<cluster>/<app>/armor)" | jq .
+  -H "Authorization: Bearer $ARMOR_ADMIN_TOKEN" | jq .
 
 # Via kubectl proxy (plan §8.6 credential-file pattern)
-kubectl proxy --port=8001
+kubectl proxy --port=8001 &
 curl -s -X POST http://127.0.0.1:8001/api/v1/namespaces/<namespace>/services/armor:9001/proxy/admin/key/rotate \
-  -H "Authorization: Bearer $(bao kv get -field=admin_token secret/<cluster>/<app>/armor)" | jq .
+  -H "Authorization: Bearer $ARMOR_ADMIN_TOKEN" | jq .
 ```
 
 **Auth (bf-5m9nde):** every `/admin/*` route requires
@@ -192,12 +197,16 @@ in well under a second even on a bucket with tens of thousands of objects:
 # Via kubectl port-forward (curl runs on your machine, not in the pod —
 # the ARMOR image is `scratch` and has no curl or shell)
 kubectl port-forward deploy/armor -n <namespace> 9001:9001 &
+export ARMOR_ADMIN_TOKEN="$(
+  bao-as <bao-instance> bao kv get -field=admin_token \
+    "secret/rs-manager/<cluster>/armor/admin"
+)"
 curl -s http://localhost:9001/admin/key/ring \
-  -H "Authorization: Bearer $(bao kv get -field=admin_token secret/<cluster>/<app>/armor)" | jq .
+  -H "Authorization: Bearer $ARMOR_ADMIN_TOKEN" | jq .
 
 # Via kubectl proxy
 curl -s http://127.0.0.1:8001/api/v1/namespaces/<namespace>/services/armor:9001/proxy/admin/key/ring \
-  -H "Authorization: Bearer $(bao kv get -field=admin_token secret/<cluster>/<app>/armor)" | jq .
+  -H "Authorization: Bearer $ARMOR_ADMIN_TOKEN" | jq .
 ```
 
 **Response:**
@@ -240,11 +249,13 @@ fingerprint** (and `"legacy"` is accounted for). To retire:
 
 ```bash
 # Remove the old key from ARMOR_MEK_RING in OpenBao
-bao kv patch secret/<cluster>/<app>/armor \
+# Patch OpenBao through the instance that owns this secret path.
+bao-as <bao-instance> bao kv patch "secret/rs-manager/<cluster>/armor" \
   mek_ring=""  # Empty string if no other retired keys, or remove just the old key
 
-# ESO syncs → rolling restart → done
-kubectl rollout restart deployment/armor -n <namespace>
+# After ESO syncs, apply the approved declarative-config restart change and let
+# ArgoCD reconcile it; this read-only command confirms the rollout completed.
+kubectl rollout status deployment/armor -n <namespace>
 ```
 
 `armor check` warns if you attempt to remove a key that still has objects
@@ -352,6 +363,11 @@ Migrate when:
 ### Migration endpoint
 
 ```bash
+export ARMOR_ADMIN_TOKEN="$(
+  bao-as <bao-instance> bao kv get -field=admin_token \
+    "secret/rs-manager/<cluster>/armor/admin"
+)"
+
 # Start a migration (dry run by default - counts objects without re-encrypting)
 curl -s -X POST "http://localhost:9001/admin/format/migrate?dry_run=true&include=1&concurrency=4" \
   -H "Authorization: Bearer $ARMOR_ADMIN_TOKEN" | jq .
@@ -370,15 +386,20 @@ curl -s -X GET "http://localhost:9001/admin/format/migrate" \
 The `armor migrate` command provides a convenient CLI wrapper around the admin API:
 
 ```bash
+export ARMOR_ADMIN_TOKEN="$(
+  bao-as <bao-instance> bao kv get -field=admin_token \
+    "secret/rs-manager/<cluster>/armor/admin"
+)"
+
 # Dry run (counts objects without re-encrypting)
-ARMOR_ADMIN_TOKEN=<token> armor migrate \
+ARMOR_ADMIN_TOKEN="$ARMOR_ADMIN_TOKEN" armor migrate \
   --admin-url http://127.0.0.1:9001 \
   --dry-run \
   --include v1 \
   --concurrency 4
 
 # Actual migration with progress watching
-ARMOR_ADMIN_TOKEN=<token> armor migrate \
+ARMOR_ADMIN_TOKEN="$ARMOR_ADMIN_TOKEN" armor migrate \
   --admin-url http://127.0.0.1:9001 \
   --include v1,v2 \
   --concurrency 8 \

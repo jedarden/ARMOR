@@ -9,7 +9,9 @@ The ARMOR web dashboard provides a visual interface for browsing encrypted bucke
 When running ARMOR locally, the dashboard is available on the admin port (default `127.0.0.1:9001`):
 
 ```bash
-curl http://localhost:9001/dashboard
+# A plain `armor demo` intentionally returns 403 here: it supplies neither a
+# dashboard credential nor ARMOR_ADMIN_TOKEN.
+curl -i http://localhost:9001/dashboard
 ```
 
 The `armor demo` command sets neither a dashboard credential
@@ -88,7 +90,8 @@ env:
 
 When accessing the dashboard, provide credentials:
 ```bash
-# Using curl
+# These variables must already be supplied by the process environment or a
+# Secret/ExternalSecret; never put either credential value in this command.
 curl -u "$ARMOR_DASHBOARD_USER:$ARMOR_DASHBOARD_PASS" http://localhost:9001/dashboard
 
 # Browser will prompt for username/password
@@ -106,6 +109,8 @@ env:
 
 When accessing the dashboard, provide the token in the Authorization header:
 ```bash
+# The token should be injected into the environment by the deployment's
+# Secret/ExternalSecret, not written into this command.
 curl -H "Authorization: Bearer $ARMOR_DASHBOARD_TOKEN" http://localhost:9001/dashboard
 ```
 
@@ -329,6 +334,6 @@ The dashboard is implemented in Go with no external frontend dependencies. The H
 3. Ship it like any other change: commit, then cut a release
    (`scripts/cut-release.sh <version>`) so CI builds and publishes the image,
    and roll the fleet forward by bumping the image tag in
-   `declarative-config` for ArgoCD to apply. Never run `docker build` or
-   `kubectl rollout restart` by hand — see
+   `declarative-config` for ArgoCD to apply. Never mutate a live deployment
+   directly — see
    [docs/release-process.md](release-process.md) and `AGENTS.md`.
