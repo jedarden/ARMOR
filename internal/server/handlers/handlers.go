@@ -104,17 +104,85 @@ type Handlers struct {
 	// read-modify-write state object and therefore lock by upload ID. V3 stores
 	// each part in an independent part-<n>.json object, so it locks only duplicate
 	// requests for the same part number; distinct v3 parts remain concurrent.
-	// The zero value is a usable sync.Map.
-	multipartLocks sync.Map // lock key -> *sync.Mutex
+	// Registry entries stay alive while a part holds or waits for its lock.
+	multipartLocksMu   sync.Mutex
+	multipartLocks     map[string]*multipartLockEntry
+	multipartLastSweep time.Time
 
 	// multipartSidecarCache caches v3 multipart sidecar data
 	multipartSidecarCache *backend.MultipartSidecarCache
 }
 
-// multipartLock returns the mutex serializing state updates for one lock key.
-func (h *Handlers) multipartLock(lockKey string) *sync.Mutex {
-	v, _ := h.multipartLocks.LoadOrStore(lockKey, &sync.Mutex{})
-	return v.(*sync.Mutex)
+const (
+	multipartLockIdleTTL       = 24 * time.Hour
+	multipartLockSweepInterval = time.Hour
+)
+
+type multipartLockEntry struct {
+	mu       sync.Mutex
+	refs     int // Holders and waiters; protected by multipartLocksMu.
+	lastUsed time.Time
+	retired  bool
+}
+
+// multipartLock registers a waiter before taking the per-key mutex. Cleanup
+// cannot replace that mutex while another request is still using it.
+func (h *Handlers) multipartLock(lockKey string) func() {
+	now := time.Now()
+	h.multipartLocksMu.Lock()
+	if h.multipartLocks == nil {
+		h.multipartLocks = make(map[string]*multipartLockEntry)
+	}
+	if now.Sub(h.multipartLastSweep) >= multipartLockSweepInterval {
+		h.sweepMultipartLocksLocked(now)
+		h.multipartLastSweep = now
+	}
+	entry := h.multipartLocks[lockKey]
+	if entry == nil {
+		entry = &multipartLockEntry{}
+		h.multipartLocks[lockKey] = entry
+	}
+	entry.refs++
+	h.multipartLocksMu.Unlock()
+
+	entry.mu.Lock()
+	return func() {
+		entry.mu.Unlock()
+		h.multipartLocksMu.Lock()
+		entry.refs--
+		entry.lastUsed = time.Now()
+		if entry.refs == 0 && entry.retired {
+			delete(h.multipartLocks, lockKey)
+		}
+		h.multipartLocksMu.Unlock()
+	}
+}
+
+// cleanupMultipartLocks retires both the v2 upload lock and all v3 part
+// locks. Active holders and waiters keep their mutex until the last release.
+func (h *Handlers) cleanupMultipartLocks(uploadID string) {
+	h.multipartLocksMu.Lock()
+	defer h.multipartLocksMu.Unlock()
+	for key, entry := range h.multipartLocks {
+		if key != uploadID && !strings.HasPrefix(key, uploadID+"/part/") {
+			continue
+		}
+		if entry.refs == 0 {
+			delete(h.multipartLocks, key)
+		} else {
+			entry.retired = true
+		}
+	}
+}
+
+// sweepMultipartLocksLocked reclaims idle locks from abandoned uploads. It is
+// run on the next multipart lock acquisition after each sweep interval.
+func (h *Handlers) sweepMultipartLocksLocked(now time.Time) {
+	for key, entry := range h.multipartLocks {
+		if entry.refs == 0 && now.Sub(entry.lastUsed) >= multipartLockIdleTTL {
+			delete(h.multipartLocks, key)
+		}
+	}
 }
 
 // getMultipartManager returns the multipart state manager for a given bucket.
@@ -3371,9 +3439,7 @@ func (h *Handlers) UploadPart(w http.ResponseWriter, r *http.Request, bucket, ke
 		formatVersion = 3
 		// V3 part metadata is independent, so only serialize an idempotent retry
 		// racing the same part number. Different parts must reach B2 concurrently.
-		mu := h.multipartLock(fmt.Sprintf("%s/part/%d", uploadID, partNumber))
-		mu.Lock()
-		defer mu.Unlock()
+		defer h.multipartLock(fmt.Sprintf("%s/part/%d", uploadID, partNumber))()
 		// Convert v3 metadata to a minimal state structure for the existing logic
 		// The state is used read-only for most of the function
 		state = &backend.MultipartState{
@@ -3400,9 +3466,7 @@ func (h *Handlers) UploadPart(w http.ResponseWriter, r *http.Request, bucket, ke
 		// Fall back to v2 format
 		// V2 has one shared read-modify-write state object, so the lock must cover
 		// the state load, backend upload, and state save.
-		mu := h.multipartLock(uploadID)
-		mu.Lock()
-		defer mu.Unlock()
+		defer h.multipartLock(uploadID)()
 		state, err = manager.LoadState(ctx, uploadID)
 		if err != nil {
 			h.writeError(w, r, "NoSuchUpload", fmt.Sprintf("Multipart upload not found: %v", err), 404)
@@ -4350,6 +4414,7 @@ func (h *Handlers) CompleteMultipartUpload(w http.ResponseWriter, r *http.Reques
 
 	// Clean up multipart state
 	manager.DeleteState(ctx, uploadID)
+	h.cleanupMultipartLocks(uploadID)
 
 	// Record in manifest for fast metadata lookup (async B2 persistence)
 	// When manifest is enabled, provenance is embedded in delta lines.
@@ -4470,6 +4535,7 @@ func (h *Handlers) AbortMultipartUpload(w http.ResponseWriter, r *http.Request, 
 
 	// Clean up multipart state (handles both v2 and v3 formats)
 	manager.DeleteState(ctx, uploadID)
+	h.cleanupMultipartLocks(uploadID)
 
 	w.WriteHeader(http.StatusNoContent)
 }
