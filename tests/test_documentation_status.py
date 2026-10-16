@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Tests for the release-status documentation gate."""
 
+import hashlib
 import json
 import shutil
 import subprocess
@@ -13,6 +14,22 @@ SCRIPT = REPO_ROOT / "scripts" / "documentation-status-gate.py"
 STATUS = REPO_ROOT / "config" / "documentation-status.json"
 
 
+def write_checkpoint(root: Path, states: dict[str, str]) -> None:
+    checkpoint = root / ".beads" / "checkpoint"
+    (checkpoint / "objects").mkdir(parents=True, exist_ok=True)
+    data = "".join(
+        json.dumps({"record_type": "issue", "issue": {"id": bead, "base_status": state}})
+        + "\n"
+        for bead, state in sorted(states.items())
+    ).encode()
+    digest = hashlib.sha256(data).hexdigest()
+    relative = f"objects/{digest}.jsonl"
+    (checkpoint / relative).write_bytes(data)
+    (checkpoint / "current.json").write_text(
+        json.dumps({"active_root": {"path": relative, "sha256": digest}})
+    )
+
+
 def make_tree(tmp_path: Path) -> Path:
     root = tmp_path / "repo"
     (root / "scripts").mkdir(parents=True)
@@ -22,13 +39,25 @@ def make_tree(tmp_path: Path) -> Path:
     shutil.copy(STATUS, root / "config" / STATUS.name)
     config = json.loads(STATUS.read_text())
     status_doc = config["status_document"]
-    status_lines = ["# Release status"]
+    status_lines = ["# Release status", "| Capability | Status |", "|---|---|"]
+    states = {}
     for cap in config["capabilities"]:
-        line = f"{cap['id']}: {cap['status']}"
+        beads = cap.get("evidence_beads", [])
+        marker = f"<!-- capability: {cap['id']} status: {cap['status']}"
+        if beads:
+            marker += " evidence: " + " ".join(beads)
+        status_lines.append(marker + " -->")
+        line = f"| {cap['table_label']} | `{cap['status']}` | {cap['id']}"
         if cap.get("status") == "active-regression":
             line += " active regression not currently supported"
-            line += " " + " ".join(cap.get("evidence_beads", []))
+            line += " " + " ".join(beads)
+        line += " |"
         status_lines.append(line)
+        for bead in beads:
+            states[bead] = "closed"
+    states["armor-8317f313"] = "deferred"
+    states["armor-73564f97"] = "in_progress"
+    write_checkpoint(root, states)
     (root / status_doc).write_text("\n".join(status_lines) + "\n")
     for document in config["operator_documents"]:
         path = root / document
@@ -107,13 +136,48 @@ def test_active_status_requires_current_evidence(tmp_path):
     status_doc = root / json.loads(STATUS.read_text())["status_document"]
     status_doc.write_text(
         status_doc.read_text().replace(
-            "named-key-read: active-regression active regression not currently supported",
-            "named-key-read: active-regression historical failure",
+            "named-key-read active regression not currently supported",
+            "named-key-read historical failure",
         )
     )
     result = run_gate(root)
     assert result.returncode == 1
     assert "describes an active regression only as historical" in result.stderr
+
+
+def test_all_cited_beads_closed_cannot_remain_active_regression(tmp_path):
+    root = make_tree(tmp_path)
+    config = json.loads(STATUS.read_text())
+    write_checkpoint(
+        root,
+        {bead: "closed" for cap in config["capabilities"]
+         for bead in cap.get("evidence_beads", [])},
+    )
+    result = run_gate(root)
+    assert result.returncode == 1
+    assert "named-key-read: active-regression has only closed evidence beads" in result.stderr
+
+
+def test_repository_tested_cannot_cite_open_bead(tmp_path):
+    root = make_tree(tmp_path)
+    config_path = root / "config" / STATUS.name
+    config = json.loads(config_path.read_text())
+    named = next(cap for cap in config["capabilities"] if cap["id"] == "named-key-read")
+    named["status"] = "repository-tested"
+    config_path.write_text(json.dumps(config))
+    status_doc = root / config["status_document"]
+    status_doc.write_text(
+        status_doc.read_text().replace(
+            "capability: named-key-read status: active-regression",
+            "capability: named-key-read status: repository-tested",
+        ).replace(
+            "| Named-key and ring-key reads | `active-regression` |",
+            "| Named-key and ring-key reads | `repository-tested` |",
+        )
+    )
+    result = run_gate(root)
+    assert result.returncode == 1
+    assert "repository-tested cites non-closed bead armor-8317f313" in result.stderr
 
 
 @pytest.mark.parametrize("document", ["README.md", "docs/cli-reference.md"])

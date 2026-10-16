@@ -12,6 +12,7 @@
   "capabilities": [
     {
       "id": "named-key-read",
+      "table_label": "Named-key and ring-key reads",
       "status": "active-regression",
       "tokens": ["named key", "named-key"],
       "evidence_beads": ["armor-8317f313"],
@@ -27,7 +28,8 @@
     },
     {
       "id": "wrapped-dek-decoding",
-      "status": "active-regression",
+      "table_label": "Fingerprinted wrapped-DEK decoding",
+      "status": "repository-tested",
       "tokens": ["wrapped dek", "wrapped-dek"],
       "evidence_beads": ["armor-4b1b6c64", "armor-da67956d"],
       "active_evidence_terms": ["active regression", "not currently supported", "currently unverified"],
@@ -42,7 +44,8 @@
     },
     {
       "id": "multipart-hmac-read",
-      "status": "active-regression",
+      "table_label": "Multipart HMAC sidecar and read paths",
+      "status": "repository-tested",
       "tokens": ["hmac sidecar", "multipart hmac", "multipart sidecar"],
       "evidence_beads": ["armor-1b272971", "armor-7edd1237"],
       "active_evidence_terms": ["active regression", "not currently supported", "currently unverified"],
@@ -57,7 +60,8 @@
     },
     {
       "id": "v3-multipart-verification",
-      "status": "active-regression",
+      "table_label": "V3 multipart verification in CLI and DR",
+      "status": "repository-tested",
       "tokens": ["v3 multipart", "multipart v3"],
       "evidence_beads": ["armor-86a90341", "armor-da67956d"],
       "active_evidence_terms": ["active regression", "not currently supported", "currently unverified"],
@@ -72,7 +76,8 @@
     },
     {
       "id": "sigv4-authentication",
-      "status": "active-regression",
+      "table_label": "SigV4 authentication, including AWS CLI",
+      "status": "repository-tested",
       "tokens": ["sigv4"],
       "evidence_beads": ["armor-a3b04ef2", "armor-4795decf"],
       "active_evidence_terms": ["active regression", "not currently supported", "currently unverified"],
@@ -87,7 +92,8 @@
     },
     {
       "id": "presigned-get",
-      "status": "active-regression",
+      "table_label": "Presigned/share GET",
+      "status": "repository-tested",
       "tokens": ["presigned get", "presign", "share get"],
       "evidence_beads": ["armor-0163fb32"],
       "active_evidence_terms": ["active regression", "not currently supported", "currently unverified"],
@@ -102,6 +108,7 @@
     },
     {
       "id": "range-reads",
+      "table_label": "Byte-range reads",
       "status": "active-regression",
       "tokens": ["range read", "range reads", "byte-range"],
       "evidence_beads": ["armor-817d9d92", "armor-73564f97", "armor-5694713b", "armor-272299ca"],
@@ -117,6 +124,7 @@
     },
     {
       "id": "s3-operation-surface",
+      "table_label": "S3 operation surface",
       "status": "scope-limited",
       "tokens": ["full s3", "s3-compatible clients", "standard s3 clients"],
       "forbidden_claims": [
@@ -126,6 +134,14 @@
         "fully supported",
         "works without modification"
       ]
+    },
+    {
+      "id": "adr006-provider-outage-failover",
+      "table_label": "ADR-006 provider-outage failover and failback",
+      "status": "repository-tested",
+      "tokens": ["provider-outage failover", "failback"],
+      "evidence_beads": ["armor-14a2e34c"],
+      "forbidden_claims": []
     }
   ]
 }

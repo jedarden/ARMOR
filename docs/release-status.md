@@ -1,41 +1,45 @@
 # Release status and known limitations
 
-**Status date:** 2026-09-29 · **Source version:** see [`VERSION`](../VERSION)
+**Status date:** 2026-10-15 · **Source version:** see [`VERSION`](../VERSION)
 
-This page is the evidence boundary for operator documentation. “Repository
-tested” means the committed tree has focused tests for the behavior. It does
-not prove that a published image, a particular fleet deployment, or a
-credential/key-ring combination has exercised that behavior. “Release-pending”
-means that release-image or live deployment evidence is still required before
-an operator should treat the capability as verified. The compatibility and DR
-pages link here so their examples do not silently become release claims.
-“Active-regression” is stronger: an implementation or verification bead has
-reported a current failure or an unclosed support boundary, so test coverage
-must not be presented as currently working support.
+This page is the evidence boundary for operator documentation. `repository-tested`
+means the current tree has focused passing tests, not proof of a published image
+or a particular deployment. `active-regression` means at least one cited bead
+still has an open support or verification boundary; the row names that boundary
+even when a narrower behavior has passed. The compatibility and DR pages link
+here so their examples do not silently become release claims.
+
+The newest tag on Forgejo is **`v0.1.1975`**. Later source versions
+have no published release evidence as of this status date; the release-chain
+repair is tracked in `armor-5f0b4d23`. The current six-client matrix under
+`tests/aws-cli-compatibility/client_matrix_test.go` was added after 0.1.1975.
+It is a test contract for the next successfully published image, not proof that
+an image with that matrix has shipped. The table identifies the last specific
+image proof where one is recorded and says when none is recorded.
 
 ## Current release posture
 
 <!-- capability: named-key-read status: active-regression evidence: armor-8317f313 -->
-<!-- capability: wrapped-dek-decoding status: active-regression evidence: armor-4b1b6c64 armor-da67956d -->
-<!-- capability: multipart-hmac-read status: active-regression evidence: armor-1b272971 armor-7edd1237 -->
-<!-- capability: v3-multipart-verification status: active-regression evidence: armor-86a90341 armor-da67956d -->
-<!-- capability: sigv4-authentication status: active-regression evidence: armor-a3b04ef2 armor-4795decf -->
-<!-- capability: presigned-get status: active-regression evidence: armor-0163fb32 -->
+<!-- capability: wrapped-dek-decoding status: repository-tested evidence: armor-4b1b6c64 armor-da67956d -->
+<!-- capability: multipart-hmac-read status: repository-tested evidence: armor-1b272971 armor-7edd1237 -->
+<!-- capability: v3-multipart-verification status: repository-tested evidence: armor-86a90341 armor-da67956d -->
+<!-- capability: sigv4-authentication status: repository-tested evidence: armor-a3b04ef2 armor-4795decf -->
+<!-- capability: presigned-get status: repository-tested evidence: armor-0163fb32 -->
 <!-- capability: range-reads status: active-regression evidence: armor-817d9d92 armor-73564f97 armor-5694713b armor-272299ca -->
 <!-- capability: adr006-provider-outage-failover status: repository-tested evidence: armor-14a2e34c -->
 <!-- capability: s3-operation-surface status: scope-limited -->
 
-| Capability | Status | What the source tree demonstrates | Operator boundary |
-|---|---|---|---|
-| Named-key and ring-key reads | `active-regression` | Focused key-manager and multi-key routing tests cover fingerprint selection and rejection of unknown metadata. | Active regression: current support is not established for non-default keys. The P0 regression record is `armor-8317f313`; its implementation and release evidence must be resolved before relying on named-key reads. |
-| Fingerprinted wrapped-DEK decoding | `active-regression` | CLI, server, and restore-verifier tests cover the `v2:<fingerprint>:<base64>` form and legacy values. | Active regression: test coverage does not establish working DR support. Track the decode and verifier evidence in `armor-4b1b6c64` and `armor-da67956d`; exercise the exact escrow package and object population before promotion. |
-| Multipart HMAC sidecar and read paths | `active-regression` | In-tree v2/v3 full-read, range-read, prefix, sidecar, and corruption tests cover the current layouts. | Active regression: preserve `.armor/hmac/` and do not rely on existing multipart data until the sidecar reader/write-path evidence is current. The implementation records are `armor-1b272971` and `armor-7edd1237`. |
-| V3 multipart verification in CLI and DR | `active-regression` | `armor verify`, `armor decrypt`, and restore-verifier tests cover manifest fallback, sidecar HMACs, part counters, and digest outcomes. | Active regression: a server GET is not DR proof. Published-image and real-object verification remain unestablished; use `armor-86a90341` and `armor-da67956d` for the existing verifier implementation work. |
-| SigV4 authentication, including AWS CLI | `active-regression` | The protocol suite and request-shape tests cover accepted and rejected credentials, including AWS CLI and barman-shaped requests. | Active regression: a passing request-shape test is not current AWS CLI support evidence. Reproduce against the release image and classify the denial using `armor-a3b04ef2` and `armor-4795decf` before promotion. |
-| Presigned/share GET | `active-regression` | Enabled-harness tests cover share GETs and range/error responses. | Active regression: configure `ARMOR_PRESIGN_ENABLED`, an absolute base URL, and the dedicated secret, then prove the enabled route. The existing 403 regression evidence is `armor-0163fb32`; do not describe it as only historical. |
-| Byte-range reads | `active-regression` | Protocol and handler tests cover unaligned, suffix, multipart-boundary, prefix, and corruption cases; the focused [large-object range baseline](performance/large-object-range-read-baseline.md) records local latency and backend-byte shape; the [first production B2/Cloudflare qualification](performance/production-b2-cloudflare-2026-09-28.md) records the workload and an incomplete live result. | Active regression: correctness coverage does not establish currently working large-object support or production performance. The active read-path and bounded-throughput work is tracked by `armor-817d9d92`, `armor-73564f97`, `armor-5694713b`, and `armor-272299ca`. |
-| ADR-006 provider-outage failover and failback | `repository-tested` | The tagged `TestProviderOutageFailoverWritesAndFailback` drill destroys the primary, promotes the replicated filesystem backend, proves reads and writes (including replicated metadata) through the promotion, re-uploads the pre-outage object for replacement backfill, and serves old/new data after failback. Backend unit coverage pins the explicit promotion decision. | Release-pending: this is credential-free repository evidence using filesystem backends; run the live provider-outage drill and record the image/version and recovery inventory before treating a deployment as proven. |
-| S3 operation surface | `scope-limited` | The documented matrix covers authentication, reads, ranges, listing, overwrite/delete, and multipart where a client supports it. | ARMOR is not a claim of full AWS S3 API compatibility. Use the matrix and the image-gate client run for the exact release under evaluation. |
+| Capability | Status | Current source evidence | Published-image evidence | Operator boundary |
+|---|---|---|---|---|
+| Named-key and ring-key reads | `active-regression` | Real key-manager and multi-key routing tests cover fingerprint selection and unknown metadata. The fix shipped, but `armor-8317f313` remains deferred. | **0.1.1969:** the bead records a published-image named-key PUT/GET round trip and image digest. | Active regression record: reconcile the deferred bead and recheck the target deployment's named-key/ring configuration before claiming fleet-wide support. |
+| Fingerprinted wrapped-DEK decoding | `repository-tested` | CLI, server, and restore-verifier tests cover the `v2:<fingerprint>:<base64>` form and legacy values. `armor-4b1b6c64` and `armor-da67956d` are closed. | **None recorded** for the DR/escrow path; the client image matrix does not exercise it. | Verify the exact escrow package, key ring, and object population in a DR drill before making a deployment claim. |
+| Multipart HMAC sidecar and read paths | `repository-tested` | V2/v3 full-read, range-read, prefix, sidecar, and corruption tests cover the current layouts. The prefix lookup fixes in `armor-1b272971` and `armor-7edd1237` are closed. | **None recorded** for v3 sidecar/DR behavior. The 0.1.1975 client harness writes v2 objects. | Preserve `.armor/hmac/` and verify existing multipart objects before migration or failover. |
+| V3 multipart verification in CLI and DR | `repository-tested` | `armor verify`, `armor decrypt`, and restore-verifier tests cover manifest fallback, sidecar HMACs, part counters, and digests. `armor-86a90341` and `armor-da67956d` are closed. | **None recorded** for the CLI/DR path; the client image matrix exercises server S3 operations. | A server GET is not a DR drill. Run the verifier against real objects with the intended image and credentials. |
+| SigV4 authentication, including AWS CLI | `repository-tested` | Request-shape and real-client tests cover accepted and rejected credentials; `armor-a3b04ef2` and `armor-4795decf` are closed. The six-client matrix binds AWS CLI authentication to its PUT/GET round trip. | **0.1.1975** is the latest published tag; its AWS CLI leg predates the six-client matrix. No later image proof is recorded. | AWS CLI works in the tested source paths. Check the image and credentials of the deployment before claiming its access is verified. |
+| Presigned/share GET | `repository-tested` | The enabled in-process harness passes share GET and range/error cases; `armor-0163fb32` closed after correcting its test configuration. | **None recorded**; the share GET test skips external-image endpoint mode. | Enable `ARMOR_PRESIGN_ENABLED` and configure the base URL and secret, then probe the deployed route. |
+| Byte-range reads | `active-regression` | Protocol and handler tests cover byte/status correctness, and `armor-817d9d92` closed the large multipart read failure. [Local baseline](performance/large-object-range-read-baseline.md) and [live qualification](performance/production-b2-cloudflare-2026-09-28.md) bound performance evidence. `armor-73564f97`, `armor-5694713b`, and `armor-272299ca` remain open. | **0.1.1975** predates the six-client range matrix; no published image proves the open bounded-throughput work. | Active regression boundary is large-object throughput and bounded reads; do not turn the incomplete live qualification into a production performance claim. |
+| ADR-006 provider-outage failover and failback | `repository-tested` | The tagged `TestProviderOutageFailoverWritesAndFailback` filesystem drill and backend tests prove the explicit promotion sequence; `armor-14a2e34c` is closed. | **None recorded** for a live provider outage. | Run the live drill and record the image version and recovery inventory before treating a deployment as proven. |
+| S3 operation surface | `scope-limited` | The current six-client matrix covers authentication, reads, ranges, listing, overwrite/delete, and multipart where supported. | **0.1.1975** is the latest published tag and predates that matrix. | Use the matrix for the exact image under evaluation; this is a scoped operation claim. |
 
 ## Known limitations
 

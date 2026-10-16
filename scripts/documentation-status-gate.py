@@ -13,6 +13,7 @@ not an adequate status.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
 import sys
@@ -54,6 +55,33 @@ def load_status(root: Path) -> dict:
         raise ValueError(f"cannot read {path}: {exc}") from exc
 
 
+def load_bead_states(root: Path, bead_ids: set[str]) -> dict[str, str]:
+    """Read the portable, committed bead-rs snapshot used by clean CI exports."""
+    checkpoint = root / ".beads" / "checkpoint"
+    try:
+        current = json.loads((checkpoint / "current.json").read_text())
+        relative = current["active_root"]["path"]
+        if not re.fullmatch(r"objects/[0-9a-f]{64}\.jsonl", relative):
+            raise ValueError(f"invalid checkpoint object path: {relative!r}")
+        data = (checkpoint / relative).read_bytes()
+        if hashlib.sha256(data).hexdigest() != Path(relative).stem:
+            raise ValueError(f"checkpoint object has wrong digest: {relative}")
+        states: dict[str, str] = {}
+        for line in data.splitlines():
+            record = json.loads(line)
+            if record.get("record_type") != "issue":
+                continue
+            issue = record["issue"]
+            bead_id = issue["id"]
+            if bead_id in bead_ids:
+                if bead_id in states:
+                    raise ValueError(f"duplicate checkpoint issue: {bead_id}")
+                states[bead_id] = issue["base_status"]
+        return states
+    except (OSError, KeyError, TypeError, json.JSONDecodeError) as exc:
+        raise ValueError(f"cannot read bead checkpoint: {exc}") from exc
+
+
 def check(root: Path) -> list[str]:
     status = load_status(root)
     status_doc = status.get("status_document")
@@ -76,6 +104,15 @@ def check(root: Path) -> list[str]:
     if not isinstance(capabilities, list) or not capabilities:
         errors.append("capabilities must be a non-empty list")
         capabilities = []
+
+    cited_ids = {
+        bead
+        for capability in capabilities
+        if isinstance(capability, dict)
+        for bead in capability.get("evidence_beads", [])
+        if isinstance(bead, str)
+    }
+    bead_states = load_bead_states(root, cited_ids)
 
     # The canonical register is itself an operator-facing surface.  Scan it
     # together with the configured documents so a status row cannot quietly
@@ -129,11 +166,12 @@ def check(root: Path) -> list[str]:
         if not isinstance(capability, dict):
             continue
         capability_id = str(capability.get("id", "<missing-id>"))
-        if capability.get("status") != "active-regression":
-            continue
-
+        capability_status = str(capability.get("status", ""))
         evidence_beads = capability.get("evidence_beads", [])
-        if not isinstance(evidence_beads, list) or not evidence_beads:
+        if not isinstance(evidence_beads, list):
+            errors.append(f"{capability_id}: evidence_beads must be a list")
+            continue
+        if capability_status == "active-regression" and not evidence_beads:
             errors.append(
                 f"{capability_id}: active-regression capabilities need evidence_beads"
             )
@@ -144,14 +182,25 @@ def check(root: Path) -> list[str]:
                 errors.append(
                     f"{capability_id}: invalid evidence bead reference {bead!r}"
                 )
-            if not any(
-                bead in line and line_mentions_capability(line, capability)
-                for line in status_text.splitlines()
-            ):
-                errors.append(
-                    f"{status_doc} does not cite evidence bead {bead} "
-                    f"for active capability {capability_id}"
-                )
+            elif bead not in bead_states:
+                errors.append(f"{capability_id}: evidence bead {bead} is absent from checkpoint")
+
+        known_states = [bead_states[bead] for bead in evidence_beads if bead in bead_states]
+        if capability_status == "active-regression" and known_states and all(
+            state == "closed" for state in known_states
+        ) and len(known_states) == len(evidence_beads):
+            errors.append(f"{capability_id}: active-regression has only closed evidence beads")
+        if (capability_status == "repository-tested" or capability_status == "verified"
+            or capability_status.endswith("-verified")):
+            for bead in evidence_beads:
+                if bead in bead_states and bead_states[bead] != "closed":
+                    errors.append(
+                        f"{capability_id}: {capability_status} cites non-closed bead "
+                        f"{bead} ({bead_states[bead]})"
+                    )
+
+        if capability_status != "active-regression":
+            continue
 
         tokens = capability_tokens(capability)
         terms = active_evidence_terms(capability)
@@ -189,10 +238,22 @@ def check(root: Path) -> list[str]:
             continue
         if capability_id not in status_text:
             errors.append(f"{status_doc} does not name capability {capability_id}")
-        if capability_status not in status_text:
+        evidence = " ".join(capability.get("evidence_beads", []))
+        marker = f"<!-- capability: {capability_id} status: {capability_status}"
+        if evidence:
+            marker += f" evidence: {evidence}"
+        marker += " -->"
+        if marker not in status_text:
+            errors.append(f"{status_doc} has no matching evidence marker for {capability_id}")
+        table_label = capability.get("table_label")
+        if not isinstance(table_label, str) or not table_label:
+            errors.append(f"{capability_id}: table_label is missing")
+            continue
+        rows = [line for line in status_text.splitlines()
+                if line.startswith(f"| {table_label} |")]
+        if len(rows) != 1 or f"| `{capability_status}` |" not in rows[0]:
             errors.append(
-                f"{status_doc} does not record status {capability_status!r} "
-                f"for {capability_id}"
+                f"{status_doc} row for {capability_id} must record {capability_status}"
             )
 
     return errors
