@@ -215,31 +215,6 @@ func (h *Handlers) WithProvenance(p ProvenanceRecorder) {
 	h.provenance = p
 }
 
-// recordProvenanceUpload records a per-object provenance entry (the fallback
-// used when the manifest is disabled) and surfaces a failure as a chain gap
-// instead of discarding it: the object is already durably stored, so the
-// client's request must not fail, but the audit chain is now missing this
-// key. The gap is logged at WARN with the key and error and counted on
-// armor_provenance_record_failures_total so it cannot present as a complete
-// chain (docs/provenance-audit-walker.md reports such keys as untracked).
-func (h *Handlers) recordProvenanceUpload(ctx context.Context, key, plaintextSHA256, operation string) {
-	if err := h.provenance.RecordUpload(ctx, key, plaintextSHA256, operation); err != nil {
-		if h.logger != nil {
-			h.logger.WithFields(map[string]interface{}{
-				"event":     "provenance_record_failure",
-				"operation": operation,
-				"key":       key,
-				"error":     err.Error(),
-			}).Warn("provenance RecordUpload failed; audit chain gap for this key")
-		} else {
-			log.Printf("Warning: provenance RecordUpload failed (%s %s): %v — audit chain gap", operation, key, err)
-		}
-		if h.metrics != nil {
-			h.metrics.IncProvenanceRecordFailures()
-		}
-	}
-}
-
 // WithManifest wires a ManifestRecorder into the handlers so that successful
 // PutObject and DeleteObject calls update the in-memory index and enqueue
 // delta ops for async B2 persistence.
@@ -768,7 +743,7 @@ func (h *Handlers) PutObject(w http.ResponseWriter, r *http.Request, bucket, key
 	// Record provenance (fallback when manifest is disabled)
 	if h.manifest == nil && h.provenance != nil && h.provenance.ShouldRecord(key) {
 		plaintextSHAHex := hex.EncodeToString(plaintextSHA[:])
-		h.recordProvenanceUpload(provenance.WithTimings(ctx, provTimings), key, plaintextSHAHex, "put")
+		_ = h.provenance.RecordUpload(provenance.WithTimings(ctx, provTimings), key, plaintextSHAHex, "put")
 	}
 
 	// Publish the PUT latency split to the request context (the in-place
@@ -1099,7 +1074,7 @@ func (h *Handlers) putObjectStreaming(ctx context.Context, w http.ResponseWriter
 	// Record provenance (fallback when manifest is disabled)
 	if h.manifest == nil && h.provenance != nil && h.provenance.ShouldRecord(key) {
 		plaintextSHAHex := hex.EncodeToString(plaintextSHA[:])
-		h.recordProvenanceUpload(provenance.WithTimings(ctx, provTimings), key, plaintextSHAHex, "put-streaming")
+		_ = h.provenance.RecordUpload(provenance.WithTimings(ctx, provTimings), key, plaintextSHAHex, "put-streaming")
 	}
 
 	// Publish the PUT latency split to the request context (the in-place
@@ -2715,7 +2690,7 @@ func (h *Handlers) CopyObject(w http.ResponseWriter, r *http.Request, dstBucket,
 
 		// Record provenance for the copy
 		if h.provenance != nil && h.provenance.ShouldRecord(dstKey) {
-			h.recordProvenanceUpload(ctx, dstKey, armorMeta.PlaintextSHA, "copy")
+			_ = h.provenance.RecordUpload(ctx, dstKey, armorMeta.PlaintextSHA, "copy")
 		}
 
 		// Invalidate cache for destination
@@ -4462,7 +4437,7 @@ func (h *Handlers) CompleteMultipartUpload(w http.ResponseWriter, r *http.Reques
 
 	// Record provenance (fallback when manifest is disabled)
 	if h.manifest == nil && h.provenance != nil && h.provenance.ShouldRecord(key) {
-		h.recordProvenanceUpload(ctx, key, plaintextSHAHex, "multipart")
+		_ = h.provenance.RecordUpload(ctx, key, plaintextSHAHex, "multipart")
 	}
 
 	// Build XML response
