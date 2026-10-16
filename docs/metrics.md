@@ -4,6 +4,14 @@
 
 ARMOR exports Prometheus metrics at the `/metrics` endpoint (admin port, default `127.0.0.1:9001/metrics`). All metrics are prefixed with `armor_` and follow Prometheus best practices for naming and labeling.
 
+The operator dashboard manifest is maintained in declarative-config at
+[Grafana dashboard — ARMOR Fleet Operations](https://git.ardenone.com/jedarden/declarative-config/src/branch/main/k8s/iad-ci/monitoring/grafana-dashboard-armor.yml).
+It covers request rate by operation/status, 5xx ratio with client disconnects
+excluded, error codes, p50/p95/p99 latency, bytes, canary health,
+restore-verifier ratio/age, and ARMOR restarts/OOMKilled. The current GitOps
+state has Grafana disabled, so the ConfigMap is ready for the next Grafana
+rollout but is not visible on a live route yet.
+
 ## Metrics Endpoint
 
 ### Accessing Metrics
@@ -111,31 +119,6 @@ armor_replication_queue_depth 42
 armor_replication_dropped_total 0
 ```
 
-### `armor_conditional_put_total`
-
-**Type:** Counter  
-**Description:** Outcomes of create-only `PutObject` requests using
-`If-None-Match: *` (including append-only credentials).  
-**Labels:** `outcome`
-
-**Label values:**
-
-- `early_412` — the manifest index or backend HEAD found an existing object and
-  ARMOR returned 412 without reading the request body;
-- `miss` — the preflight missed and the backend's atomic `PutIfAbsent` stored the
-  object;
-- `hit` — the preflight missed but the backend's atomic gate found a concurrent
-  existing object after the body had been processed.
-
-Example:
-```
-# HELP armor_conditional_put_total Total number of create-only PUT outcomes
-# TYPE armor_conditional_put_total counter
-armor_conditional_put_total{outcome="early_412"} 68711
-armor_conditional_put_total{outcome="miss"} 39829
-armor_conditional_put_total{outcome="hit"} 0
-```
-
 **Alerting Example (Prometheus):**
 ```yaml
 - alert: ReplicationDropsDetected
@@ -160,6 +143,31 @@ armor_conditional_put_total{outcome="hit"} 0
 **Type:** Gauge  
 **Description:** Number of requests currently being processed  
 **Labels:** None
+
+### `armor_conditional_put_total`
+
+**Type:** Counter  
+**Description:** Outcomes of create-only `PutObject` requests using
+`If-None-Match: *` (including append-only credentials).  
+**Labels:** `outcome`
+
+**Label values:**
+
+- `early_412` — the manifest index or backend HEAD found an existing object and
+  ARMOR returned 412 without reading the request body;
+- `miss` — the preflight missed and the backend's atomic `PutIfAbsent` stored the
+  object;
+- `hit` — the preflight missed but the backend's atomic gate found a concurrent
+  existing object after the body had been processed.
+
+Example:
+```
+# HELP armor_conditional_put_total Total number of create-only PUT outcomes
+# TYPE armor_conditional_put_total counter
+armor_conditional_put_total{outcome="early_412"} 68711
+armor_conditional_put_total{outcome="miss"} 39829
+armor_conditional_put_total{outcome="hit"} 0
+```
 
 ### `armor_requests_by_label`
 

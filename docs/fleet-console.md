@@ -21,7 +21,8 @@ the browser. Per reachable target:
   labelled counter sample (one `code`/`operation` pair, cumulative since
   process start), not a computed rate; for real rate alerting scrape the
   instance directly and use `rate(armor_errors_total[5m])` as in
-  [Metrics](metrics.md).
+  [Metrics](metrics.md). For the fleet time-series view, use the
+  [ARMOR Grafana dashboard](https://git.ardenone.com/jedarden/declarative-config/src/branch/main/k8s/iad-ci/monitoring/grafana-dashboard-armor.yml).
 - **Restore Verifier** — every `armor_restore_verifier_*` gauge the
   instance exposes, name and value (the ADR-004 dual-path verification
   surfaces; see the [Restore Verifier Deployment
