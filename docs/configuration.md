@@ -49,6 +49,21 @@ TCP handshake, plus TLS if the client's path terminates it), which is why both
 thresholds default to disabled and deployments opt in. A typical setting for a
 deployment whose traffic skews across replicas is `ARMOR_MAX_CONN_AGE=90s`.
 
+### Create-only PUTs and replicas
+
+`PutObject` with `If-None-Match: *` checks the manifest index or a backend HEAD
+before reading the request body, then retains the backend's in-process atomic
+`PutIfAbsent` check as a second gate. The atomic create-only guarantee does not
+extend across ARMOR replicas: two replicas can both miss the preflight and race
+before either process observes the other's write. Writers that require
+create-only semantics must therefore use a single ARMOR replica (or an
+external single-writer/serialization mechanism). Scaling or changing replica
+count is a deployment decision, not an ARMOR configuration guarantee.
+
+The `ord-devimprint` deployment currently runs 12 ARMOR replicas behind one
+Service, so it is exposed to this cross-replica race for create-only PUTs until
+the operator chooses a single-writer deployment arrangement.
+
 ## Backend
 
 | Variable | Required | Default | Description |

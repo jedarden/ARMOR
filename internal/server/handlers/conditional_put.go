@@ -27,7 +27,34 @@ func (h *Handlers) storePutObject(ctx context.Context, bucket, key string, body 
 	if !ok {
 		return backend.ErrConditionalPutUnsupported
 	}
-	return conditional.PutIfAbsent(ctx, bucket, key, body, size, meta)
+	err := conditional.PutIfAbsent(ctx, bucket, key, body, size, meta)
+	if errors.Is(err, backend.ErrPreconditionFailed) {
+		h.recordConditionalPut("hit")
+	} else if err == nil {
+		h.recordConditionalPut("miss")
+	}
+	return err
+}
+
+// conditionalObjectExists resolves the advisory first gate for create-only
+// writes. The manifest is the cheap path; a miss falls through to a backend
+// HEAD so a disabled or cold manifest does not make the optimization blind.
+// This check is intentionally advisory: storePutObject still performs the
+// backend's atomic PutIfAbsent as the authoritative second gate.
+func (h *Handlers) conditionalObjectExists(ctx context.Context, bucket, key string) bool {
+	if h.manifest != nil {
+		if _, ok := h.manifest.Lookup(bucket, key); ok {
+			return true
+		}
+	}
+	info, err := h.backend.Head(ctx, bucket, h.applyPrefix(key))
+	return err == nil && info != nil
+}
+
+func (h *Handlers) recordConditionalPut(outcome string) {
+	if h.metrics != nil {
+		h.metrics.IncConditionalPut(outcome)
+	}
 }
 
 // appendOnlyPut reports whether the authenticated credential is allowed to

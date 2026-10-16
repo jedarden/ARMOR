@@ -650,6 +650,7 @@ func (s *Server) Handler() http.Handler {
 
 	// S3 operations
 	h := handlers.New(s.config, s.backend, s.cache, s.footerCache, s.keyManager, s.listCache)
+	h.WithMetrics(s.metrics)
 
 	// Wire up logger for structured S3 error logging
 	h.WithLogger(s.logger)
@@ -1628,6 +1629,10 @@ func (s *Server) wrapHandler(h http.HandlerFunc) http.HandlerFunc {
 			}
 			r.Body = newAWSChunkedReader(r.Body)
 		}
+		// Count bytes actually consumed by the S3 handler. In particular, an
+		// If-None-Match:* early rejection must leave this at zero even when the
+		// request advertised a non-zero Content-Length.
+		r.Body = &countingReadCloser{ReadCloser: r.Body}
 
 		// Use a response writer wrapper to capture status code
 		rw := &responseWriter{ResponseWriter: w, statusCode: http.StatusOK}
@@ -1649,6 +1654,21 @@ type responseWriter struct {
 	http.ResponseWriter
 	statusCode int
 	bytesOut   int64
+}
+
+// countingReadCloser records bytes actually consumed from a request body. It
+// is deliberately based on reads rather than Content-Length so an early
+// conditional rejection can be distinguished from a rejected upload whose
+// body was fully consumed.
+type countingReadCloser struct {
+	io.ReadCloser
+	bytesRead int64
+}
+
+func (r *countingReadCloser) Read(p []byte) (int, error) {
+	n, err := r.ReadCloser.Read(p)
+	r.bytesRead += int64(n)
+	return n, err
 }
 
 // WriteHeader captures the status code.
@@ -1758,8 +1778,12 @@ func (s *Server) logCompletedRequest(r *http.Request, start time.Time, statusCod
 		fields["error_code"] = errorCode
 	}
 
-	// Add bytes_in (request body size)
-	if r.ContentLength > 0 {
+	// Add bytes_in (request body bytes actually consumed). The fallback keeps
+	// direct unit tests and callers that invoke this logger without the common
+	// middleware compatible with the historical Content-Length field.
+	if body, ok := r.Body.(*countingReadCloser); ok {
+		fields["bytes_in"] = body.bytesRead
+	} else if r.ContentLength > 0 {
 		fields["bytes_in"] = r.ContentLength
 	}
 

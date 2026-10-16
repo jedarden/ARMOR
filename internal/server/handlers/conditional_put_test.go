@@ -69,8 +69,8 @@ func TestPutObjectIfNoneMatchCreateOnlySmallAndStreaming(t *testing.T) {
 			if !strings.Contains(w.Body.String(), "<Code>PreconditionFailed</Code>") {
 				t.Fatalf("second PUT did not return S3 PreconditionFailed: %s", w.Body.String())
 			}
-			if storage.conditionalCalls.Load() != 2 {
-				t.Fatalf("conditional calls = %d, want 2", storage.conditionalCalls.Load())
+			if storage.conditionalCalls.Load() != 1 {
+				t.Fatalf("conditional calls = %d, want 1 after early precondition rejection", storage.conditionalCalls.Load())
 			}
 
 			get := httptest.NewRequest(http.MethodGet, "/test-bucket/immutable", nil)

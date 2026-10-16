@@ -45,3 +45,23 @@ func TestReplicationEnqueuedPrometheusExport(t *testing.T) {
 		t.Error("Missing 'put-streaming' operation label")
 	}
 }
+
+func TestConditionalPutPrometheusExport(t *testing.T) {
+	m := NewMetrics()
+	m.IncConditionalPut("miss")
+	m.IncConditionalPut("hit")
+	m.IncConditionalPut("early_412")
+
+	output := m.PrometheusFormat()
+	for _, want := range []string{
+		"# HELP armor_conditional_put_total Total number of create-only PUT outcomes",
+		"# TYPE armor_conditional_put_total counter",
+		`armor_conditional_put_total{outcome="miss"} 1`,
+		`armor_conditional_put_total{outcome="hit"} 1`,
+		`armor_conditional_put_total{outcome="early_412"} 1`,
+	} {
+		if !strings.Contains(output, want) {
+			t.Errorf("Prometheus export missing %q\nGot:\n%s", want, output)
+		}
+	}
+}

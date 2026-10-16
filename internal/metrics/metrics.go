@@ -210,7 +210,8 @@ type Metrics struct {
 	CompactionErrorsTotal *expvar.Int // Total number of manifest compaction errors
 
 	// S3 error metrics (ADR-008)
-	ErrorsTotal *labelledCounter // Total S3 errors by error code and operation
+	ErrorsTotal         *labelledCounter // Total S3 errors by error code and operation
+	ConditionalPutTotal *labelledCounter // Conditional PUT outcomes
 
 	// Requests by credential metrics (Plan §8.9)
 	// Tracks requests by access_key_id, verb, and authorization result (allow, deny-auth, deny-acl)
@@ -347,6 +348,7 @@ func NewMetrics() *Metrics {
 
 	// S3 error metrics
 	m.ErrorsTotal = newLabelledCounter()
+	m.ConditionalPutTotal = newLabelledCounter()
 
 	// Requests by credential metrics
 	m.requestsByCredentialTotal = newLabelledCounter()
@@ -1175,6 +1177,12 @@ func (m *Metrics) PrometheusFormat() string {
 		}
 	})
 
+	sb.WriteString("\n# HELP armor_conditional_put_total Total number of create-only PUT outcomes\n")
+	sb.WriteString("# TYPE armor_conditional_put_total counter\n")
+	m.ConditionalPutTotal.Do(func(kv expvar.KeyValue) {
+		fmt.Fprintf(&sb, "armor_conditional_put_total{outcome=%q} %s\n", kv.Key, kv.Value.String())
+	})
+
 	// Requests by credential metrics (Plan §8.9)
 	sb.WriteString("\n# HELP armor_requests_by_credential_total Total number of requests by access key ID, verb, and authorization result\n")
 	sb.WriteString("# TYPE armor_requests_by_credential_total counter\n")
@@ -1435,6 +1443,14 @@ func (m *Metrics) IncCompactionErrors() {
 func (m *Metrics) IncErrors(code, operation string) {
 	key := fmt.Sprintf("%s:%s", code, operation)
 	m.ErrorsTotal.Add(key, 1)
+}
+
+// IncConditionalPut records the outcome of a create-only PUT. Outcomes are
+// early_412 (the manifest/HEAD preflight found an existing object), miss (the
+// atomic PutIfAbsent succeeded), and hit (the atomic gate rejected a body
+// after the preflight miss, usually due to a concurrent writer).
+func (m *Metrics) IncConditionalPut(outcome string) {
+	m.ConditionalPutTotal.Add(outcome, 1)
 }
 
 // IncRequestsByCredential increments the requests by credential counter.

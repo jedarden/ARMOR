@@ -111,6 +111,31 @@ armor_replication_queue_depth 42
 armor_replication_dropped_total 0
 ```
 
+### `armor_conditional_put_total`
+
+**Type:** Counter  
+**Description:** Outcomes of create-only `PutObject` requests using
+`If-None-Match: *` (including append-only credentials).  
+**Labels:** `outcome`
+
+**Label values:**
+
+- `early_412` — the manifest index or backend HEAD found an existing object and
+  ARMOR returned 412 without reading the request body;
+- `miss` — the preflight missed and the backend's atomic `PutIfAbsent` stored the
+  object;
+- `hit` — the preflight missed but the backend's atomic gate found a concurrent
+  existing object after the body had been processed.
+
+Example:
+```
+# HELP armor_conditional_put_total Total number of create-only PUT outcomes
+# TYPE armor_conditional_put_total counter
+armor_conditional_put_total{outcome="early_412"} 68711
+armor_conditional_put_total{outcome="miss"} 39829
+armor_conditional_put_total{outcome="hit"} 0
+```
+
 **Alerting Example (Prometheus):**
 ```yaml
 - alert: ReplicationDropsDetected

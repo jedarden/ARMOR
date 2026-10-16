@@ -394,6 +394,15 @@ func (h *Handlers) PutObject(w http.ResponseWriter, r *http.Request, bucket, key
 		return
 	}
 	createOnly = createOnly || appendOnly
+	if createOnly && h.conditionalObjectExists(ctx, bucket, key) {
+		h.recordConditionalPut("early_412")
+		if appendOnly {
+			h.writeAppendOnlyPutError(w, r, backend.ErrPreconditionFailed)
+		} else {
+			h.writePutObjectError(w, r, backend.ErrPreconditionFailed)
+		}
+		return
+	}
 
 	// Check Content-Length header
 	contentLength := r.ContentLength
