@@ -686,50 +686,50 @@ func TestMultipartSuspectPatterns(t *testing.T) {
 		uploadPart(t, h, bucket, key, uploadID, 1, part1Retry) // fatals if not 200
 	})
 
-		t.Run("U8_non_block_aligned_regular_part_accepted_under_adr011", func(t *testing.T) {
-			// ADR-011: A non-aligned part that is NEITHER part 1 nor shorter than P
-			// triggers NonUniformParts mode and is ACCEPTED. The non-uniform path uses
-			// cumulative offsets and offset-aware decryption, so parts may vary in size.
-			// This is the barman-cloud-backup pattern (chunk_size + N*512).
-			_, _, h := recordingTestSetup(t)
-			bucket, key := "test-bucket", "non-uniform.dat"
+	t.Run("U8_non_block_aligned_regular_part_accepted_under_adr011", func(t *testing.T) {
+		// ADR-011: A non-aligned part that is NEITHER part 1 nor shorter than P
+		// triggers NonUniformParts mode and is ACCEPTED. The non-uniform path uses
+		// cumulative offsets and offset-aware decryption, so parts may vary in size.
+		// This is the barman-cloud-backup pattern (chunk_size + N*512).
+		_, _, h := recordingTestSetup(t)
+		bucket, key := "test-bucket", "non-uniform.dat"
 
-			uploadID := initiateMultipart(t, h, bucket, key)
+		uploadID := initiateMultipart(t, h, bucket, key)
 
-			// Part 1 pins an aligned P of 5 MiB.
-			part1 := make([]byte, 5*1024*1024)
-			for i := range part1 {
-				part1[i] = 0xAA
-			}
-			uploadPart(t, h, bucket, key, uploadID, 1, part1)
+		// Part 1 pins an aligned P of 5 MiB.
+		part1 := make([]byte, 5*1024*1024)
+		for i := range part1 {
+			part1[i] = 0xAA
+		}
+		uploadPart(t, h, bucket, key, uploadID, 1, part1)
 
-			// Part 2 is LARGER than P and non-aligned (10,000,000 % 65536 = 16976).
-			// Under ADR-011, this triggers NonUniformParts mode and is ACCEPTED.
-			part2 := make([]byte, 10_000_000)
-			for i := range part2 {
-				part2[i] = 0xBB
-			}
-			code, _, body := uploadPartResponse(t, h, bucket, key, uploadID, 2, part2)
-			if code != http.StatusOK {
-				t.Errorf("Expected 200 for non-block-aligned part under ADR-011 NonUniformParts, got %d: %s", code, body)
-			}
-			// Verify it round-trips byte-identical
-			etag1 := "etag-part-1"
-			etag2 := "etag-part-2"
-			completeMultipart(t, h, bucket, key, uploadID, []string{etag1, etag2})
+		// Part 2 is LARGER than P and non-aligned (10,000,000 % 65536 = 16976).
+		// Under ADR-011, this triggers NonUniformParts mode and is ACCEPTED.
+		part2 := make([]byte, 10_000_000)
+		for i := range part2 {
+			part2[i] = 0xBB
+		}
+		code, _, body := uploadPartResponse(t, h, bucket, key, uploadID, 2, part2)
+		if code != http.StatusOK {
+			t.Errorf("Expected 200 for non-block-aligned part under ADR-011 NonUniformParts, got %d: %s", code, body)
+		}
+		// Verify it round-trips byte-identical
+		etag1 := "etag-part-1"
+		etag2 := "etag-part-2"
+		completeMultipart(t, h, bucket, key, uploadID, []string{etag1, etag2})
 
-			plaintext := append(append([]byte{}, part1...), part2...)
-			req := httptest.NewRequest(http.MethodGet, "/"+bucket+"/"+key, nil)
-			w := httptest.NewRecorder()
-			h.HandleRoot(w, req)
-			if w.Code != http.StatusOK {
-				t.Fatalf("GET after non-uniform complete failed: status %d: %s", w.Code, w.Body.String())
-			}
-			if !bytes.Equal(w.Body.Bytes(), plaintext) {
-				t.Fatalf("non-uniform round-trip mismatch: got %d bytes, want %d; first divergence at %d",
-					w.Body.Len(), len(plaintext), firstDivergence(w.Body.Bytes(), plaintext))
-			}
-		})
+		plaintext := append(append([]byte{}, part1...), part2...)
+		req := httptest.NewRequest(http.MethodGet, "/"+bucket+"/"+key, nil)
+		w := httptest.NewRecorder()
+		h.HandleRoot(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("GET after non-uniform complete failed: status %d: %s", w.Code, w.Body.String())
+		}
+		if !bytes.Equal(w.Body.Bytes(), plaintext) {
+			t.Fatalf("non-uniform round-trip mismatch: got %d bytes, want %d; first divergence at %d",
+				w.Body.Len(), len(plaintext), firstDivergence(w.Body.Bytes(), plaintext))
+		}
+	})
 
 	t.Run("U8_lone_non_aligned_part_accepted_and_completes", func(t *testing.T) {
 		// ADR-015 exemption (b): part 1 always starts at block 0, so when it is
@@ -755,46 +755,46 @@ func TestMultipartSuspectPatterns(t *testing.T) {
 		completeMultipart(t, h, bucket, key, uploadID, []string{etag})
 	})
 
-		t.Run("U8_second_part_after_non_aligned_part1_accepted_under_adr011", func(t *testing.T) {
-			// ADR-011: A non-aligned part 1 triggers NonUniformParts mode, so a second
-			// part is ACCEPTED (no longer single-part-only). The non-uniform path
-			// handles parts of varying sizes with cumulative offsets.
-			_, _, h := recordingTestSetup(t)
-			bucket, key := "test-bucket", "non-uniform-part1.dat"
+	t.Run("U8_second_part_after_non_aligned_part1_accepted_under_adr011", func(t *testing.T) {
+		// ADR-011: A non-aligned part 1 triggers NonUniformParts mode, so a second
+		// part is ACCEPTED (no longer single-part-only). The non-uniform path
+		// handles parts of varying sizes with cumulative offsets.
+		_, _, h := recordingTestSetup(t)
+		bucket, key := "test-bucket", "non-uniform-part1.dat"
 
-			uploadID := initiateMultipart(t, h, bucket, key)
+		uploadID := initiateMultipart(t, h, bucket, key)
 
-			part1 := make([]byte, 11_917_312) // non-aligned, triggers NonUniformParts
-			for i := range part1 {
-				part1[i] = 0xAA
-			}
-			uploadPart(t, h, bucket, key, uploadID, 1, part1)
+		part1 := make([]byte, 11_917_312) // non-aligned, triggers NonUniformParts
+		for i := range part1 {
+			part1[i] = 0xAA
+		}
+		uploadPart(t, h, bucket, key, uploadID, 1, part1)
 
-			part2 := make([]byte, 5*1024*1024) // aligned, now accepted under NonUniformParts
-			for i := range part2 {
-				part2[i] = 0xBB
-			}
-			code, _, body := uploadPartResponse(t, h, bucket, key, uploadID, 2, part2)
-			if code != http.StatusOK {
-				t.Errorf("Expected 200 for second part under ADR-011 NonUniformParts, got %d: %s", code, body)
-			}
-			// Verify it round-trips byte-identical
-			etag1 := "etag-part-1"
-			etag2 := "etag-part-2"
-			completeMultipart(t, h, bucket, key, uploadID, []string{etag1, etag2})
+		part2 := make([]byte, 5*1024*1024) // aligned, now accepted under NonUniformParts
+		for i := range part2 {
+			part2[i] = 0xBB
+		}
+		code, _, body := uploadPartResponse(t, h, bucket, key, uploadID, 2, part2)
+		if code != http.StatusOK {
+			t.Errorf("Expected 200 for second part under ADR-011 NonUniformParts, got %d: %s", code, body)
+		}
+		// Verify it round-trips byte-identical
+		etag1 := "etag-part-1"
+		etag2 := "etag-part-2"
+		completeMultipart(t, h, bucket, key, uploadID, []string{etag1, etag2})
 
-			plaintext := append(append([]byte{}, part1...), part2...)
-			req := httptest.NewRequest(http.MethodGet, "/"+bucket+"/"+key, nil)
-			w := httptest.NewRecorder()
-			h.HandleRoot(w, req)
-			if w.Code != http.StatusOK {
-				t.Fatalf("GET after non-uniform-part1 complete failed: status %d: %s", w.Code, w.Body.String())
-			}
-			if !bytes.Equal(w.Body.Bytes(), plaintext) {
-				t.Fatalf("non-uniform-part1 round-trip mismatch: got %d bytes, want %d; first divergence at %d",
-					w.Body.Len(), len(plaintext), firstDivergence(w.Body.Bytes(), plaintext))
-			}
-		})
+		plaintext := append(append([]byte{}, part1...), part2...)
+		req := httptest.NewRequest(http.MethodGet, "/"+bucket+"/"+key, nil)
+		w := httptest.NewRecorder()
+		h.HandleRoot(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("GET after non-uniform-part1 complete failed: status %d: %s", w.Code, w.Body.String())
+		}
+		if !bytes.Equal(w.Body.Bytes(), plaintext) {
+			t.Fatalf("non-uniform-part1 round-trip mismatch: got %d bytes, want %d; first divergence at %d",
+				w.Body.Len(), len(plaintext), firstDivergence(w.Body.Bytes(), plaintext))
+		}
+	})
 
 	t.Run("U8_short_final_part_may_be_non_aligned", func(t *testing.T) {
 		// ADR-015 exemption (a): nothing is placed after the presumed-final
@@ -835,8 +835,8 @@ func TestMultipartSuspectPatterns(t *testing.T) {
 		if w.Code != http.StatusBadRequest {
 			t.Errorf("Expected 400 BadRequest for empty first part, got %d: %s", w.Code, w.Body.String())
 		}
-		if !bytes.Contains(w.Body.Bytes(), []byte("empty first part")) {
-			t.Errorf("Expected error about empty first part not pinning P, got: %s", w.Body.String())
+		if !bytes.Contains(w.Body.Bytes(), []byte("multipart part size is invalid")) {
+			t.Errorf("Expected safe multipart part-size guidance, got: %s", w.Body.String())
 		}
 	})
 }
@@ -1136,9 +1136,8 @@ func TestMultipartADR015Acceptance(t *testing.T) {
 		if contradictW.Code != http.StatusBadRequest {
 			t.Fatalf("contradicting part should be rejected with 400, got %d: %s", contradictW.Code, contradictW.Body.String())
 		}
-		if !bytes.Contains(contradictW.Body.Bytes(), []byte("second short part")) &&
-			!bytes.Contains(contradictW.Body.Bytes(), []byte("invalidated")) {
-			t.Errorf("contradiction error should explain the second-short-part invalidation, got: %s", contradictW.Body.String())
+		if !bytes.Contains(contradictW.Body.Bytes(), []byte("multipart part size is invalid")) {
+			t.Errorf("contradiction error should provide safe multipart part-size guidance, got: %s", contradictW.Body.String())
 		}
 
 		// Poison propagates: any further UploadPart on this id also fails.
@@ -1165,8 +1164,8 @@ func TestMultipartADR015Acceptance(t *testing.T) {
 		if completeW.Code == http.StatusOK {
 			t.Fatalf("Complete on a poisoned upload must fail, got 200: %s", completeW.Body.String())
 		}
-		if !bytes.Contains(completeW.Body.Bytes(), []byte("invalidated")) {
-			t.Errorf("Complete failure should tell the client the upload is invalidated, got: %s", completeW.Body.String())
+		if !bytes.Contains(completeW.Body.Bytes(), []byte("multipart part is invalid")) {
+			t.Errorf("Complete failure should provide safe multipart-part guidance, got: %s", completeW.Body.String())
 		}
 
 		// No violating object was ever stored: GET returns 404 NoSuchKey.

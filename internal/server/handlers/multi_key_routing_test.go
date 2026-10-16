@@ -143,8 +143,9 @@ func TestMultiKeyRoutingRejectsUnknownMetadataKey(t *testing.T) {
 	if w.Code != http.StatusInternalServerError {
 		t.Fatalf("GET with unknown key fingerprint: status %d, body %s", w.Code, w.Body.String())
 	}
-	if !strings.Contains(w.Body.String(), "not found in active or ring keys") {
-		t.Errorf("GET with unknown key fingerprint error = %q, want fingerprint-not-found context", w.Body.String())
+	if !strings.Contains(w.Body.String(), "could not complete this request") ||
+		strings.Contains(w.Body.String(), "fingerprint") {
+		t.Errorf("GET with unknown key fingerprint error = %q, want safe generic failure", w.Body.String())
 	}
 }
 
