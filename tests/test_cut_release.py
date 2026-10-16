@@ -322,6 +322,26 @@ def test_recutting_the_same_version_is_refused_and_changes_nothing(tmp_path):
     assert changelog.count(f"## {NEW} (") == 1
 
 
+def test_next_cut_after_tag_does_not_repeat_previous_release_notes(tmp_path):
+    """Once publication advances the tag, the next cut contains only the
+    commits after that tag, even when the prior entry was accumulated."""
+    root = make_repo(tmp_path)
+    assert cut(root, NEW, "--no-push").returncode == 0
+    git(root, "tag", "-a", f"v{NEW}", "-m", f"v{NEW}")
+    post_tag = "fix(server): correct post-release read path (armor-ccc3333)"
+    commit_file(root, "new-fix.txt", post_tag)
+
+    following = "0.1.10000"
+    proc = cut(root, following, "--no-push")
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    changelog = (root / "CHANGELOG.md").read_text()
+    newest = changelog.split(f"## {following} (", 1)[1].split(f"## {NEW} (", 1)[0]
+    assert f"- {post_tag}" in newest
+    assert FEAT not in newest
+    assert FIX not in newest
+    assert changelog.count(f"## {following} (") == 1
+
+
 # ---------------------------------------------------------------------------
 # invalid input: malformed and non-newer versions
 # ---------------------------------------------------------------------------

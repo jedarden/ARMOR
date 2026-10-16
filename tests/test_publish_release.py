@@ -10,6 +10,7 @@ from __future__ import annotations
 import io
 import json
 import re
+import subprocess
 import sys
 from email.message import Message
 from pathlib import Path
@@ -465,3 +466,87 @@ def test_rejects_floating_and_malformed_versions(tokens, api):
     for bad in ("latest", "0.1", "0.1.1969-dev", "v0.1.1969"):
         assert pr.main(["--version", bad, "--commit", COMMIT]) == pr.EXIT_USAGE, bad
     assert api.calls == []
+
+
+def test_backfill_publishes_only_versions_with_server_images_and_reruns(tokens, api, monkeypatch, capsys):
+    """One invocation repairs every image-backed cut; reruns update releases."""
+    missing = "0.1.1967"
+    previous = "0.1.1968"
+    previous_commit = "1" * 40
+    monkeypatch.setattr(pr, "backfill_candidates", lambda first, last: [
+        (missing, "2" * 40), (previous, previous_commit), (VERSION, COMMIT),
+    ])
+    monkeypatch.setattr(pr, "server_image_exists", lambda version, config: version != missing)
+    monkeypatch.setattr(pr.subprocess, "run", lambda *a, **kw: type("Git", (), {"stdout": "f" * 40 + "\n"})())
+    for version in (previous, VERSION):
+        api.route("GET", f"{GH}/repos/{REPO}/git/ref/tags/v{version}", 200, {})
+    api.route("POST", f"{FJ}/repos/{REPO}/tags", 201, {})
+    api.route("POST", f"{FJ}/repos/{REPO}/releases", 201, {"id": 7})
+    api.route("POST", f"{GH}/repos/{REPO}/releases", 201, {"id": 9})
+
+    batch = ["--backfill-range", f"{missing}..{VERSION}", "--github-wait-seconds", "0"]
+    assert pr.main(batch) == pr.EXIT_OK
+    output = capsys.readouterr().out
+    assert '"backfill_published": ["0.1.1968", "0.1.1969"]' in output
+    assert '"backfill_skipped_no_image": ["0.1.1967"]' in output
+    tag_posts = [payload for method, url, payload, _ in api.calls
+                 if method == "POST" and url == f"{FJ}/repos/{REPO}/tags"]
+    assert [payload["tag_name"] for payload in tag_posts] == [f"v{previous}", TAG]
+    assert [payload["target"] for payload in tag_posts] == [previous_commit, COMMIT]
+    assert not any(f"v{missing}" in url for _, url, _, _ in api.calls)
+
+    for version, commit in ((previous, previous_commit), (VERSION, COMMIT)):
+        tag = f"v{version}"
+        api.route("GET", f"{FJ}/repos/{REPO}/tags/{tag}", 200, {"commit": {"sha": commit}})
+        api.route("GET", f"{FJ}/repos/{REPO}/releases/tags/{tag}", 200, {"id": 7})
+        api.route("GET", f"{GH}/repos/{REPO}/releases/tags/{tag}", 200, {"id": 9})
+    api.route("PATCH", f"{FJ}/repos/{REPO}/releases/7", 200, {"id": 7})
+    api.route("PATCH", f"{GH}/repos/{REPO}/releases/9", 200, {"id": 9})
+    api.calls.clear()
+    assert pr.main(batch) == pr.EXIT_OK
+    assert not any(method == "POST" for method, _, _, _ in api.calls)
+    assert len([1 for method, _, _, _ in api.calls if method == "PATCH"]) == 4
+
+
+def test_backfill_registry_failure_is_loud_and_creates_nothing(tokens, api, monkeypatch):
+    monkeypatch.setattr(pr, "backfill_candidates", lambda first, last: [(VERSION, COMMIT)])
+    monkeypatch.setattr(pr.subprocess, "run", lambda *a, **kw: type("Git", (), {"stdout": "f" * 40 + "\n"})())
+    monkeypatch.setattr(pr, "server_image_exists", lambda version, config: (_ for _ in ()).throw(
+        pr.ApiError(401, "https://registry-1.docker.io", "unauthorized")))
+    assert pr.main(["--backfill-range", f"{VERSION}..{VERSION}"]) == pr.EXIT_REGISTRY
+    assert api.mutations() == []
+
+
+def test_server_image_check_skips_only_a_real_404(api, tmp_path):
+    config = tmp_path / "config.json"
+    config.write_text(json.dumps({"auths": {"https://index.docker.io/v1/": {"auth": "dGVzdDp0ZXN0"}}}))
+    api.route("GET", "https://auth.docker.io/token", 200, {"token": "pull-token"})
+    assert pr.server_image_exists(VERSION, str(config)) is False
+    manifest = f"https://registry-1.docker.io/v2/ronaldraygun/armor/manifests/{VERSION}"
+    api.route("HEAD", manifest, 200, None)
+    assert pr.server_image_exists(VERSION, str(config)) is True
+    api.route("HEAD", manifest, 401, {"errors": [{"code": "UNAUTHORIZED"}]})
+    with pytest.raises(pr.ApiError) as error:
+        pr.server_image_exists(VERSION, str(config))
+    assert error.value.status == 401
+
+
+def test_backfill_candidates_use_latest_version_commit(tmp_path, monkeypatch):
+    root = tmp_path / "repo"
+    root.mkdir()
+    def git(*args):
+        return subprocess.run(["git", *args], cwd=root, capture_output=True, text=True, check=True).stdout.strip()
+    git("init", "-b", "main")
+    git("config", "user.name", "Fixture")
+    git("config", "user.email", "fixture@example.com")
+    commits = {}
+    for version in ("0.1.1967", "0.1.1968", "0.1.1968", VERSION):
+        duplicate = version == "0.1.1968" and version in commits
+        (root / "VERSION").write_text(version + ("\n\n" if duplicate else "\n"))
+        git("add", "VERSION")
+        git("commit", "-m", f"release {version}")
+        commits[version] = git("rev-parse", "HEAD")
+    monkeypatch.chdir(root)
+    assert pr.backfill_candidates("0.1.1968", VERSION) == [
+        ("0.1.1968", commits["0.1.1968"]), (VERSION, commits[VERSION]),
+    ]

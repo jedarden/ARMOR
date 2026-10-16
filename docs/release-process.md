@@ -163,6 +163,28 @@ awk "/^## $V /{f=1;next} /^## /{f=0} f" CHANGELOG.md | head           # the note
 `gh release view` also matches drafts, so check `isDraft` rather than mere
 existence.
 
+### Repairing image-backed cuts without release metadata
+
+If image builds succeeded but tags or release API calls stalled, run the
+publisher's batch backfill from an up-to-date, pushed `main` checkout. Set
+`FORGEJO_TOKEN` and `GITHUB_TOKEN` in the environment and point
+`DOCKER_CONFIG_JSON` at a Docker config with inline Docker Hub credentials:
+
+```bash
+DOCKER_CONFIG_JSON="$HOME/.docker/config.json" \
+  python3 scripts/publish_release.py --backfill-range 0.1.1976..0.1.1988
+```
+
+The inclusive range is resolved from commits that changed `VERSION`. Each
+version's private Docker Hub server manifest is checked with authenticated
+registry access before a tag is created. A real 404 skips that version;
+missing credentials, authorization failures, and registry errors stop the
+batch. Repeating the command leaves tags at the same commits and refreshes
+both release bodies. For historical repairs, the body uses the corrected
+`CHANGELOG.md` in the checkout's committed `HEAD`, while the tag and image
+still identify the original release commit. Check the public GHCR image
+separately; a private Docker Hub image alone does not prove its mirror exists.
+
 ### Live-B2 integration leg (`armor-integration`)
 
 `armor-build` never executes `tests/integration`: the `integration-test`

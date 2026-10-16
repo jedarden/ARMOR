@@ -16,12 +16,18 @@ duplicates:
   creates or refreshes the release. If the tag never shows up, the release is
   still created with ``target_commitish`` so GitHub makes the tag itself.
 
-The release body is the ``CHANGELOG.md`` entry for the version (fetched from
-the released revision through the same Forgejo raw API the armor-build
-publish-release step uses to fetch this script) followed by the image-digest
-table. A missing file or section degrades to the digest table alone; any
+The release body is the ``CHANGELOG.md`` entry for the version (normally
+fetched from the released revision through the Forgejo raw API) followed by
+the image-digest table. Batch backfill uses committed HEAD for corrected
+historical notes while retaining each original release commit as the tag
+target. A missing file or section degrades to the digest table alone; any
 other changelog fetch failure exits 5 so the workflow's public-host retry
 runs.
+
+``--backfill-range FIRST..LAST`` is an operator repair mode run in a local
+checkout. It finds VERSION-changing commits, checks the private server image
+through authenticated Docker Hub access, and publishes only image-backed
+versions. Authentication or registry errors are fatal rather than skips.
 
 Credentials come ONLY from the environment and are never printed or passed
 as arguments:
@@ -34,7 +40,7 @@ as arguments:
   rows read "digest unavailable". The public GHCR digest needs no credential.
 
 Exit codes: 0 ok; 2 usage/validation; 3 tag conflict; 4 GitHub publish
-failed; 5 Forgejo API failed.
+failed; 5 Forgejo API failed; 6 registry state unknown or no image in range.
 """
 
 from __future__ import annotations
@@ -44,6 +50,7 @@ import base64
 import json
 import os
 import re
+import subprocess
 import sys
 import time
 from dataclasses import dataclass, field
@@ -83,6 +90,7 @@ EXIT_USAGE = 2
 EXIT_TAG_CONFLICT = 3
 EXIT_GITHUB = 4
 EXIT_FORGEJO = 5
+EXIT_REGISTRY = 6
 
 
 class ApiError(Exception):
@@ -223,6 +231,62 @@ def collect_digests(version: str, docker_config: str | None) -> list[tuple[str, 
             )
         rows.append((f"{repo}:{version}", "private", digest))
     return rows
+
+
+def server_image_exists(version: str, docker_config: str | None) -> bool:
+    """Check the private server image before backfilling a release.
+
+    A missing tag is skippable. Missing credentials and registry failures are
+    fatal: treating either as a missing image would silently lose releases.
+    """
+    basic = dockerhub_basic_from_config(docker_config)
+    if not basic:
+        raise ValueError("DOCKER_CONFIG_JSON must contain inline Docker Hub auth for backfill")
+    repo = "ronaldraygun/armor"
+    token_url = f"https://auth.docker.io/token?service=registry.docker.io&scope=repository:{repo}:pull"
+    token = http("GET", token_url, headers={"Authorization": f"Basic {basic}"}).body
+    bearer = (token or {}).get("token") if isinstance(token, dict) else None
+    if not bearer:
+        raise ValueError("Docker Hub returned no pull token for the server image")
+    try:
+        http(
+            "HEAD",
+            f"https://registry-1.docker.io/v2/{repo}/manifests/{version}",
+            token=bearer,
+            token_scheme="Bearer",
+            headers={"Accept": MANIFEST_ACCEPT},
+        )
+    except ApiError as e:
+        if e.status == 404:
+            return False
+        raise
+    return True
+
+
+def backfill_candidates(first: str, last: str) -> list[tuple[str, str]]:
+    """Map versions in an inclusive range to their VERSION-changing commit.
+
+    This mode runs in a local checkout, unlike the single-version publisher
+    fetched into CI. The newest change to a version wins; old release commits
+    cannot accidentally retag a newer VERSION revision.
+    """
+    def git(*args: str) -> str:
+        result = subprocess.run(["git", *args], capture_output=True, text=True, check=True)
+        return result.stdout.strip()
+
+    low = tuple(map(int, first.split(".")))
+    high = tuple(map(int, last.split(".")))
+    found: dict[str, str] = {}
+    for commit in git("log", "--format=%H", "HEAD", "--", "VERSION").splitlines():
+        version = git("show", f"{commit}:VERSION")
+        if not VERSION_RE.fullmatch(version):
+            continue
+        number = tuple(map(int, version.split(".")))
+        if low <= number <= high:
+            found.setdefault(version, commit)
+        if number < low:
+            break
+    return sorted(found.items(), key=lambda item: tuple(map(int, item[0].split("."))))
 
 
 # ------------------------------------------------------------------ body
@@ -510,8 +574,11 @@ def _fail(code: int, msg: str) -> int:
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__.split("\n", 1)[0])
-    p.add_argument("--version", required=True, help="release version, e.g. 0.1.1969 (no leading v)")
-    p.add_argument("--commit", required=True, help="full 40-hex commit SHA the release was built from")
+    mode = p.add_mutually_exclusive_group(required=True)
+    mode.add_argument("--version", help="release version, e.g. 0.1.1969 (no leading v)")
+    mode.add_argument("--backfill-range", metavar="FIRST..LAST", help="publish every version in this inclusive range with a Docker Hub server image")
+    p.add_argument("--commit", help="full 40-hex commit SHA for --version")
+    p.add_argument("--changelog-commit", help="revision containing corrected historical notes; defaults to --commit")
     p.add_argument("--repo", default=DEFAULT_REPO, help="owner/name on both Forgejo and GitHub")
     p.add_argument("--forgejo-api", default=DEFAULT_FORGEJO_API)
     p.add_argument("--github-api", default=DEFAULT_GITHUB_API)
@@ -526,12 +593,69 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
 
 def main(argv: list[str] | None = None, *, sleep=time.sleep) -> int:
     args = parse_args(sys.argv[1:] if argv is None else argv)
-    if not VERSION_RE.match(args.version):
-        return _fail(EXIT_USAGE, f"--version must be MAJOR.MINOR.PATCH, got {args.version!r}")
-    if not COMMIT_RE.match(args.commit):
-        return _fail(EXIT_USAGE, "--commit must be a full 40-character lowercase hex SHA")
     if "/" not in args.repo:
         return _fail(EXIT_USAGE, "--repo must be owner/name")
+
+    if args.backfill_range:
+        if args.tag_only:
+            return _fail(EXIT_USAGE, "--tag-only cannot be used with --backfill-range")
+        if args.commit or args.changelog_commit:
+            return _fail(EXIT_USAGE, "--commit and --changelog-commit cannot be used with --backfill-range")
+        parts = args.backfill_range.split("..")
+        if len(parts) != 2 or any(not VERSION_RE.fullmatch(part) for part in parts):
+            return _fail(EXIT_USAGE, "--backfill-range must be FIRST..LAST with two MAJOR.MINOR.PATCH versions")
+        if tuple(map(int, parts[0].split("."))) > tuple(map(int, parts[1].split("."))):
+            return _fail(EXIT_USAGE, "--backfill-range FIRST must not exceed LAST")
+        if not args.dry_run and (not os.environ.get("FORGEJO_TOKEN") or
+                                 (not args.no_github and not os.environ.get("GITHUB_TOKEN"))):
+            return _fail(EXIT_USAGE, "FORGEJO_TOKEN and GITHUB_TOKEN are required for backfill")
+        try:
+            candidates = backfill_candidates(*parts)
+        except (OSError, subprocess.CalledProcessError) as e:
+            return _fail(EXIT_USAGE, f"cannot read VERSION history for backfill: {e}")
+        if not candidates:
+            return _fail(EXIT_USAGE, "no VERSION-changing commits found in backfill range")
+        try:
+            changelog_commit = subprocess.run(
+                ["git", "rev-parse", "HEAD"], capture_output=True, text=True, check=True
+            ).stdout.strip()
+        except (OSError, subprocess.CalledProcessError) as e:
+            return _fail(EXIT_USAGE, f"cannot resolve backfill changelog revision: {e}")
+        published: list[str] = []
+        skipped: list[str] = []
+        for version, commit in candidates:
+            try:
+                exists = server_image_exists(version, os.environ.get("DOCKER_CONFIG_JSON"))
+            except (ApiError, ValueError) as e:
+                return _fail(EXIT_REGISTRY, f"cannot establish server image state for {version}: {e}")
+            if not exists:
+                _log(f"backfill: {version} has no authenticated Docker Hub server image; skipping")
+                skipped.append(version)
+                continue
+            one = ["--version", version, "--commit", commit,
+                   "--changelog-commit", changelog_commit, "--repo", args.repo,
+                   "--forgejo-api", args.forgejo_api, "--github-api", args.github_api,
+                   "--github-wait-seconds", str(args.github_wait_seconds),
+                   "--github-poll-interval", str(args.github_poll_interval)]
+            if args.workflow:
+                one += ["--workflow", args.workflow]
+            if args.no_github:
+                one.append("--no-github")
+            if args.dry_run:
+                one.append("--dry-run")
+            result = main(one, sleep=sleep)
+            if result != EXIT_OK:
+                return result
+            published.append(version)
+        print(json.dumps({"backfill_published": published, "backfill_skipped_no_image": skipped}, sort_keys=True))
+        return EXIT_OK if published else _fail(EXIT_REGISTRY, "no versions in the range have a server image")
+
+    if not VERSION_RE.fullmatch(args.version):
+        return _fail(EXIT_USAGE, f"--version must be MAJOR.MINOR.PATCH, got {args.version!r}")
+    if not args.commit or not COMMIT_RE.fullmatch(args.commit):
+        return _fail(EXIT_USAGE, "--commit must be a full 40-character lowercase hex SHA")
+    if args.changelog_commit and not COMMIT_RE.fullmatch(args.changelog_commit):
+        return _fail(EXIT_USAGE, "--changelog-commit must be a full 40-character lowercase hex SHA")
 
     forgejo_token = os.environ.get("FORGEJO_TOKEN", "")
     github_token = os.environ.get("GITHUB_TOKEN", "")
@@ -552,7 +676,8 @@ def main(argv: list[str] | None = None, *, sleep=time.sleep) -> int:
     digests = collect_digests(args.version, os.environ.get("DOCKER_CONFIG_JSON"))
     name = release_name(args.version)
     changelog = fetch_changelog_entry(
-        args.forgejo_api, args.repo, args.version, args.commit, forgejo_token, out
+        args.forgejo_api, args.repo, args.version,
+        args.changelog_commit or args.commit, forgejo_token, out
     )
     out.changelog = "included" if changelog else "unavailable"
     body = release_body(args.version, args.commit, args.workflow, digests, changelog)
