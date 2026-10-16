@@ -1956,7 +1956,7 @@ work that depends on one waits.
 ```
 ARMOR/
 ├── Dockerfile                      # Multi-stage: Go build + scratch runtime
-├── VERSION                         # Version number (auto-bumped by CI)
+├── VERSION                         # Version number (changed only by scripts/cut-release.sh)
 ├── cmd/
 │   ├── armor/
 │   │   └── main.go                # ARMOR server entrypoint
