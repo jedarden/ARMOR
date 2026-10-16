@@ -104,7 +104,7 @@ curl -H "Authorization: Bearer REMOVED-NOT-A-SECRET-VALUE http://localhost:9001/
 
 ### Security Notes
 
-- If neither authentication method is configured, the dashboard is not anonymous: its routes fall back to the admin bearer-token gate, so every request needs `Authorization: Bearer REMOVED-NOT-A-SECRET-VALUE When `ARMOR_ADMIN_TOKEN` is unset too, the mount fails closed with `403 admin API disabled`. (Previously the mount answered with no credentials at all — including `/dashboard/admin/key/status` and `/dashboard/admin/key/rotate`.)
+- If neither authentication method is configured, the dashboard is not anonymous: its routes fall back to the admin bearer-token gate. When `ARMOR_ADMIN_TOKEN` is unset too, the mount fails closed with `403 admin API disabled`. The read-only `/dashboard/admin/key/status` route remains available to authenticated callers.
 - That bearer fallback is awkward for interactive use, since a browser cannot attach the header. Set `ARMOR_DASHBOARD_USER`/`ARMOR_DASHBOARD_PASS` (or `ARMOR_DASHBOARD_TOKEN`) wherever a person is meant to open the dashboard.
 - Health check endpoints (`/healthz`, `/readyz`) remain unauthenticated for Kubernetes probes
 - For production deployments, always enable authentication or use network policies to restrict access
@@ -306,7 +306,7 @@ Potential improvements for the dashboard:
 - **Historical metrics** - Graph metrics over time using Prometheus/Grafana
 - **Object search** - Full-text search across object keys
 - **Bulk operations** - Select multiple objects for deletion or re-encryption
-- **Key management UI** - Visual interface for key rotation and multi-key configuration (key rotation trigger already implemented)
+- **Key management UI** - Add a read-only view of key-ring status. Rotate keys through the empty-body admin API request in the [key-ring runbook](key-rotation-runbook.md).
 - **Upload/download** - Direct file upload and download through the web UI
 - **Real-time updates** - WebSocket updates for live metrics and new objects
 

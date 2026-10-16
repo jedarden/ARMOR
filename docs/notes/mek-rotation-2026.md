@@ -133,13 +133,12 @@ differs from the active one. It cannot complete on iad-ci:
    0.1.1960), but the deeper problem — an hours-long walk with no bytes sent
    until it finished — outlived it.
 
-Also checked and rejected: the dashboard rotate proxy
-(`/dashboard/admin/key/rotate`) is **not** a workaround — it generates its own
-random 32-byte MEK and posts it as the request body
-(`internal/dashboard/dashboard.go:719-744`), which selects *legacy* rotation
-mode. That would set an active key known only to the running process and not
-to OpenBao, so the next pod restart would come up unable to unwrap any object
-written in that window. Do not use it.
+The dashboard rotate proxy (`/dashboard/admin/key/rotate`) was also unsafe:
+it generated a random MEK and sent it in the request body, leaving rotated
+objects unreadable because the key was never saved to OpenBao or loaded into
+the key manager. The dashboard control and body-MEK mode were removed in
+armor-6b62d076. Use the empty-body fingerprint rotation described in the
+[key-ring runbook](../key-rotation-runbook.md).
 
 ### What this means operationally
 

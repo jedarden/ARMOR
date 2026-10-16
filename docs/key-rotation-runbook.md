@@ -153,10 +153,11 @@ curl -s -X POST http://127.0.0.1:8001/api/v1/namespaces/<namespace>/services/arm
 token configured, the admin API is **disabled fail-closed** — the MEK cannot be
 exported or rotated. Never rotate over an unauthenticated admin surface.
 
-**Why the request body is gone:** The rotate endpoint reads the active key from
-`ARMOR_MEK` (already loaded), not from a request body. This eliminates the
-pre-ring failure mode where a mismatch between the request-body MEK and the
-OpenBao MEK made every rotated object unreadable.
+**The request body must be empty:** The rotate endpoint reads the active key
+from `ARMOR_MEK` (already loaded). A non-empty body returns HTTP 400 before
+any backend access. The removed body-MEK mode could re-wrap objects under a
+key that was never saved to OpenBao or loaded into the key manager, leaving
+those objects unreadable.
 
 **Timeouts:** the admin listener imposes no read or write deadline by default
 (`ARMOR_ADMIN_READ_TIMEOUT` / `ARMOR_ADMIN_WRITE_TIMEOUT`, both default to

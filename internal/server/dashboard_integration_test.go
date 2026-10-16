@@ -238,7 +238,6 @@ func TestDashboardFailClosedWhenUnconfigured(t *testing.T) {
 		"/dashboard/delete",
 		"/dashboard/presign",
 		"/dashboard/admin/key/status",
-		"/dashboard/admin/key/rotate",
 	}
 
 	t.Run("no dashboard auth and no admin token", func(t *testing.T) {

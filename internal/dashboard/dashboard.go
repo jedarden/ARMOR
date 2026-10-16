@@ -4,9 +4,7 @@ package dashboard
 import (
 	"bytes"
 	"context"
-	"crypto/rand"
 	"encoding/base64"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"html/template"
@@ -744,69 +742,6 @@ func (d *Dashboard) metricsHandlerImpl() http.HandlerFunc {
 	}
 }
 
-// KeyRotateHandler handles key rotation requests.
-// It generates a new MEK and calls the admin API to perform rotation.
-func (d *Dashboard) KeyRotateHandler(adminClient *http.Client, adminURL, adminToken string) http.HandlerFunc {
-	return d.keyRotateHandlerImpl(adminClient, adminURL, adminToken)
-}
-
-// KeyRotateHandlerWithAuth handles key rotation requests with authentication.
-func (d *Dashboard) KeyRotateHandlerWithAuth(adminClient *http.Client, adminURL, adminToken string) http.HandlerFunc {
-	return d.auth.Wrap(d.keyRotateHandlerImpl(adminClient, adminURL, adminToken))
-}
-
-// keyRotateHandlerImpl is the actual implementation of the key rotation handler.
-func (d *Dashboard) keyRotateHandlerImpl(adminClient *http.Client, adminURL, adminToken string) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
-
-		// Generate a new MEK (32 random bytes)
-		newMEK := make([]byte, 32)
-		if _, err := rand.Read(newMEK); err != nil {
-			http.Error(w, fmt.Sprintf("Failed to generate new MEK: %v", err), http.StatusInternalServerError)
-			return
-		}
-
-		// Call the admin API's rotate endpoint
-		rotateURL := adminURL
-		if rotateURL == "" {
-			rotateURL = "http://127.0.0.1:9001/admin/key/rotate"
-		}
-
-		// Send the new MEK as hex-encoded string
-		mekHex := hex.EncodeToString(newMEK)
-		req, err := http.NewRequestWithContext(r.Context(), http.MethodPost, rotateURL, strings.NewReader(mekHex))
-		if err != nil {
-			http.Error(w, fmt.Sprintf("Failed to create request: %v", err), http.StatusInternalServerError)
-			return
-		}
-		req.Header.Set("Content-Type", "text/plain")
-		// Forward the admin bearer token so the loopback call passes the
-		// /admin/key/rotate token gate (ARMOR_ADMIN_TOKEN). When unset, the
-		// admin API rejects rotation (fail-closed); we send no header then.
-		if adminToken != "" {
-			req.Header.Set("Authorization", "Bearer "+adminToken)
-		}
-
-		resp, err := adminClient.Do(req)
-		if err != nil {
-			http.Error(w, fmt.Sprintf("Failed to call admin API: %v", err), http.StatusBadGateway)
-			return
-		}
-		defer resp.Body.Close()
-
-		// Copy response headers and body
-		for k, v := range resp.Header {
-			w.Header()[k] = v
-		}
-		w.WriteHeader(resp.StatusCode)
-		io.Copy(w, resp.Body)
-	}
-}
-
 // EncryptionStatsResponse holds encryption statistics for a bucket listing.
 type EncryptionStatsResponse struct {
 	EncryptedCount  int            `json:"encrypted_count"`
@@ -1361,19 +1296,6 @@ const dashboardHTML = `<!DOCTYPE html>
         header .subtitle { opacity: 0.8; font-size: 14px; }
         .header-context { margin-top: 10px; font-size: 12px; color: #cbd5e1; }
         .header-context code { color: #fff; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
-        .rotate-btn {
-            background: #f59e0b;
-            color: white;
-            border: none;
-            padding: 10px 20px;
-            border-radius: 6px;
-            font-size: 14px;
-            font-weight: 600;
-            cursor: pointer;
-            transition: background 0.2s;
-        }
-        .rotate-btn:hover { background: #d97706; }
-        .rotate-btn:disabled { background: #9ca3af; cursor: not-allowed; }
         .upload-btn {
             background: #10b981;
             color: white;
@@ -1564,19 +1486,6 @@ const dashboardHTML = `<!DOCTYPE html>
             color: #1a1a2e;
         }
         .modal-body { margin-bottom: 20px; }
-        .progress-bar {
-            width: 100%;
-            height: 8px;
-            background: #e5e7eb;
-            border-radius: 4px;
-            overflow: hidden;
-            margin-top: 10px;
-        }
-        .progress-fill {
-            height: 100%;
-            background: #10b981;
-            transition: width 0.3s;
-        }
         .modal-buttons {
             display: flex;
             gap: 10px;
@@ -1745,7 +1654,6 @@ const dashboardHTML = `<!DOCTYPE html>
                 <div class="subtitle">S3-compatible transparent encryption proxy</div>
                 <div class="header-context">Bucket: <code>{{.Bucket}}</code></div>
             </div>
-            <button class="rotate-btn" onclick="startKeyRotation()">Rotate Key</button>
         </header>
             {{if .DashboardCredential}}
             <button class="upload-btn" onclick="showUploadModal()">Upload File</button>
@@ -1955,22 +1863,6 @@ const dashboardHTML = `<!DOCTYPE html>
         </div>
     </div>
 
-    <div id="rotationModal" class="modal">
-        <div class="modal-content">
-            <h2 class="modal-title">Key Rotation</h2>
-            <div class="modal-body">
-                <div id="rotationStatus" class="status-message status-info">
-                    Initiated key rotation...
-                </div>
-                <div class="progress-bar">
-                    <div id="rotationProgressFill" class="progress-fill"></div>
-                </div>
-            </div>
-            <div class="modal-buttons">
-                <button class="btn btn-secondary" onclick="closeRotationModal()">Close</button>
-            </div>
-        </div>
-    </div>
     <div id="uploadModal" class="modal">
         <div class="modal-content" style="max-width:500px">
             <h2 class="modal-title">Upload File</h2>
@@ -2094,99 +1986,6 @@ const dashboardHTML = `<!DOCTYPE html>
                 document.getElementById('objectDetailBody').innerHTML = '<span style="color:#991b1b">Failed to load: ' + escHtml(String(err)) + '</span>';
                 document.getElementById('objectDetailModal').classList.add('active');
             });
-    }
-
-    let rotationInterval = null;
-
-    function startKeyRotation() {
-        const modal = document.getElementById('rotationModal');
-        const statusMsg = document.getElementById('rotationStatus');
-        const progressBar = document.getElementById('rotationProgress');
-        const progressFill = document.getElementById('rotationProgressFill');
-        const rotateBtn = document.querySelector('.rotate-btn');
-
-        rotateBtn.disabled = true;
-        modal.classList.add('active');
-        statusMsg.className = 'status-message status-info';
-        statusMsg.textContent = 'Initiating key rotation...';
-        progressFill.style.width = '0%';
-
-        fetch('/dashboard/admin/key/rotate', { method: 'POST' })
-            .then(response => {
-                if (!response.ok) {
-                    return response.text().then(text => {
-                        throw new Error(text || 'Rotation request failed');
-                    });
-                }
-                // Start polling for progress
-                rotationInterval = setInterval(pollRotationStatus, 2000);
-                return null;
-            })
-            .catch(err => {
-                statusMsg.className = 'status-message status-error';
-                statusMsg.textContent = 'Error: ' + err.message;
-                rotateBtn.disabled = false;
-                if (rotationInterval) {
-                    clearInterval(rotationInterval);
-                    rotationInterval = null;
-                }
-            });
-    }
-
-    function pollRotationStatus() {
-        const statusMsg = document.getElementById('rotationStatus');
-        const progressFill = document.getElementById('rotationProgressFill');
-        const rotateBtn = document.querySelector('.rotate-btn');
-
-        fetch('/dashboard/admin/key/status')
-            .then(r => r.json())
-            .then(data => {
-                if (data.status === 'none' || !data.status) {
-                    // No state file yet - rotation may be initializing
-                    return;
-                }
-
-                if (data.status === 'completed') {
-                    clearInterval(rotationInterval);
-                    rotationInterval = null;
-                    statusMsg.className = 'status-message status-success';
-                    statusMsg.textContent = 'Key rotation completed successfully!';
-                    progressFill.style.width = '100%';
-                    rotateBtn.disabled = false;
-                    return;
-                }
-
-                if (data.status === 'failed') {
-                    clearInterval(rotationInterval);
-                    rotationInterval = null;
-                    statusMsg.className = 'status-message status-error';
-                    statusMsg.textContent = 'Rotation failed: ' + (data.error_message || 'Unknown error');
-                    rotateBtn.disabled = false;
-                    return;
-                }
-
-                if (data.status === 'in_progress') {
-                    const total = data.total_objects || 0;
-                    const processed = data.processed_objects || 0;
-                    const percent = total > 0 ? Math.round((processed / total) * 100) : 0;
-
-                    statusMsg.className = 'status-message status-info';
-                    statusMsg.textContent = 'Rotating keys... ' + processed + ' / ' + total + ' objects (' + percent + '%)';
-                    progressFill.style.width = percent + '%';
-                }
-            })
-            .catch(err => {
-                console.error('Failed to poll rotation status:', err);
-            });
-    }
-
-    function closeRotationModal() {
-        const modal = document.getElementById('rotationModal');
-        modal.classList.remove('active');
-        if (rotationInterval) {
-            clearInterval(rotationInterval);
-            rotationInterval = null;
-        }
     }
 
     function showUploadModal() {

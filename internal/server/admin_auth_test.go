@@ -108,7 +108,7 @@ func TestDashboardBypassesTokenGateOnlyWhenConfigured(t *testing.T) {
 		s := newAdminAuthServer(t, token, nil) // no ARMOR_DASHBOARD_*
 		h := s.adminAuthMiddleware(stubOK())
 
-		for _, path := range []string{"/dashboard", "/dashboard/object", "/dashboard/api/list", "/dashboard/admin/key/status", "/dashboard/admin/key/rotate"} {
+		for _, path := range []string{"/dashboard", "/dashboard/object", "/dashboard/api/list", "/dashboard/admin/key/status"} {
 			req := httptest.NewRequest(http.MethodGet, path, nil)
 			rec := httptest.NewRecorder()
 			h.ServeHTTP(rec, req)

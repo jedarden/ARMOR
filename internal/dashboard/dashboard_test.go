@@ -2117,177 +2117,6 @@ func TestKeyRotateStatusHandlerMethodNotAllowed(t *testing.T) {
 	}
 }
 
-// TestKeyRotateHandlerSuccess verifies successful key rotation initiation.
-func TestKeyRotateHandlerSuccess(t *testing.T) {
-	mb := newMockBackend()
-	m := metrics.NewMetrics()
-	d := New(mb, "test-bucket", m)
-
-	// Mock admin API server
-	adminServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			t.Errorf("Expected POST request, got %s", r.Method)
-		}
-		// Return success response
-		w.WriteHeader(http.StatusAccepted)
-		w.Write([]byte(`{"status":"accepted"}`))
-	}))
-	defer adminServer.Close()
-
-	req := httptest.NewRequest(http.MethodPost, "/dashboard/admin/key/rotate", nil)
-	rec := httptest.NewRecorder()
-
-	d.KeyRotateHandler(adminServer.Client(), adminServer.URL, "")(rec, req)
-
-	if rec.Code != http.StatusAccepted {
-		t.Errorf("Expected status 202, got %d", rec.Code)
-	}
-}
-
-// TestKeyRotateHandlerForwardsAdminToken verifies the loopback rotation call
-// carries the ARMOR_ADMIN_TOKEN bearer so it passes the /admin/key/rotate gate.
-func TestKeyRotateHandlerForwardsAdminToken(t *testing.T) {
-	mb := newMockBackend()
-	m := metrics.NewMetrics()
-	d := New(mb, "test-bucket", m)
-
-	const wantToken = "loopback-secret"
-	var gotAuth string
-	adminServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotAuth = r.Header.Get("Authorization")
-		w.WriteHeader(http.StatusAccepted)
-	}))
-	defer adminServer.Close()
-
-	req := httptest.NewRequest(http.MethodPost, "/dashboard/admin/key/rotate", nil)
-	rec := httptest.NewRecorder()
-	d.KeyRotateHandler(adminServer.Client(), adminServer.URL, wantToken)(rec, req)
-
-	if rec.Code != http.StatusAccepted {
-		t.Fatalf("Expected status 202, got %d", rec.Code)
-	}
-	if gotAuth != "Bearer "+wantToken {
-		t.Errorf("Expected admin API to receive bearer token, got %q", gotAuth)
-	}
-}
-
-// TestKeyRotateHandlerOmitsAuthHeaderWhenTokenUnset verifies that when no admin
-// token is configured, the proxy sends no Authorization header (the admin API
-// then rejects rotation fail-closed rather than receiving a stale/empty header).
-func TestKeyRotateHandlerOmitsAuthHeaderWhenTokenUnset(t *testing.T) {
-	mb := newMockBackend()
-	m := metrics.NewMetrics()
-	d := New(mb, "test-bucket", m)
-
-	var gotAuth = "sentinel"
-	adminServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotAuth = r.Header.Get("Authorization")
-		w.WriteHeader(http.StatusAccepted)
-	}))
-	defer adminServer.Close()
-
-	req := httptest.NewRequest(http.MethodPost, "/dashboard/admin/key/rotate", nil)
-	rec := httptest.NewRecorder()
-	d.KeyRotateHandler(adminServer.Client(), adminServer.URL, "")(rec, req)
-
-	if rec.Code != http.StatusAccepted {
-		t.Fatalf("Expected status 202, got %d", rec.Code)
-	}
-	if gotAuth != "" {
-		t.Errorf("Expected no Authorization header when token unset, got %q", gotAuth)
-	}
-}
-
-// TestKeyRotateHandlerWithAuth verifies authentication on the rotate endpoint.
-func TestKeyRotateHandlerWithAuth(t *testing.T) {
-	mb := newMockBackend()
-	m := metrics.NewMetrics()
-	d := NewWithAuth(mb, "test-bucket", m, "admin", "secret", "", nil, "", false)
-
-	// Mock admin API server
-	adminServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusAccepted)
-	}))
-	defer adminServer.Close()
-
-	req := httptest.NewRequest(http.MethodPost, "/dashboard/admin/key/rotate", nil)
-	rec := httptest.NewRecorder()
-
-	// Should fail without auth
-	d.KeyRotateHandlerWithAuth(adminServer.Client(), adminServer.URL, "")(rec, req)
-	if rec.Code != http.StatusUnauthorized {
-		t.Errorf("Expected status 401 without auth, got %d", rec.Code)
-	}
-
-	// Should succeed with valid auth
-	req = httptest.NewRequest(http.MethodPost, "/dashboard/admin/key/rotate", nil)
-	req.SetBasicAuth("admin", "secret")
-	rec = httptest.NewRecorder()
-
-	d.KeyRotateHandlerWithAuth(adminServer.Client(), adminServer.URL, "")(rec, req)
-	if rec.Code != http.StatusAccepted {
-		t.Errorf("Expected status 202 with valid auth, got %d", rec.Code)
-	}
-}
-
-// TestKeyRotateHandlerMethodNotAllowed verifies non-POST requests are rejected.
-func TestKeyRotateHandlerMethodNotAllowed(t *testing.T) {
-	mb := newMockBackend()
-	m := metrics.NewMetrics()
-	d := New(mb, "test-bucket", m)
-
-	req := httptest.NewRequest(http.MethodGet, "/dashboard/admin/key/rotate", nil)
-	rec := httptest.NewRecorder()
-
-	d.KeyRotateHandler(nil, "", "")(rec, req)
-
-	if rec.Code != http.StatusMethodNotAllowed {
-		t.Errorf("Expected status 405, got %d", rec.Code)
-	}
-}
-
-// TestKeyRotateHandlerAdminAPIFailure verifies error handling when admin API fails.
-func TestKeyRotateHandlerAdminAPIFailure(t *testing.T) {
-	mb := newMockBackend()
-	m := metrics.NewMetrics()
-	d := New(mb, "test-bucket", m)
-
-	// Mock admin API that returns an error response
-	adminServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusInternalServerError)
-		w.Write([]byte("admin API error"))
-	}))
-	defer adminServer.Close()
-
-	req := httptest.NewRequest(http.MethodPost, "/dashboard/admin/key/rotate", nil)
-	rec := httptest.NewRecorder()
-
-	d.KeyRotateHandler(adminServer.Client(), adminServer.URL, "")(rec, req)
-
-	// The handler copies the admin API's response status code
-	if rec.Code != http.StatusInternalServerError {
-		t.Errorf("Expected status 500, got %d", rec.Code)
-	}
-}
-
-// TestKeyRotateHandlerDefaultURL verifies default admin URL is used when none provided.
-func TestKeyRotateHandlerDefaultURL(t *testing.T) {
-	mb := newMockBackend()
-	m := metrics.NewMetrics()
-	d := New(mb, "test-bucket", m)
-
-	// Don't provide a URL - should use default
-	req := httptest.NewRequest(http.MethodPost, "/dashboard/admin/key/rotate", nil)
-	rec := httptest.NewRecorder()
-
-	d.KeyRotateHandler(http.DefaultClient, "", "")(rec, req)
-
-	// Will fail to connect to localhost:9001, but confirms the default URL is used
-	if rec.Code != http.StatusBadGateway {
-		t.Errorf("Expected status 502 (connection refused), got %d", rec.Code)
-	}
-}
-
 // TestPaginationContinuationToken verifies pagination works with continuation tokens.
 func TestPaginationContinuationToken(t *testing.T) {
 	mb := newMockBackend()
@@ -2377,7 +2206,7 @@ func TestPaginationContinuationToken(t *testing.T) {
 
 	// Verify continuation token is set in JavaScript
 	if !strings.Contains(body2, "const currentContinuationToken = '"+result.NextToken+"'") &&
-	   !strings.Contains(body2, `const currentContinuationToken = "`+result.NextToken+`"`) {
+		!strings.Contains(body2, `const currentContinuationToken = "`+result.NextToken+`"`) {
 		t.Errorf("Page 2: Expected currentContinuationToken to be set to %s", result.NextToken)
 	}
 
@@ -2476,7 +2305,6 @@ func TestPaginationContinuationToken(t *testing.T) {
 	}
 }
 
-
 // TestPresignHandlerDisabled verifies that the presign handler returns 404 when presign is disabled.
 func TestPresignHandlerDisabled(t *testing.T) {
 	mb := newMockBackend()
@@ -2541,9 +2369,9 @@ func TestPresignHandlerSuccess(t *testing.T) {
 		// Return presign response
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
-			"url":         "https://example.com/share/abc123",
-			"expires_in":  "24h",
-			"expires_at":  "2026-08-30T12:00:00Z",
+			"url":        "https://example.com/share/abc123",
+			"expires_in": "24h",
+			"expires_at": "2026-08-30T12:00:00Z",
 		})
 	}))
 	defer adminServer.Close()
@@ -2644,7 +2472,7 @@ func TestPresignHandlerInvalidJSON(t *testing.T) {
 func TestPresignHandlerWithAuth(t *testing.T) {
 	mb := newMockBackend()
 	m := metrics.NewMetrics()
-	
+
 	// Test with Basic Auth
 	d := NewWithAuth(mb, "test-bucket", m, "testuser", "testpass", "", nil, "", true)
 
@@ -2712,11 +2540,11 @@ func TestShareButtonRendersWhenPresignEnabled(t *testing.T) {
 		LastModified:     time.Now(),
 		IsARMOREncrypted: true,
 		Metadata: map[string]string{
-			"x-amz-meta-armor-version":        "1",
-			"x-amz-meta-armor-block-size":     "65536",
-			"x-amz-meta-armor-plaintext-size": "1000",
-			"x-amz-meta-armor-iv":             "dGVzdGl2MTIzNDU2Nzg5MA==",
-			"x-amz-meta-armor-wrapped-dek":    "d3JhcHBlZGRlaw==",
+			"x-amz-meta-armor-version":          "1",
+			"x-amz-meta-armor-block-size":       "65536",
+			"x-amz-meta-armor-plaintext-size":   "1000",
+			"x-amz-meta-armor-iv":               "dGVzdGl2MTIzNDU2Nzg5MA==",
+			"x-amz-meta-armor-wrapped-dek":      "d3JhcHBlZGRlaw==",
 			"x-amz-meta-armor-plaintext-sha256": "abcdef123456",
 		},
 	}
@@ -2738,17 +2566,17 @@ func TestShareButtonRendersWhenPresignEnabled(t *testing.T) {
 	}
 
 	body := rec.Body.String()
-	
+
 	// Verify Share button is present when presign is enabled
 	if !strings.Contains(body, `onclick="showShareModal(`) {
 		t.Error("Expected Share button to be present in HTML when presign is enabled")
 	}
-	
+
 	// Verify Share modal HTML is present
 	if !strings.Contains(body, `id="shareModal"`) {
 		t.Error("Expected Share modal to be present in HTML")
 	}
-	
+
 	// Verify JavaScript functions for Share are present
 	if !strings.Contains(body, `function showShareModal(`) {
 		t.Error("Expected showShareModal JavaScript function")
@@ -2772,11 +2600,11 @@ func TestShareButtonHiddenWhenPresignDisabled(t *testing.T) {
 		LastModified:     time.Now(),
 		IsARMOREncrypted: true,
 		Metadata: map[string]string{
-			"x-amz-meta-armor-version":        "1",
-			"x-amz-meta-armor-block-size":     "65536",
-			"x-amz-meta-armor-plaintext-size": "1000",
-			"x-amz-meta-armor-iv":             "dGVzdGl2MTIzNDU2Nzg5MA==",
-			"x-amz-meta-armor-wrapped-dek":    "d3JhcHBlZGRlaw==",
+			"x-amz-meta-armor-version":          "1",
+			"x-amz-meta-armor-block-size":       "65536",
+			"x-amz-meta-armor-plaintext-size":   "1000",
+			"x-amz-meta-armor-iv":               "dGVzdGl2MTIzNDU2Nzg5MA==",
+			"x-amz-meta-armor-wrapped-dek":      "d3JhcHBlZGRlaw==",
 			"x-amz-meta-armor-plaintext-sha256": "abcdef123456",
 		},
 	}
@@ -2798,7 +2626,7 @@ func TestShareButtonHiddenWhenPresignDisabled(t *testing.T) {
 	}
 
 	body := rec.Body.String()
-	
+
 	// Verify Share button is NOT present when presign is disabled
 	if strings.Contains(body, `onclick="showShareModal(`) {
 		t.Error("Expected Share button to be hidden when presign is disabled")
@@ -2816,9 +2644,9 @@ func TestPresignResponseFormatMatchesUI(t *testing.T) {
 	adminServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
-			"url":         "https://armor.example.com/share/eyJiIjoidGVzdC1idWNrZXQiLCJrIjoidGVzdC9maWxlLnR4dCIsImUiOjE3MjI0NjQwMDB9.s1gNvh4Yq8kXrZLKrP_KRCnFpLGvgFZlJ9GYQBnJvoU",
-			"expires_in":  "24h",
-			"expires_at":  "2026-08-30T12:00:00Z",
+			"url":        "https://armor.example.com/share/eyJiIjoidGVzdC1idWNrZXQiLCJrIjoidGVzdC9maWxlLnR4dCIsImUiOjE3MjI0NjQwMDB9.s1gNvh4Yq8kXrZLKrP_KRCnFpLGvgFZlJ9GYQBnJvoU",
+			"expires_in": "24h",
+			"expires_at": "2026-08-30T12:00:00Z",
 		})
 	}))
 	defer adminServer.Close()

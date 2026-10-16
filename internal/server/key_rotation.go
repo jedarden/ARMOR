@@ -129,17 +129,6 @@ func NewKeyRotator(b backend.Backend, bucket string, oldMEK, newMEK []byte, idx 
 	return newKeyRotator(b, bucket, "", oldMEK, newMEK, nil, idx)
 }
 
-// NewKeyRotatorForKey creates a rotator that only re-wraps objects encrypted
-// with keyID. The empty key ID selects the default key, including legacy
-// objects whose metadata omits x-amz-meta-armor-key-id.
-func NewKeyRotatorForKey(b backend.Backend, bucket, keyID string, oldMEK, newMEK []byte, oldRing []keymanager.RingKeyEntry, idx *manifest.Index) *KeyRotator {
-	if keyID == "" {
-		keyID = "default"
-	}
-	keyID = strings.ToLower(strings.TrimSpace(keyID))
-	return newKeyRotator(b, bucket, keyID, oldMEK, newMEK, oldRing, idx)
-}
-
 // NewFingerprintRotator creates a rotator that re-wraps objects to the active
 // key's fingerprint. It walks the bucket (manifest first, HeadObject fallback)
 // and re-wraps only objects whose fingerprint ≠ the active key's fingerprint.

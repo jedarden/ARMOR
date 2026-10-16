@@ -51,7 +51,6 @@ IDs when correlating a client failure with logs.
 <!-- endpoint: /dashboard/download -->
 <!-- endpoint: /dashboard/delete -->
 <!-- endpoint: /dashboard/presign -->
-<!-- endpoint: /dashboard/admin/key/rotate -->
 <!-- endpoint: /dashboard/admin/key/status -->
 
 ## Authentication
@@ -285,7 +284,7 @@ network and observed to completion.
 | Endpoint | Method | Success and behavior | Errors / safe-use constraints |
 |---|---|---|---|
 | `/admin/key/verify` | `GET` | 200 `verified` when canary decrypt and HMAC checks pass; 200 `unknown` when no canary monitor exists | 503 `unverified`; 405 otherwise. This is a diagnostic, not a key-rotation action. |
-| `/admin/key/rotate` | `POST` | 200 JSON rotation result. `key-id` selects a named key. An empty body uses fingerprint-based rotation against the configured active key; a body is legacy replacement-MEK mode. | 400 invalid key/MEK; 500 rotation failure. Prefer empty-body fingerprint mode, take a backup/escrow first, expect a long-running bucket walk, and verify the canary afterward. Never put a MEK in a command line, log, or ticket. |
+| `/admin/key/rotate` | `POST` with an empty body | 200 JSON fingerprint rotation result against the configured active key; `key-id` selects a named key. | 400 for any non-empty body or invalid key; 500 rotation failure. Follow the [key-ring runbook](key-rotation-runbook.md), take a backup/escrow first, expect a long-running bucket walk, and verify the canary afterward. |
 | `/admin/key/ring` | `GET` with optional `census=head` | 200 JSON active/ring fingerprints and object histogram. Default census uses the manifest; `census=head` verifies live metadata. | 500 key/backend failure. `census=head` can take hours on a production bucket; run it detached and reconcile `head_failures` and unattributed fingerprints. |
 | `/admin/key/export?confirm=yes` | `GET` | 200 JSON break-glass escrow containing the active MEK, `active_key_fingerprint`, every default-key `ring_keys[]` entry (`fingerprint` + `mek`), and B2 connection credentials | 400 without exact `confirm=yes`; 405 otherwise. Treat the response as a root credential: use only for recovery, transmit over HTTPS, store in an approved secret escrow, and delete local copies after use. |
 | `/admin/format/migrate` | `GET` | 200 JSON current migration state or `no_migration` | 500 when no encryption key is available. |
@@ -325,7 +324,6 @@ the underlying object operations and is subject to its own ACL.
 | `/dashboard/download?key=<key>` | `GET` | 200 object bytes with attachment headers | 400 missing key, 403 disabled/denied, 404 missing object, 500. |
 | `/dashboard/delete?key=<key>` | `DELETE` or `POST` | 200 JSON delete result | 400 missing key, 403 disabled/denied, 500. This is destructive. |
 | `/dashboard/presign` | `POST` JSON (`key`, optional `expires_in`) | Proxies the 200 JSON result from `/admin/presign` | 400 invalid body/key, 401 dashboard auth, 404 disabled, 502 loopback/admin failure. |
-| `/dashboard/admin/key/rotate` | `POST` | Proxies the admin rotation response after generating a new MEK | 401, 502 loopback failure, or the admin API's status. Treat as a destructive long-running operation. |
 | `/dashboard/admin/key/status` | `GET` | 200 JSON rotation state, including `none` when idle | 401/405/500. |
 
 The dashboard's `prefix` query is passed to the backend as a listing prefix.

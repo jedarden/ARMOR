@@ -14,10 +14,8 @@ import (
 // TestDashboardPresignRoutesToAdminPresign pins the loopback wiring for the
 // dashboard share-link handler. PresignHandlerWithAuth takes the full admin
 // URL and posts to it verbatim, so the route must be handed /admin/presign.
-// Pointing it at /admin/key/rotate (the rotate endpoint's URL was shared with
-// this route) makes presign unreachable on every deployment — rotate reads the
-// body as a legacy request-body MEK and answers 400 "Invalid MEK length" —
-// and turns a UI action into a POST against a destructive admin route.
+// Pointing it at /admin/key/rotate makes presign unreachable and turns a UI
+// action into a POST against a destructive admin route.
 func TestDashboardPresignRoutesToAdminPresign(t *testing.T) {
 	var gotPaths []string
 	adminTarget := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -39,7 +37,7 @@ func TestDashboardPresignRoutesToAdminPresign(t *testing.T) {
 		DashboardUser:  "dash-user",
 		DashboardPass:  "dash-pass",
 		AuthAccessKey:  "test-key",
-		AuthSecretKey: "REMOVED-NOT-A-SECRET-VALUE",
+		AuthSecretKey:  "REMOVED-NOT-A-SECRET-VALUE",
 		AdminListen:    strings.TrimPrefix(adminTarget.URL, "http://"),
 	}
 

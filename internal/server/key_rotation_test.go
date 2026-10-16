@@ -1994,9 +1994,8 @@ func TestFingerprintRotationResumeSkipsInspectionBelowLastKey(t *testing.T) {
 		t.Fatalf("persisted LastKey = %q, want %q", state.LastKey, keys[2])
 	}
 	// wrappedDEKMetadata reads the stored x-amz-meta-armor-wrapped-dek verbatim.
-	// wrappedDEKFromMetadata cannot be used here: it plain-base64-decodes the
-	// value, which only works for v1 objects, and everything in this test is v2
-	// ("v2:<fingerprint>:<base64>").
+	// Plain base64 decoding only works for v1 objects; everything in this
+	// test has the v2 "v2:<fingerprint>:<base64>" wrapper.
 	wrappedDEKMetadata := func(key string) string {
 		t.Helper()
 		info, err := base.Head(context.Background(), bucket, key)

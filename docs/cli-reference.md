@@ -149,6 +149,11 @@ Verify a deployment's live configuration and connectivity. Read-only.
   `fingerprint` means objects exist that a future rotation would orphan; add
   the named fingerprints to the ring before retiring keys.
 
+MEK rotation is an admin API operation, not a CLI command. Follow the
+[key-ring runbook](key-rotation-runbook.md): configure and escrow the new
+active MEK first, then send `POST /admin/key/rotate` with an empty body.
+The endpoint rejects a supplied MEK body with HTTP 400.
+
 ## `armor decrypt`
 
 Decrypt one ARMOR-encrypted object offline — break-glass recovery with no

@@ -735,18 +735,12 @@ func (s *Server) AdminHandler() http.Handler {
 		mux.HandleFunc("/dashboard/download", s.dashboard.DownloadHandlerWithAuth())
 		mux.HandleFunc("/dashboard/delete", s.dashboard.DeleteHandlerWithAuth())
 
-		// Dashboard proxies to the admin API over loopback; rotation must
-		// present the admin token now that /admin/key/rotate is token-gated.
-		// Both handlers take the full admin URL and never append a path of
-		// their own, so each route needs its own endpoint string — sharing one
-		// here pointed /dashboard/presign at /admin/key/rotate.
+		// PresignHandlerWithAuth takes the full admin URL and posts to it verbatim.
 		adminClient := &http.Client{
-			Timeout: 30 * time.Minute, // Key rotation can take a long time
+			Timeout: 30 * time.Minute,
 		}
 		presignURL := "http://" + s.config.AdminListen + "/admin/presign"
 		mux.HandleFunc("/dashboard/presign", s.dashboard.PresignHandlerWithAuth(adminClient, presignURL))
-		rotateURL := "http://" + s.config.AdminListen + "/admin/key/rotate"
-		mux.HandleFunc("/dashboard/admin/key/rotate", s.dashboard.KeyRotateHandlerWithAuth(adminClient, rotateURL, s.config.AdminToken))
 		mux.HandleFunc("/dashboard/admin/key/status", s.dashboard.KeyRotateStatusHandlerWithAuth())
 	}
 
@@ -918,8 +912,21 @@ func (s *Server) rotateKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Select the key to rotate. The default key remains the backward-compatible
-	// choice when no key-id is supplied; named keys are rotated independently.
+	// The active MEK must already be loaded from the configured key ring.
+	// Reject supplied keys before touching the backend or recording provenance.
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to read request body: %v", err), http.StatusBadRequest)
+		return
+	}
+	defer r.Body.Close()
+	if len(body) != 0 {
+		http.Error(w, "Fingerprint mode requires an empty request body; see docs/key-rotation-runbook.md for the key-ring procedure", http.StatusBadRequest)
+		return
+	}
+
+	// The default key remains the choice when no key-id is supplied; named
+	// keys are rotated independently.
 	keyID := strings.TrimSpace(r.URL.Query().Get("key-id"))
 	key, err := s.keyManager.GetKeyByID(keyID)
 	if err != nil {
@@ -928,69 +935,15 @@ func (s *Server) rotateKey(w http.ResponseWriter, r *http.Request) {
 	}
 	keyID = key.Name
 
-	// Read the request body to detect legacy rotation mode
-	body, err := io.ReadAll(r.Body)
-	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to read request body: %v", err), http.StatusBadRequest)
-		return
-	}
-	defer r.Body.Close()
-
-	var rotator *KeyRotator
-	var oldMEKHash, newMEKHash, rotationID string
-
-	if len(body) > 0 {
-		// LEGACY MODE: Request body contains the new MEK (32 bytes or 64 hex chars)
-		s.logger.WithFields(map[string]interface{}{
-			"key_id": keyID,
-		}).Warn("Using legacy key rotation mode (request-body MEK). This form is deprecated and will be removed in a future release. Use fingerprint-based rotation instead (omit request body).")
-
-		var newMEK []byte
-		if len(body) == 64 {
-			newMEK, err = hex.DecodeString(string(body))
-			if err != nil {
-				http.Error(w, "Invalid hex-encoded MEK", http.StatusBadRequest)
-				return
-			}
-		} else if len(body) == 32 {
-			newMEK = body
-		} else {
-			http.Error(w, fmt.Sprintf("Invalid MEK length: expected 32 bytes or 64 hex chars, got %d", len(body)), http.StatusBadRequest)
-			return
-		}
-
-		oldMEK := key.MEK
-
-		// Compute MEK hashes for provenance tracking
-		oldMEKHashBytes := sha256.Sum256(oldMEK)
-		newMEKHashBytes := sha256.Sum256(newMEK)
-		oldMEKHash = hex.EncodeToString(oldMEKHashBytes[:8])
-		newMEKHash = hex.EncodeToString(newMEKHashBytes[:8])
-		rotationID = fmt.Sprintf("%s-%s-%d", oldMEKHash, newMEKHash, time.Now().Unix())
-
-		// Get old ring keys for this key ID
-		oldRing := s.keyManager.Ring(keyID)
-
-		rotator = NewKeyRotatorForKey(s.backend, s.config.Bucket, keyID, oldMEK, newMEK, oldRing, s.manifest).WithKeyPrefix(s.config.Prefix)
-	} else {
-		// NEW MODE: Fingerprint-based rotation (no request body)
-		// Re-wraps objects whose fingerprint ≠ active key's fingerprint
-		activeMEK := key.MEK
-
-		// Compute MEK hash for provenance tracking
-		newMEKHashBytes := sha256.Sum256(activeMEK)
-		newMEKHash = hex.EncodeToString(newMEKHashBytes[:8])
-		rotationID = fmt.Sprintf("fingerprint-%s-%d", newMEKHash, time.Now().Unix())
-
-		// Get old ring keys for this key ID (for unwrapping objects encrypted with retired keys)
-		oldRing := s.keyManager.Ring(keyID)
-
-		rotator = NewFingerprintRotator(s.backend, s.config.Bucket, keyID, activeMEK, oldRing, s.manifest).WithKeyPrefix(s.config.Prefix)
-	}
+	activeMEK := key.MEK
+	newMEKHashBytes := sha256.Sum256(activeMEK)
+	newMEKHash := hex.EncodeToString(newMEKHashBytes[:8])
+	rotationID := fmt.Sprintf("fingerprint-%s-%d", newMEKHash, time.Now().Unix())
+	oldRing := s.keyManager.Ring(keyID)
+	rotator := NewFingerprintRotator(s.backend, s.config.Bucket, keyID, activeMEK, oldRing, s.manifest).WithKeyPrefix(s.config.Prefix)
 
 	// Record key rotation start in provenance chain
 	if err := s.provenance.RecordKeyEvent(r.Context(), "key-rotate-start", provenance.KeyEventOpts{
-		OldMEKHash: oldMEKHash,
 		NewMEKHash: newMEKHash,
 		RotationID: rotationID,
 	}); err != nil {
