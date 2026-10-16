@@ -37,6 +37,105 @@ Deployment manifests do **not** live here. They live in
 `jedarden/declarative-config` (Forgejo) and ArgoCD applies them; see
 "Deployments" below.
 
+## Making a change
+
+Four recipes cover the common change shapes. Each names every file the change
+must touch and the test that fails when one is missed. Run the named test in
+the same change as the code; run `scripts/definition-of-done.sh` before
+pushing.
+
+### Adding an S3 operation
+
+1. Dispatch: add the branch in `HandleRoot`
+   (`internal/server/handlers/handlers.go`), keyed off method + query
+   parameter the way the existing `?uploads` / `?retention` branches are,
+   calling a handler method on `*Handlers` in that package.
+2. Classification: mirror the branch in `s3OperationForRequest`
+   (`internal/server/handlers/s3_operation.go`) so `armor_errors_total`
+   carries the new operation's name, and add a case to
+   `TestS3OperationForRequest` (`s3_operation_test.go`). That classifier's
+   documented contract is to stay in sync with `HandleRoot`.
+3. Error codes: every `<Code>` the operation's `writeError` calls can emit
+   gets a row in the *Error Codes by HTTP Status* table in
+   [docs/error-responses.md](docs/error-responses.md), inside the
+   `handlers-error-codes` markers. `internal/docsindex` diffs that table
+   against the package source, so an unlisted code fails the gate.
+4. Compatibility: pin the wire behavior in
+   `tests/aws-cli-compatibility/protocol_conformance_test.go` (runs even
+   under `-short`); add real-client coverage in the per-binary legs when a
+   client exercises the operation differently, and bind the operation in
+   `client_matrix_test.go` — that test holds the client matrix and this
+   file's CI claim to the legs that actually exist.
+5. Verify: `go build ./... && go test ./internal/server/handlers/ ./internal/docsindex/ ./tests/aws-cli-compatibility/ -short`.
+
+### Adding a configuration variable
+
+1. Add the field to `Config` and read it in `Load()`
+   (`internal/config/config.go`) with `getEnv("ARMOR_NAME", default)`;
+   validate it there — append to `errs`, never validate in a consumer.
+2. Add the row to the matching table in
+   [docs/configuration.md](docs/configuration.md) in the same change.
+   `TestConfigReferenceParity` (`internal/docsindex`) fails when the row is
+   missing, when its Default disagrees with what the code declares, or when
+   it omits a bound or accepted value the validation enforces. A variable
+   consumed outside `internal/config` (companion binaries, handlers) is
+   additionally held by `TestConsumerReferenceParity`.
+3. Verify: `go build ./... && go test ./internal/docsindex/ -short` (the
+   parity tests live there, not in `internal/config`).
+
+### Adding an admin route
+
+1. Write the handler as a method on `*Server` in `internal/server/`
+   (`manifest_admin.go` is a small example of the shape) and register it in
+   the admin mux in `internal/server/server.go`, beside the other
+   `mux.HandleFunc("/admin/...", ...)` lines.
+2. The token gate is automatic and fail-closed: every admin-mux path outside
+   `adminPublicExact` / `adminPublicPrefixes` (`admin_auth.go`) requires the
+   `ARMOR_ADMIN_TOKEN` bearer token and returns 403 when unset. Do not add
+   the new route to those maps — the exemptions exist for probe and scrape
+   paths only.
+3. Docs: add the `<!-- endpoint: /admin/<name> -->` marker and a section in
+   [docs/http-api-reference.md](docs/http-api-reference.md);
+   `TestHTTPAPIReferenceCoversRegisteredRoutes` (`internal/server`) fails on
+   any registered route missing its marker. Add a row to the Admin Endpoints
+   summary in [docs/error-responses.md](docs/error-responses.md) when the
+   route's error behavior is worth pinning.
+4. Verify: `go test ./internal/server/ -run TestHTTPAPIReferenceCoversRegisteredRoutes -short`.
+
+### Regenerating migration goldens
+
+1. Generate into a scratch directory, never directly into the tree:
+   `cd tests/fixtures/migration && go run standalone_generator.go /tmp/armor-fixtures`.
+2. Copy in only the fixture set you intend to replace (normally
+   `generated_fixtures/`) and commit it — a full run also emits `malformed/`
+   and `edge_cases/`, which are not part of the committed tree. Never
+   hand-edit a fixture: the committed tree must stay byte-identical to
+   generator output.
+3. Verify: `go test ./tests/fixtures/migration/ -short` (the generator gates,
+   including `TestCommittedRegenerationSetMatchesGenerator`, which fails on
+   drift) and `go test ./internal/server/ -run TestFormatMigration -short`
+   (the in-package consumers that read the fixture tree).
+
+### Test suites that need credentials or tools
+
+Most of the suite skips by design when credentials or external binaries are
+absent — `go test ./... -short` and the definition of done stay green without
+any of these set. The gates:
+
+| Variable(s) | What they unlock |
+|---|---|
+| `ARMOR_INTEGRATION_TEST=1` plus `ARMOR_B2_ACCESS_KEY_ID`, `ARMOR_B2_SECRET_ACCESS_KEY`, `ARMOR_B2_REGION`, `ARMOR_BUCKET`, `ARMOR_CF_DOMAIN`, `ARMOR_MEK`, `ARMOR_AUTH_ACCESS_KEY`, `ARMOR_AUTH_SECRET_KEY`, `ARMOR_ADMIN_TOKEN` | `tests/integration` — the real-B2 suite. Runs via the `armor-integration` WorkflowTemplate (nightly, per release), never in `armor-build` |
+| `ARMOR_ENDPOINT` (with `ARMOR_ADMIN_ENDPOINT`, `ARMOR_ADMIN_TOKEN` for admin legs) | Live-server integration legs (`tests/integration/awscli_test.go`, admin key management) that skip when the endpoint is unset |
+| `ARMOR_TEST_ACCESS_KEY`, `ARMOR_TEST_SECRET_KEY` | `tests/rbac` against the live armor-test instance (values from OpenBao `secret/rs-manager/iad-ci/armor-test`) |
+| `ARMOR_TEST_MEK` | Large-object format-migration integration leg (`tests/integration`) |
+| `ARMOR_TEST_ROTATION=1` | Expensive key-rotation integration tests |
+| `ARMOR_KEY_ROUTES` | Key-routing integration test |
+| `ARMOR_COMPAT_ENDPOINT` | `tests/aws-cli-compatibility` endpoint mode against a running server — what the armor-build image gate uses; in that mode a missing client is fatal, not a skip |
+| `ARMOR_PERF_RUN=1` (with `ARMOR_PERF_OUT`, `ARMOR_PERF_SIZES`, `ARMOR_PERF_WRITE_VERSION`) | `tests/performance` measurement matrix |
+| `ARMOR_SMALL_OBJECT_BENCH=1` | Latency-injected small-object GET benchmark (`internal/server/handlers`) |
+| `ARMOR_B2_TEST_ENDPOINT`, `ARMOR_B2_TEST_REGION`, `ARMOR_B2_TEST_KEY_ID`, `ARMOR_B2_TEST_SECRET`, `ARMOR_B2_TEST_BUCKET` | Live secondary-backend B2 test (`internal/backend`) |
+| `ARMOR_SMOKE_IMAGE`, `ARMOR_SMOKE_PULL`, `ARMOR_SMOKE_VERSION` | Demo-smoke image selection (`tests/docker-demo-smoke`); defaults to the repo `VERSION` pin |
+
 ## Build, test, and the gates
 
 ```bash
