@@ -10,16 +10,22 @@ even when a narrower behavior has passed. The compatibility and DR pages link
 here so their examples do not silently become release claims.
 
 Release metadata was backfilled through **`v0.1.1988`** under
-`armor-5f0b4d23`, then repaired for image-backed **`v0.1.1993`**. Authenticated
+`armor-5f0b4d23`, then repaired for image-backed **`v0.1.1993`** and
+**`v0.1.1994`**. Authenticated
 Docker Hub server and companion images exist for 0.1.1983, 0.1.1984,
-0.1.1986–0.1.1988, and 0.1.1993; 0.1.1989–0.1.1992 have no server image and
+0.1.1986–0.1.1988, 0.1.1993, and 0.1.1994; 0.1.1989–0.1.1992 have no server image and
 are marked unpublished in the changelog. The public GHCR server mirror is
 missing for 0.1.1984. The 0.1.1993 CI run failed while installing the Barman
 client before publication; its tag and both releases were created by the
-idempotent publisher after the image appeared. GitOps commit `810b34733`
-installed the missing Python headers for the next run. These artifact checks
-do not prove a green end-to-end client gate or fleet rollout. The table
-identifies the last specific image proof where one is recorded.
+idempotent publisher after the image appeared. The 0.1.1994 workflow passed
+lint, the release gate, image builds, and registry checks, then failed in the
+real-client compatibility leg; its on-exit path delivered the operator alert,
+and the idempotent publisher created the original-commit tag and both
+non-draft releases after the image appeared. GitOps commits `810b34733` and
+`b24dab46c` carry the Python-header and conservative-sensor fixes. These
+artifact checks do not prove a green end-to-end client gate or a fleet
+rollout. The table identifies the last specific image proof where one is
+recorded.
 
 ## Current release posture
 
