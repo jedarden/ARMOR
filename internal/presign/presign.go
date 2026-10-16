@@ -14,6 +14,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/jedarden/armor/internal/securecmp"
 )
 
 var (
@@ -133,7 +135,7 @@ func (s *Signer) VerifyToken(tokenString string) (*Token, error) {
 
 	// Verify signature
 	expectedSig := s.sign(tokenJSON)
-	if !hmac.Equal([]byte(signature), []byte(expectedSig)) {
+	if !securecmp.Equal(signature, expectedSig) {
 		return nil, ErrInvalidSignature
 	}
 

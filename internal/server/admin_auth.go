@@ -2,9 +2,10 @@
 package server
 
 import (
-	"crypto/subtle"
 	"net/http"
 	"strings"
+
+	"github.com/jedarden/armor/internal/securecmp"
 )
 
 // adminPublicExact is the set of admin-mux paths that stay token-free because
@@ -88,7 +89,7 @@ func adminTokenValid(r *http.Request, expected string) bool {
 	if provided == "" {
 		return false
 	}
-	return subtle.ConstantTimeCompare([]byte(provided), []byte(expected)) == 1
+	return securecmp.Equal(provided, expected)
 }
 
 // adminAuthMiddleware gates the admin mux. All non-public routes require a

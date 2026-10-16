@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"net/url"
+	"strings"
 	"testing"
 	"time"
 )
@@ -146,6 +147,35 @@ func TestSigner_VerifyToken_InvalidSignature(t *testing.T) {
 	}
 }
 
+func TestSigner_VerifyToken_OneByteSignatureDifference(t *testing.T) {
+	signer := NewSigner([]byte("test-secret-key-32-bytes-long-123456"), "https://armor.example.com/share")
+	token, err := signer.GenerateToken("test-bucket", "path/to/file.txt", time.Hour)
+	if err != nil {
+		t.Fatalf("GenerateToken() error = %v", err)
+	}
+	if _, err := signer.VerifyToken(token); err != nil {
+		t.Fatalf("VerifyToken() rejected matching signature: %v", err)
+	}
+
+	dot := strings.LastIndex(token, ".")
+	if dot < 0 {
+		t.Fatal("generated token has no signature separator")
+	}
+	signature := []byte(token[dot+1:])
+	if len(signature) == 0 {
+		t.Fatal("generated token has an empty signature")
+	}
+	if signature[len(signature)-1] == 'A' {
+		signature[len(signature)-1] = 'B'
+	} else {
+		signature[len(signature)-1] = 'A'
+	}
+	modified := token[:dot+1] + string(signature)
+	if _, err := signer.VerifyToken(modified); err != ErrInvalidSignature {
+		t.Fatalf("VerifyToken() error = %v, want %v", err, ErrInvalidSignature)
+	}
+}
+
 func TestSigner_VerifyToken_ExpiredToken(t *testing.T) {
 	secretKey := []byte("test-secret-key-32-bytes-long-123456")
 	baseURL := "https://armor.example.com/share"
@@ -228,7 +258,7 @@ func TestSigner_GenerateURL(t *testing.T) {
 
 	// Extract token from URL
 	token := shareURL[len(baseURL)+1:] // +1 for the /
-	if token == "" {
+	if len(token) == 0 {
 		t.Error("Token is empty")
 	}
 

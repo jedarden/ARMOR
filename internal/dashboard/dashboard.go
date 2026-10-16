@@ -19,6 +19,7 @@ import (
 	"github.com/jedarden/armor/internal/agentation"
 	"github.com/jedarden/armor/internal/backend"
 	"github.com/jedarden/armor/internal/metrics"
+	"github.com/jedarden/armor/internal/securecmp"
 )
 
 // AuthMiddleware handles authentication for dashboard routes.
@@ -43,31 +44,35 @@ func NewAuthMiddleware(user, pass, token string) *AuthMiddleware {
 // When returning false, it also sets the WWW-Authenticate header.
 func (a *AuthMiddleware) Authenticate(w http.ResponseWriter, r *http.Request) bool {
 	// No auth configured - allow all
-	if a.user == "" && a.token == "" {
+	if len(a.user) == 0 && len(a.token) == 0 {
 		return true
 	}
 
 	// Check Bearer token first
-	if a.token != "" {
+	if len(a.token) > 0 {
 		authHeader := r.Header.Get("Authorization")
 		if strings.HasPrefix(authHeader, "Bearer ") {
 			token := strings.TrimPrefix(authHeader, "Bearer ")
-			if token == a.token {
+			if securecmp.Equal(token, a.token) {
 				return true
 			}
 		}
 	}
 
 	// Check HTTP Basic Auth
-	if a.user != "" && a.pass != "" {
+	if len(a.user) > 0 && len(a.pass) > 0 {
 		authHeader := r.Header.Get("Authorization")
 		if strings.HasPrefix(authHeader, "Basic ") {
 			encodedCreds := strings.TrimPrefix(authHeader, "Basic ")
 			decodedCreds, err := base64.StdEncoding.DecodeString(encodedCreds)
 			if err == nil {
 				creds := strings.SplitN(string(decodedCreds), ":", 2)
-				if len(creds) == 2 && creds[0] == a.user && creds[1] == a.pass {
-					return true
+				if len(creds) == 2 {
+					userMatches := securecmp.Equal(creds[0], a.user)
+					passMatches := securecmp.Equal(creds[1], a.pass)
+					if userMatches && passMatches {
+						return true
+					}
 				}
 			}
 		}
@@ -1198,12 +1203,12 @@ func (d *Dashboard) presignHandlerImpl(adminClient *http.Client, adminURL string
 		httpReq.Header.Set("Content-Type", "application/json")
 
 		// Forward dashboard authentication
-		if d.auth.user != "" && d.auth.pass != "" {
+		if len(d.auth.user) > 0 && len(d.auth.pass) > 0 {
 			// Use HTTP Basic Auth
 			auth := d.auth.user + ":" + d.auth.pass
 			basicAuth := base64.StdEncoding.EncodeToString([]byte(auth))
 			httpReq.Header.Set("Authorization", "Basic "+basicAuth)
-		} else if d.auth.token != "" {
+		} else if len(d.auth.token) > 0 {
 			// Use Bearer token
 			httpReq.Header.Set("Authorization", "Bearer "+d.auth.token)
 		}

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/jedarden/armor/internal/config"
+	"github.com/jedarden/armor/internal/securecmp"
 )
 
 // SigV4Auth handles AWS Signature Version 4 authentication.
@@ -104,7 +105,7 @@ func ParseAuthHeader(auth string) (*AuthHeader, error) {
 		}
 	}
 
-	if result.AccessKey == "" || len(result.SignedHeaders) == 0 || result.Signature == "" {
+	if result.AccessKey == "" || len(result.SignedHeaders) == 0 || len(result.Signature) == 0 {
 		return nil, ErrMissingFields
 	}
 
@@ -156,8 +157,7 @@ func (a *SigV4Auth) VerifyRequest(r *http.Request, body []byte) (*config.Credent
 	signingKey := a.getSigningKeyForCredential(cred, parsed.CredentialDate, parsed.Region)
 	calculatedSig := hex.EncodeToString(a.hmacSHA256(signingKey, stringToSign))
 
-	// Compare signatures (constant-time comparison would be better but hex strings are not sensitive)
-	if calculatedSig != parsed.Signature {
+	if !securecmp.Equal(calculatedSig, parsed.Signature) {
 		return nil, ErrSignatureMismatch
 	}
 
@@ -356,7 +356,7 @@ func (a *SigV4Auth) VerifyQueryAuth(r *http.Request) (*config.Credential, error)
 
 	// Get signature from query
 	signature := query.Get("X-Amz-Signature")
-	if signature == "" {
+	if len(signature) == 0 {
 		return nil, ErrMissingFields
 	}
 
@@ -406,7 +406,7 @@ func (a *SigV4Auth) VerifyQueryAuth(r *http.Request) (*config.Credential, error)
 	signingKey := a.getSigningKeyForCredential(cred, credentialDate, clientRegion)
 	calculatedSig := hex.EncodeToString(a.hmacSHA256(signingKey, stringToSign))
 
-	if calculatedSig != signature {
+	if !securecmp.Equal(calculatedSig, signature) {
 		return nil, ErrSignatureMismatch
 	}
 

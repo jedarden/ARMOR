@@ -879,6 +879,53 @@ func TestAuthMiddlewareBearerToken(t *testing.T) {
 	}
 }
 
+func TestAuthMiddlewareBearerTokenOneByteDifference(t *testing.T) {
+	const token = "my-secret-token"
+	auth := NewAuthMiddleware("", "", token)
+
+	for _, tt := range []struct {
+		name      string
+		provided  string
+		wantValid bool
+	}{
+		{name: "matching token", provided: token, wantValid: true},
+		{name: "one-byte difference", provided: "my-secret-tokeu", wantValid: false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/dashboard", nil)
+			req.Header.Set("Authorization", "Bearer "+tt.provided)
+			rec := httptest.NewRecorder()
+			if got := auth.Authenticate(rec, req); got != tt.wantValid {
+				t.Fatalf("Authenticate() = %v, want %v", got, tt.wantValid)
+			}
+		})
+	}
+}
+
+func TestAuthMiddlewareBasicPasswordOneByteDifference(t *testing.T) {
+	const username = "admin"
+	const password = "secret123"
+	auth := NewAuthMiddleware(username, password, "")
+
+	for _, tt := range []struct {
+		name      string
+		provided  string
+		wantValid bool
+	}{
+		{name: "matching password", provided: username + ":" + password, wantValid: true},
+		{name: "one-byte password difference", provided: username + ":secret124", wantValid: false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/dashboard", nil)
+			req.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte(tt.provided)))
+			rec := httptest.NewRecorder()
+			if got := auth.Authenticate(rec, req); got != tt.wantValid {
+				t.Fatalf("Authenticate() = %v, want %v", got, tt.wantValid)
+			}
+		})
+	}
+}
+
 // Test authentication middleware with no auth configured
 func TestAuthMiddlewareNoAuth(t *testing.T) {
 	auth := NewAuthMiddleware("", "", "")
