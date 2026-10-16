@@ -1564,11 +1564,13 @@ func (s *Server) wrapHandler(h http.HandlerFunc) http.HandlerFunc {
 			cred, err := s.verifyAuthAndGetCredential(r)
 			if err != nil {
 				authzResult = "deny-auth"
-				s.metrics.IncRequestsTotal("auth", 403)
 				s.metrics.IncRequestsByCredential("unknown", verb, "deny-auth")
 				if authErr, ok := err.(*AuthError); ok {
-					s.writeError(w, r, authErr.Code, authErr.Message, 403)
+					status := authErr.HTTPStatus()
+					s.metrics.IncRequestsTotal("auth", status)
+					s.writeError(w, r, authErr.Code, authErr.Message, status)
 				} else {
+					s.metrics.IncRequestsTotal("auth", http.StatusForbidden)
 					s.writeError(w, r, "AccessDenied", "Invalid credentials", 403)
 				}
 				// Log denied request with identity (ADR-012)
@@ -1940,7 +1942,7 @@ func (s *Server) handlePresign(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		// Return specific authentication error code and message
 		if authErr, ok := err.(*AuthError); ok {
-			s.writeError(w, r, authErr.Code, authErr.Message, 403)
+			s.writeError(w, r, authErr.Code, authErr.Message, authErr.HTTPStatus())
 		} else {
 			s.writeError(w, r, "AccessDenied", "Invalid credentials", 403)
 		}

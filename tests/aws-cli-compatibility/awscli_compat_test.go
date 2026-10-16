@@ -233,3 +233,42 @@ func TestShareGET_BasicRoundTrip(t *testing.T) {
 
 	t.Logf("Share GET round-trip OK: %d bytes retrieved via presigned token", len(parsed.Body))
 }
+
+// TestS3PresignedGET_BasicRoundTrip covers SigV4 query authentication on the
+// S3 object route, which is distinct from ARMOR's /share/ tokens.
+func TestS3PresignedGET_BasicRoundTrip(t *testing.T) {
+	endpoint := startArmorServer(t)
+	client := newSDKClient(t, endpoint)
+	ctx := context.Background()
+	bucket := compatBucket(t)
+	key := "presigned/s3-get.txt"
+	payload := []byte("S3 presigned GET round-trip data")
+	if _, err := client.PutObject(ctx, &s3.PutObjectInput{
+		Bucket: &bucket,
+		Key:    &key,
+		Body:   bytes.NewReader(payload),
+	}); err != nil {
+		t.Fatalf("PutObject: %v", err)
+	}
+
+	request, err := s3.NewPresignClient(client).PresignGetObject(ctx, &s3.GetObjectInput{
+		Bucket: &bucket,
+		Key:    &key,
+	}, func(options *s3.PresignOptions) {
+		options.Expires = time.Hour
+	})
+	if err != nil {
+		t.Fatalf("PresignGetObject: %v", err)
+	}
+	if !strings.Contains(request.URL, "X-Amz-Expires=3600") {
+		t.Fatal("presigned URL lacks one-hour expiry")
+	}
+	response, err := http.Get(request.URL)
+	if err != nil {
+		t.Fatalf("GET presigned URL: %v", err)
+	}
+	parsed := assertGETSuccess(t, response)
+	if !bytes.Equal(parsed.Body, payload) {
+		t.Fatalf("presigned GET payload = %q, want %q", parsed.Body, payload)
+	}
+}

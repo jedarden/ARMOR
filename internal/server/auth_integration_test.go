@@ -516,7 +516,7 @@ func hmacSHA256ForTest(key []byte, data string) []byte {
 func calculateQuerySignature(t *testing.T, auth *SigV4Auth, secretKey, amzDate, region string, req *http.Request, signedHeaders []string) string {
 	t.Helper()
 
-	canonicalRequest := auth.buildCanonicalQueryRequest(req, signedHeaders, []byte{}, req.URL.Query())
+	canonicalRequest := auth.buildCanonicalQueryRequest(req, signedHeaders, req.URL.Query())
 	stringToSign := auth.buildStringToSign(amzDate, amzDate[:8], region, canonicalRequest)
 
 	signingKey := deriveSigningKey(secretKey, amzDate[:8], region)

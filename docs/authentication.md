@@ -114,3 +114,14 @@ File credentials are merged with environment credentials; environment wins on
 an access-key collision (logged at WARN); duplicate access keys within the file
 are skipped (first wins); the file is watched and reloaded without a restart;
 validation errors name the entry index and field, never the values.
+
+## S3 presigned URL authentication
+
+SigV4 query-authenticated S3 requests must include `X-Amz-Expires` as an
+integer from 1 through 604800 seconds (seven days). ARMOR rejects a missing,
+empty, malformed, zero, negative, or larger value with HTTP 400 and the S3
+error code `AuthorizationQueryParametersError`. A valid signature is still
+required, and a URL past its signed expiry returns `RequestExpired`.
+
+These S3 presigned URLs are separate from the `/admin/presign` and `/share/`
+token flow, which uses its own `expires_in` duration.

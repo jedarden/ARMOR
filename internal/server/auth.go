@@ -310,25 +310,34 @@ func sha256Hex(data []byte) string {
 
 // Authentication errors
 var (
-	ErrMissingAuthHeader = &AuthError{Code: "MissingAuthenticationToken", Message: "Missing Authentication Token"}
-	ErrInvalidAlgorithm  = &AuthError{Code: "InvalidAlgorithm", Message: "Only AWS4-HMAC-SHA256 is supported"}
-	ErrInvalidCredential = &AuthError{Code: "InvalidCredential", Message: "Invalid credential format"}
-	ErrMissingFields     = &AuthError{Code: "IncompleteSignature", Message: "Authorization header is missing required fields"}
-	ErrInvalidAccessKey  = &AuthError{Code: "InvalidAccessKeyId", Message: "The AWS Access Key Id you provided does not exist"}
-	ErrMissingDateHeader = &AuthError{Code: "MissingDateHeader", Message: "Missing X-Amz-Date header"}
-	ErrInvalidDateFormat = &AuthError{Code: "InvalidDateFormat", Message: "Invalid date format in X-Amz-Date header"}
-	ErrRequestExpired    = &AuthError{Code: "RequestExpired", Message: "Request has expired"}
-	ErrSignatureMismatch = &AuthError{Code: "SignatureDoesNotMatch", Message: "The request signature we calculated does not match the signature you provided"}
+	ErrMissingAuthHeader   = &AuthError{Code: "MissingAuthenticationToken", Message: "Missing Authentication Token"}
+	ErrInvalidAlgorithm    = &AuthError{Code: "InvalidAlgorithm", Message: "Only AWS4-HMAC-SHA256 is supported"}
+	ErrInvalidCredential   = &AuthError{Code: "InvalidCredential", Message: "Invalid credential format"}
+	ErrMissingFields       = &AuthError{Code: "IncompleteSignature", Message: "Authorization header is missing required fields"}
+	ErrInvalidAccessKey    = &AuthError{Code: "InvalidAccessKeyId", Message: "The AWS Access Key Id you provided does not exist"}
+	ErrMissingDateHeader   = &AuthError{Code: "MissingDateHeader", Message: "Missing X-Amz-Date header"}
+	ErrInvalidDateFormat   = &AuthError{Code: "InvalidDateFormat", Message: "Invalid date format in X-Amz-Date header"}
+	ErrRequestExpired      = &AuthError{Code: "RequestExpired", Message: "Request has expired"}
+	ErrInvalidQueryExpires = &AuthError{Code: "AuthorizationQueryParametersError", Message: "X-Amz-Expires must be an integer between 1 and 604800 seconds", StatusCode: http.StatusBadRequest}
+	ErrSignatureMismatch   = &AuthError{Code: "SignatureDoesNotMatch", Message: "The request signature we calculated does not match the signature you provided"}
 )
 
 // AuthError represents an authentication error.
 type AuthError struct {
-	Code    string
-	Message string
+	Code       string
+	Message    string
+	StatusCode int // Zero uses the default forbidden response.
 }
 
 func (e *AuthError) Error() string {
 	return e.Message
+}
+
+func (e *AuthError) HTTPStatus() int {
+	if e.StatusCode != 0 {
+		return e.StatusCode
+	}
+	return http.StatusForbidden
 }
 
 // VerifyQueryAuth verifies SigV4 authentication via query parameters (presigned URLs).
@@ -374,28 +383,22 @@ func (a *SigV4Auth) VerifyQueryAuth(r *http.Request) (*config.Credential, error)
 	signedHeaders := strings.Split(signedHeadersStr, ";")
 
 	// Get expires and verify
-	expires := query.Get("X-Amz-Expires")
-	if expires != "" {
-		expiresSec, err := strconv.Atoi(expires)
-		if err != nil {
-			return nil, ErrRequestExpired
-		}
-
-		requestTime, err := time.Parse("20060102T150405Z", amzDate)
-		if err != nil {
-			return nil, ErrInvalidDateFormat
-		}
-
-		if time.Since(requestTime) > time.Duration(expiresSec)*time.Second {
-			return nil, ErrRequestExpired
-		}
+	expiresSec, err := strconv.Atoi(query.Get("X-Amz-Expires"))
+	if err != nil || expiresSec < 1 || expiresSec > 604800 {
+		return nil, ErrInvalidQueryExpires
 	}
 
-	// For query auth, the body is typically empty for GET requests
-	body := []byte{}
+	requestTime, err := time.Parse("20060102T150405Z", amzDate)
+	if err != nil {
+		return nil, ErrInvalidDateFormat
+	}
+
+	if time.Since(requestTime) > time.Duration(expiresSec)*time.Second {
+		return nil, ErrRequestExpired
+	}
 
 	// Build canonical request (excluding signature from query)
-	canonicalRequest := a.buildCanonicalQueryRequest(r, signedHeaders, body, query)
+	canonicalRequest := a.buildCanonicalQueryRequest(r, signedHeaders, query)
 
 	// Build string to sign using the region the client claimed
 	credentialDate := credParts[1]
@@ -414,7 +417,7 @@ func (a *SigV4Auth) VerifyQueryAuth(r *http.Request) (*config.Credential, error)
 }
 
 // buildCanonicalQueryRequest builds canonical request for query-based auth.
-func (a *SigV4Auth) buildCanonicalQueryRequest(r *http.Request, signedHeaders []string, body []byte, query url.Values) string {
+func (a *SigV4Auth) buildCanonicalQueryRequest(r *http.Request, signedHeaders []string, query url.Values) string {
 	// Create a copy of query params without auth-related ones
 	canonicalQuery := make(url.Values)
 	for k, v := range query {
@@ -436,7 +439,9 @@ func (a *SigV4Auth) buildCanonicalQueryRequest(r *http.Request, signedHeaders []
 
 	canonicalHeaders := a.buildCanonicalHeaders(r, signedHeaders)
 	signedHeadersStr := strings.Join(signedHeaders, ";")
-	payloadHash := sha256Sum(body)
+	// S3 presigned requests use the literal UNSIGNED-PAYLOAD in their
+	// canonical request, including GETs with no body.
+	payloadHash := "UNSIGNED-PAYLOAD"
 
 	return strings.Join([]string{
 		r.Method,

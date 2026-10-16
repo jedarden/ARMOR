@@ -223,6 +223,12 @@ configured prefix and they must not be manipulated as user objects.
 
 <!-- endpoint: /share/ -->
 
+S3 SigV4 presigned GET URLs use query authentication on the normal S3 object
+route. They require `X-Amz-Expires` from 1 through 604800 seconds (seven
+days). Missing or invalid values return HTTP 400 with
+`AuthorizationQueryParametersError`; an expired valid URL returns
+`RequestExpired`. This is separate from the share-token routes below.
+
 ### `POST /admin/presign`
 
 The request body is JSON:
