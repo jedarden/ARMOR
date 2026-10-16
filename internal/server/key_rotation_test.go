@@ -696,6 +696,50 @@ func TestKeyRotation(t *testing.T) {
 	}
 }
 
+func TestKeyRotationSpecialKeys(t *testing.T) {
+	oldMEK := rotationTestMEK(0x31)
+	newMEK := rotationTestMEK(0x72)
+	const bucket = "test-bucket"
+	keys := []string{"data/file with space.txt", "data/file+with+plus.txt"}
+	store := newMockRotationBackend()
+	ctx := context.Background()
+
+	for _, key := range keys {
+		payload := []byte("encrypted contents for " + key)
+		meta, err := createTestARMORObject(oldMEK, bucket, key, payload)
+		if err != nil {
+			t.Fatalf("create %q: %v", key, err)
+		}
+		if err := store.Put(ctx, bucket, key, bytes.NewReader(payload), int64(len(payload)), meta); err != nil {
+			t.Fatalf("put %q: %v", key, err)
+		}
+	}
+
+	result, err := NewKeyRotator(store, bucket, oldMEK, newMEK, nil).Rotate(ctx)
+	if err != nil {
+		t.Fatalf("Rotate: %v", err)
+	}
+	if result.Status != "completed" || result.ProcessedObjects != len(keys) {
+		t.Fatalf("rotation status = %q, processed = %d; want completed, %d", result.Status, result.ProcessedObjects, len(keys))
+	}
+	for _, key := range keys {
+		info, err := store.Head(ctx, bucket, key)
+		if err != nil {
+			t.Fatalf("head %q: %v", key, err)
+		}
+		armorMeta, ok := backend.ParseARMORMetadata(info.Metadata)
+		if !ok {
+			t.Fatalf("%q lost ARMOR metadata", key)
+		}
+		if _, err := crypto.UnwrapDEK(newMEK, armorMeta.WrappedDEK); err != nil {
+			t.Errorf("%q: new MEK cannot unwrap DEK: %v", key, err)
+		}
+		if _, err := crypto.UnwrapDEK(oldMEK, armorMeta.WrappedDEK); err == nil {
+			t.Errorf("%q: old MEK still unwraps DEK", key)
+		}
+	}
+}
+
 // TestKeyRotationResumption tests that rotation state is tracked.
 func TestKeyRotationResumption(t *testing.T) {
 	// Generate old and new MEKs

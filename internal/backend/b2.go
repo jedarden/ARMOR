@@ -859,7 +859,7 @@ func (b *B2Backend) List(ctx context.Context, bucket, prefix, delimiter, continu
 func (b *B2Backend) Copy(ctx context.Context, srcBucket, srcKey, dstBucket, dstKey string, meta map[string]string, replaceMetadata bool) error {
 	input := &s3.CopyObjectInput{
 		Bucket:     aws.String(dstBucket),
-		CopySource: aws.String(srcBucket + "/" + srcKey),
+		CopySource: aws.String(copySource(srcBucket, srcKey)),
 		Key:        aws.String(dstKey),
 	}
 
@@ -873,6 +873,17 @@ func (b *B2Backend) Copy(ctx context.Context, srcBucket, srcKey, dstBucket, dstK
 		return fmt.Errorf("CopyObject failed: %w", err)
 	}
 	return nil
+}
+
+// copySource encodes each path segment for the x-amz-copy-source header while
+// preserving key separators. PathEscape leaves '+' unchanged, but S3 expects
+// it encoded so it cannot be interpreted as a space when the header is parsed.
+func copySource(bucket, key string) string {
+	segments := strings.Split(key, "/")
+	for i, segment := range segments {
+		segments[i] = strings.ReplaceAll(url.PathEscape(segment), "+", "%2B")
+	}
+	return url.PathEscape(bucket) + "/" + strings.Join(segments, "/")
 }
 
 // GetDirect retrieves an object directly from B2 (not via Cloudflare).

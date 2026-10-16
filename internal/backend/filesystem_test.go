@@ -378,6 +378,39 @@ func TestFSBackend_Copy(t *testing.T) {
 	}
 }
 
+func TestFSBackend_CopySpecialKeys(t *testing.T) {
+	fs, err := NewFSBackend(FSConfig{BasePath: t.TempDir()})
+	if err != nil {
+		t.Fatalf("NewFSBackend: %v", err)
+	}
+	ctx := context.Background()
+	const srcKey = "folder/source space+hash#percent%question?.txt"
+	const dstKey = "copies/destination space+hash#percent%question?.txt"
+	const payload = "copy special key contents"
+	meta := map[string]string{"Content-Type": "text/plain"}
+	if err := fs.Put(ctx, "source-bucket", srcKey, strings.NewReader(payload), int64(len(payload)), meta); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	if err := fs.Copy(ctx, "source-bucket", srcKey, "target-bucket", dstKey, nil, false); err != nil {
+		t.Fatalf("Copy: %v", err)
+	}
+	reader, info, err := fs.Get(ctx, "target-bucket", dstKey)
+	if err != nil {
+		t.Fatalf("Get copied object: %v", err)
+	}
+	defer reader.Close()
+	got, err := io.ReadAll(reader)
+	if err != nil {
+		t.Fatalf("Read copied object: %v", err)
+	}
+	if string(got) != payload {
+		t.Errorf("copied data = %q, want %q", got, payload)
+	}
+	if info.ContentType != meta["Content-Type"] {
+		t.Errorf("copied content type = %q, want %q", info.ContentType, meta["Content-Type"])
+	}
+}
+
 // TestFSBackend_BucketOperations tests bucket management operations.
 func TestFSBackend_BucketOperations(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "armor-fs-test-*")

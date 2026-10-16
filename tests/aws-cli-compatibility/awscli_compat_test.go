@@ -168,7 +168,9 @@ func TestAWSCLI_CopyObject(t *testing.T) {
 	work := t.TempDir()
 
 	want := writeFile(t, work, "src.txt", randomData(32*1024))
-	srcKey, dstKey := "copy/src.txt", "copy/dst.txt"
+	// Exercise URL encoding in the CLI's CopySource header as well as the
+	// server-side copy path. The source key must survive both layers intact.
+	srcKey, dstKey := "copy/source space+plus.txt", "copy/destination space+plus.txt"
 	mustRun(t, "aws", env, append([]string{"s3", "cp", want, s3URL(srcKey)}, endpointFlag(endpoint)...)...)
 
 	// Server-side copy.
