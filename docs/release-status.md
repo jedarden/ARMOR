@@ -10,22 +10,16 @@ even when a narrower behavior has passed. The compatibility and DR pages link
 here so their examples do not silently become release claims.
 
 Release metadata was backfilled through **`v0.1.1988`** under
-`armor-5f0b4d23`, then repaired for image-backed **`v0.1.1993`** and
-**`v0.1.1994`**. Authenticated
+`armor-5f0b4d23`, then repaired for image-backed **`v0.1.1993`**. Authenticated
 Docker Hub server and companion images exist for 0.1.1983, 0.1.1984,
-0.1.1986–0.1.1988, 0.1.1993, and 0.1.1994; 0.1.1989–0.1.1992 have no server image and
+0.1.1986–0.1.1988, and 0.1.1993; 0.1.1989–0.1.1992 have no server image and
 are marked unpublished in the changelog. The public GHCR server mirror is
 missing for 0.1.1984. The 0.1.1993 CI run failed while installing the Barman
 client before publication; its tag and both releases were created by the
-idempotent publisher after the image appeared. The 0.1.1994 workflow passed
-lint, the release gate, image builds, and registry checks, then failed in the
-real-client compatibility leg; its on-exit path delivered the operator alert,
-and the idempotent publisher created the original-commit tag and both
-non-draft releases after the image appeared. GitOps commits `810b34733` and
-`b24dab46c` carry the Python-header and conservative-sensor fixes. These
-artifact checks do not prove a green end-to-end client gate or a fleet
-rollout. The table identifies the last specific image proof where one is
-recorded.
+idempotent publisher after the image appeared. GitOps commit `810b34733`
+installed the missing Python headers for the next run. These artifact checks
+do not prove a green end-to-end client gate or fleet rollout. The table
+identifies the last specific image proof where one is recorded.
 
 ## Current release posture
 
@@ -82,13 +76,30 @@ recorded.
   and tailnet verification surfaces for all five verifier scopes. The live
   smoke test passes on `iad-ci` and `rs-manager` (14/14 checks each). The
   `iad-kalshi` and `ord-devimprint` endpoints were unreachable during the
-  2026-09-29 check, and `ardenone-cluster`'s Prometheus rejected the
-  restore-verifier scrape because its deployed `0.1.1975` image still emits a
-  quoted legacy gauge. Treat restore failures as paged only on the two
-  smoke-verified clusters until the remaining endpoint/image checks pass; a
-  running verifier without a passing scrape and delivery path is not an
-  alerting guarantee. See the [restore-verifier alerting runbook](runbooks/restore-verifier-alerting.md)
+  2026-09-29 check. Every verifier scope now runs the `0.1.1993` image, which
+  carries the numeric Prometheus exposition fix (`armor-c866e4ca`), so the
+  former `ardenone-cluster` rejection cause — its deployed `0.1.1975` image
+  emitting a quoted legacy gauge — is gone at the image level; the
+  `ardenone-cluster` Prometheus endpoint itself sits behind a VPN route that
+  is unreachable from `tag:codinghome`, so the accepted-scrape check there is
+  still owed a run from an allowed origin. Treat restore failures as paged
+  only on the two smoke-verified clusters until the remaining endpoint checks
+  pass; a running verifier without a passing scrape and delivery path is not
+  an alerting guarantee. See the [restore-verifier alerting runbook](runbooks/restore-verifier-alerting.md)
   for the exact commands and current boundary.
+- **Fleet rollout evidence (2026-10-16, `armor-769e3d53`).** All 15 ARMOR and
+  restore-verifier Deployments across `iad-ci`, `iad-kalshi`,
+  `ord-devimprint`, `rs-manager`, `apexalgo-iad`, and `ardenone-cluster` were
+  bumped from `0.1.1970`/`0.1.1971`/`0.1.1975` to digest-pinned `0.1.1993`
+  (`armor` `sha256:1845b2b4…`, `armor-restore-verifier` `sha256:581d25d4…`)
+  via declarative-config commits `d8faa9f10`–`5807786f3`; `armor-test` gained
+  the digest pin it lacked. Verifier Deployments on RWO PVCs
+  (`iad-ci`, `iad-kalshi`, `ord-devimprint`, `rs-manager`) now set
+  `strategy: Recreate` — the default RollingUpdate deadlocks on their surge
+  pod's volume attach. Per-cluster pod verification ran between steps; the
+  drift check reports zero drift at `0.1.1993`. This rollout changes image
+  pins only; it is not a client-matrix or DR-drill proof (see the
+  capability table above).
 
 ## How to promote a capability
 
