@@ -125,3 +125,35 @@ required, and a URL past its signed expiry returns `RequestExpired`.
 
 These S3 presigned URLs are separate from the `/admin/presign` and `/share/`
 token flow, which uses its own `expires_in` duration.
+
+## Payload integrity (`x-amz-content-sha256`)
+
+`x-amz-content-sha256` is part of the signed SigV4 canonical request, so it is
+also the client's statement about which body the signature covers. ARMOR
+accepts exactly three values for it:
+
+- **A hex-encoded SHA-256 digest** of the request body — the body is hashed as
+  the handler reads it, and the request fails with HTTP 400 and the S3 error
+  code `XAmzContentSHA256Mismatch` if the digest disagrees. The failure
+  happens during the body read, before the object is finalised: a mismatched
+  upload never becomes visible, never overwrites an existing object, and
+  never occupies a multipart part.
+- **`UNSIGNED-PAYLOAD`** — the body is not bound to the signature. This is the
+  common shape for TLS-terminated endpoints and is accepted unchanged. An
+  absent `x-amz-content-sha256` header behaves the same way.
+- **`STREAMING-AWS4-HMAC-SHA256-PAYLOAD`** — the aws-chunked framing used by
+  litestream, barman-cloud, and the AWS SDKs for streamed uploads is stripped
+  before the handler sees the body. The seed signature in the Authorization
+  header authenticates the request; per-chunk signatures are not re-verified.
+
+Any other value — for example `STREAMING-UNSIGNED-PAYLOAD-TRAILER`, which some
+AWS SDKs send for checksum-trailer uploads — is rejected with HTTP 400 and
+`InvalidArgument` before the handler runs; the message names the three
+supported modes. Such a request was never readable by ARMOR before (its
+framing would have been stored as object data), so the rejection turns a
+silent-corruption case into a loud one.
+
+The mismatch check applies to every request whose header is a hex digest,
+including multipart part uploads and XML-body operations such as
+DeleteObjects. Clients inside the ±15-minute signature skew window therefore
+cannot replay a captured PUT with different bytes.

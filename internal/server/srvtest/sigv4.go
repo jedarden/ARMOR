@@ -28,9 +28,17 @@ const (
 // from x-amz-content-sha256), so requests signed here verify against the
 // server's auth middleware.
 func SignS3Request(req *http.Request, body []byte, accessKey, secretKey, region string) {
+	SignS3RequestWithPayloadHash(req, sha256Hex(body), accessKey, secretKey, region)
+}
+
+// SignS3RequestWithPayloadHash signs a request whose x-amz-content-sha256 is
+// an explicit value rather than the digest of the body about to be sent. The
+// payload-hash gate tests need this to replay a captured signed request whose
+// body no longer matches the digest the signature covers — the same thing a
+// real replayed request looks like to the server.
+func SignS3RequestWithPayloadHash(req *http.Request, payloadHash, accessKey, secretKey, region string) {
 	amzDate := time.Now().UTC().Format("20060102T150405Z")
 	dateShort := amzDate[:8]
-	payloadHash := sha256Hex(body)
 
 	req.Header.Set("X-Amz-Date", amzDate)
 	req.Header.Set("X-Amz-Content-Sha256", payloadHash)

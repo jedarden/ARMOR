@@ -1639,16 +1639,31 @@ func (s *Server) wrapHandler(h http.HandlerFunc) http.HandlerFunc {
 			s.metrics.IncRequestsByCredential(accessKeyID, verb, "allow")
 		}
 
-		// Decode aws-chunked body when MinIO streaming signature is used.
-		// The seed signature in the Authorization header already authenticated the
-		// request; we only need to strip the chunk framing to recover the payload.
-		if r.Header.Get("X-Amz-Content-Sha256") == "STREAMING-AWS4-HMAC-SHA256-PAYLOAD" {
+		// Payload-hash gate (armor-328896ea): x-amz-content-sha256 is part of
+		// the signed canonical request, so honouring it means binding the body
+		// to the signature. Reject modes ARMOR cannot honour before the handler
+		// runs, and verify hex digests against the body as it is read.
+		mode, payloadErr := classifyPayloadHashMode(r.Header.Get("X-Amz-Content-Sha256"))
+		if payloadErr != nil {
+			s.metrics.IncRequestsTotal(r.Method, http.StatusBadRequest)
+			s.metrics.IncErrors("InvalidArgument", handlers.S3OperationForRequest(r))
+			s.writeError(w, r, "InvalidArgument", payloadErr.Error(), http.StatusBadRequest)
+			s.logCompletedRequest(r, start, http.StatusBadRequest, authzResult, accessKeyID, verb, objectKey, 0)
+			return
+		}
+		switch mode {
+		case payloadStreaming:
+			// Decode aws-chunked body when the streaming signature is used.
+			// The seed signature in the Authorization header already authenticated the
+			// request; we only need to strip the chunk framing to recover the payload.
 			if decoded := r.Header.Get("X-Amz-Decoded-Content-Length"); decoded != "" {
 				if n, err := strconv.ParseInt(decoded, 10, 64); err == nil {
 					r.ContentLength = n
 				}
 			}
 			r.Body = newAWSChunkedReader(r.Body)
+		case payloadDigest:
+			r.Body = newPayloadHashVerifier(r.Body, r.Header.Get("X-Amz-Content-Sha256"))
 		}
 		// Count bytes actually consumed by the S3 handler. In particular, an
 		// If-None-Match:* early rejection must leave this at zero even when the

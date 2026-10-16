@@ -5120,6 +5120,13 @@ func (h *Handlers) writeErrorCause(w http.ResponseWriter, r *http.Request, code,
 		code, statusCode = "ClientDisconnect", 499
 		*r = *r.WithContext(middleware.MarkClientDisconnect(r.Context()))
 	}
+	// A body whose digest disagrees with the signed x-amz-content-sha256 is a
+	// client error, not an internal one: fail it with 400 before the object is
+	// finalised (armor-328896ea).
+	var payloadMismatch *ContentSHA256MismatchError
+	if errors.As(cause, &payloadMismatch) {
+		code, message, statusCode = ContentSHA256MismatchCode, payloadMismatch.Error(), http.StatusBadRequest
+	}
 	*r = *r.WithContext(middleware.SetErrorCode(r.Context(), code))
 
 	// Extract request ID from middleware context
