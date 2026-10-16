@@ -100,6 +100,12 @@ status on GitHub at start and at the end, which is what the README badge shows.
 | `publish-release` | Runs `scripts/publish_release.py` (fetched from the released revision): creates the annotated tag `v<version>` at the pushed revision through the Forgejo API (an existing tag at another commit is a hard error, never moved), creates or refreshes the Forgejo release whose body carries the `CHANGELOG.md` entry for the version — fetched from the released revision through the same Forgejo raw API the step uses to fetch the publisher script — above the image digests observed in the registries, waits up to five minutes for the push mirror to carry the tag to GitHub, then creates or refreshes the GitHub release. Every action is idempotent, so a re-run of a partially published version completes it. Sibling of the step below: a release-API failure shows as a red workflow but never blocks the armor-test bump |
 | `update-declarative-config` | Bumps the **armor-test** deployment (`k8s/iad-ci/armor-test/`) to the new version. Production deployments are never touched by CI |
 
+The workflow exit handler posts the final GitHub commit status. Failed or
+errored runs also send a high-priority ntfy alert through the
+`armor-build-alerts` ExternalSecret in iad-ci. This covers failures before
+`publish-release`, including the client compatibility gate; inspect the
+workflow-controller or VictoriaLogs evidence before retrying a cut.
+
 The release body written by CI is the CHANGELOG entry for the version
 followed by the digest table. A missing `CHANGELOG.md` or a missing section
 for the version degrades to the digest table alone — logged by the publisher
