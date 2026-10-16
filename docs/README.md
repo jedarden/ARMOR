@@ -51,7 +51,7 @@ This index organizes all durable documentation by audience. Every file under `do
 | [ADR-005](adr/005-ctr-counter-stride-fix.md) | AES-CTR Counter Stride Fix (Version 2) | Accepted (V2 write mandate superseded by envelope v3) |
 | [ADR-006](adr/006-dual-backend-replication.md) | Dual-backend async replication for provider-outage resilience | Accepted |
 | [ADR-007](adr/007-zstd-compression.md) | zstd Compression for Single-PUT Objects | Accepted |
-| [ADR-008](adr/008-multipart-part-size-error-clarity.md) | Server-side observability for part-size rejections | Proposed |
+| [ADR-008](adr/008-multipart-part-size-error-clarity.md) | Server-side observability for part-size rejections | Implemented |
 | [ADR-009](adr/009-restore-verifier-armor-path-never-decrypts.md) | restore-verifier's ARMOR path never decrypts | Accepted |
 | [ADR-010](adr/010-barman-multipart-incompatibility.md) | Barman multipart incompatibility | Superseded by ADR-011 |
 | [ADR-011](adr/011-barman-stays-on-armor-non-uniform-multipart.md) | Barman stays on ARMOR; support non-uniform parts | Accepted |
@@ -70,10 +70,7 @@ This index organizes all durable documentation by audience. Every file under `do
 
 ### Error Design
 
-- **[Error Format](error-format.md)** — Standardized error response structure and severity levels
-- **[Error Responses](error-responses.md)** — Consolidated error response documentation (formerly 7 separate docs)
-- **[Error Response Inventory](error-response-inventory.md)** — Complete catalog of all ARMOR error responses
-- **[ARMOR HTTP Status Codes](armor-http-status-codes.md)** — HTTP status code usage and semantics
+- **[Error Responses](error-responses.md)** — Consolidated error response documentation: S3 XML error codes by HTTP status, admin API error formats, the restore-verification error structure, and known inconsistencies
 
 ### S3 Compliance
 

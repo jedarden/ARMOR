@@ -1,12 +1,12 @@
 # ARMOR Error Responses
 
-**Version:** 1.0  
-**Date:** 2026-08-29  
+**Version:** 2.0
+**Date:** 2026-10-15
 **Status:** Active
 
 ## Overview
 
-This document is the authoritative reference for all error responses returned by ARMOR. It consolidates and replaces the following previous documentation:
+This document is the authoritative reference for all error responses returned by ARMOR, including the verification-error structure used by the restore-verification pipeline. It consolidates and replaces the following previous documentation:
 
 - `admin-endpoint-error-headers.md`
 - `admin-endpoint-error-response-headers.md`
@@ -15,13 +15,17 @@ This document is the authoritative reference for all error responses returned by
 - `error-header-spec.md`
 - `s3-endpoint-response-headers.md`
 - `auth-rejection-headers.md`
+- `error-format.md` (verification-error JSON structure)
+- `error-response-inventory.md` (error-code-to-test-coverage catalog)
+- `armor-http-status-codes.md` (HTTP status code usage)
 
 ## Scope
 
-ARMOR has two distinct API surfaces with different error response formats:
+ARMOR has three distinct error surfaces with different formats:
 
 1. **S3-Facing Endpoints** - Public S3-compatible API returning XML errors
 2. **Admin Endpoints** - Management and monitoring API with mixed response formats
+3. **Restore Verification** - A structured Go error type (not an HTTP response) describing byte-level decompression mismatches
 
 ## Table of Contents
 
@@ -38,8 +42,10 @@ ARMOR has two distinct API surfaces with different error response formats:
   - [Pre-signed URLs](#pre-signed-urls)
   - [B2 Key Management](#b2-key-management)
   - [Status Endpoints](#status-endpoints)
+- [Verification Error Format](#verification-error-format)
 - [Inconsistencies and Remediation](#inconsistencies-and-remediation)
 - [Implementation Reference](#implementation-reference)
+- [Test Coverage](#test-coverage)
 
 ---
 
@@ -56,8 +62,13 @@ All S3 error responses follow this XML format:
 <Error>
   <Code>ErrorCode</Code>
   <Message>Error message</Message>
+  <RequestId>request-id</RequestId>
+  <Resource>/bucket/key</Resource>
 </Error>
 ```
+
+`RequestId` and `Resource` are included when a request ID is available from
+middleware context; `Resource` is always the request path.
 
 **Standard Headers:**
 
@@ -72,6 +83,33 @@ All S3 error responses follow this XML format:
 
 ### Error Codes by HTTP Status
 
+Every S3 `<Code>` value `internal/server/handlers` can write to a client, in
+one place. `internal/docsindex` checks this table against the package's
+source on every run, so an added or removed code fails CI here rather than
+going stale silently.
+
+<!-- handlers-error-codes:start -->
+| Error Code | HTTP Status |
+|------------|-------------|
+| `AccessDenied` | 403 |
+| `InternalError` | 500 |
+| `InvalidArgument` | 400 |
+| `InvalidCopySource` | 400 |
+| `InvalidPart` | 400 |
+| `InvalidPartSize` | 400 |
+| `InvalidRange` | 416 (one code path returns 400 — see [Inconsistencies](#inconsistencies-and-remediation)) |
+| `InvalidRequest` | 400 |
+| `MalformedXML` | 400 |
+| `MethodNotAllowed` | 405 |
+| `NoSuchBucket` | 404 |
+| `NoSuchKey` | 404 |
+| `NoSuchUpload` | 404 |
+| `NotImplemented` | 501 |
+| `PreconditionFailed` | 412 |
+| `RequestTimeout` | 503 |
+| `SlowDown` | 503 |
+<!-- handlers-error-codes:end -->
+
 #### HTTP 400 Bad Request
 
 | Error Code | Message | When Returned |
@@ -80,7 +118,9 @@ All S3 error responses follow this XML format:
 | `InvalidRequest` | Missing partNumber | UploadPart without partNumber query param |
 | `InvalidRequest` | Invalid partNumber | PartNumber out of range (1-10000) |
 | `InvalidRequest` | No parts specified | CompleteMultipartUpload with empty parts list |
-| `InvalidRange` | Invalid range: [details] | Malformed Range header or out of bounds |
+| `InvalidArgument` | PutObject supports only If-None-Match: * | A conditional PUT with an `If-None-Match` value other than `*` |
+| `InvalidPart` | Part retry not supported (CTR counter derivation) | UploadPart re-sends a part number already received |
+| `InvalidPartSize` | Part size %d is not a multiple of the block size | A non-final multipart part is not block-aligned (ADR-015) |
 | `MalformedXML` | Failed to parse XML: [details] | Invalid XML in request body |
 | `MalformedXML` | No objects specified for deletion | DeleteObjects with empty object list |
 | `InvalidCopySource` | Invalid copy source format | Malformed x-amz-copy-source header |
@@ -100,7 +140,7 @@ All S3 error responses follow this XML format:
 | `InvalidCredential` | Invalid credential format | Malformed Credential field |
 | `MissingDateHeader` | Missing X-Amz-Date header | Required header absent |
 | `InvalidDateFormat` | Invalid date format in X-Amz-Date header | Date not in ISO8601 basic format |
-| `AccessDenied` | Access Denied | ACL-based authorization rejection |
+| `AccessDenied` | Access Denied | ACL-based authorization rejection, access to the `.armor/` reserved namespace, or an append-only credential hitting a conflicting write |
 
 **Headers:** `Content-Type: application/xml` plus CORS headers (see above)
 
@@ -142,9 +182,22 @@ Access-Control-Allow-Headers: Authorization, Content-Type, Range, Content-Length
 
 | Error Code | Message | When Returned |
 |------------|---------|---------------|
-| `PreconditionFailed` | Precondition failed | If-Match or If-Unmodified-Since condition not met |
+| `PreconditionFailed` | Precondition failed | If-Match or If-Unmodified-Since condition not met, or a conditional PUT's `PutIfAbsent` loses the create-only race |
 
 **Headers:** `Content-Type: application/xml` (no CORS headers)
+
+#### HTTP 416 Range Not Satisfiable
+
+| Error Code | Message | When Returned |
+|------------|---------|---------------|
+| `InvalidRange` | Invalid range: [details] | Malformed Range header or out of bounds (GetObject, V3 multipart range reads) |
+| `InvalidRange` | Range reads unsupported on compressed objects | Byte-range request against a zstd/gzip/zlib-compressed object |
+
+**Headers:** `Content-Type: application/xml` (no CORS headers)
+
+**Note:** one GetObject code path (the shared non-multipart range handler) returns
+400 instead of 416 for the identical malformed-Range-header case; see
+[Inconsistencies and Remediation](#inconsistencies-and-remediation).
 
 #### HTTP 500 Internal Server Error
 
@@ -154,12 +207,27 @@ Access-Control-Allow-Headers: Authorization, Content-Type, Range, Content-Length
 
 **Headers:** `Content-Type: application/xml` (no CORS headers)
 
+#### HTTP 501 Not Implemented
+
+| Error Code | Message | When Returned |
+|------------|---------|---------------|
+| `NotImplemented` | The storage backend does not support atomic conditional/append-only writes | A conditional PUT (`If-None-Match: *`) or append-only write targets a backend without atomic create-only support |
+
+**Headers:** `Content-Type: application/xml` (no CORS headers)
+
 #### HTTP 503 Service Unavailable
 
-An ARMOR-owned request deadline returns the S3 XML error `RequestTimeout`
-with HTTP 503 when a response can be written. This is a server error and
-increments `armor_errors_total`. The readiness endpoint has a separate
-plain-text 503 response contract:
+Two independent 503 contracts exist: S3 XML errors from request processing, and
+the plain-text readiness probe.
+
+**S3 XML errors:**
+
+| Error Code | Message | When Returned |
+|------------|---------|---------------|
+| `RequestTimeout` | ARMOR request deadline exceeded | ARMOR's own request deadline expires while a response can still be written. Counted in `armor_errors_total`. |
+| `SlowDown` | [part-1-pinning deferral message] | UploadPart defers an out-of-order part until part 1 arrives and pins the block size |
+
+**Readiness probe (plain text, not XML):**
 
 | Status | Response | When |
 |--------|----------|------|
@@ -203,8 +271,6 @@ All authentication/authorization errors return HTTP 403 with CORS headers. The t
 | `InvalidDateFormat` | Invalid date format in X-Amz-Date header | 403 | ✓ |
 | `AccessDenied` | Access Denied | 403 | ✓ |
 
-**Verification:** All 10 authentication error codes have been verified to return HTTP 403 (2026-07-14).
-
 ### Per-Operation Errors
 
 #### Object Operations
@@ -213,7 +279,7 @@ All authentication/authorization errors return HTTP 403 with CORS headers. The t
 |-----------|------------------------|---------------------|---------------------|
 | GetObject | Content-Type, Content-Length, ETag, Last-Modified, Accept-Ranges | InvalidRange, PreconditionFailed | InternalError |
 | HeadObject | Content-Type, Content-Length, ETag, Last-Modified, Accept-Ranges | (none) | InternalError |
-| PutObject | ETag, X-Armor-Streaming (if >10MB) | InvalidRequest | InternalError |
+| PutObject | ETag, X-Armor-Streaming (if >10MB) | InvalidRequest, InvalidArgument, PreconditionFailed, NotImplemented | InternalError |
 | DeleteObject | (none - 204 No Content) | (none) | InternalError |
 | CopyObject | Content-Type (XML body with CopyObjectResult) | InvalidCopySource | InternalError |
 
@@ -222,7 +288,7 @@ All authentication/authorization errors return HTTP 403 with CORS headers. The t
 | HTTP Status | Error Code | Headers |
 |-------------|------------|---------|
 | 206 (success) | N/A | Content-Range: bytes start-end/total, X-Armor-Footer-Cache (if Parquet footer hit) |
-| 400 | InvalidRange | Content-Type: application/xml |
+| 416 (or 400, see Inconsistencies) | InvalidRange | Content-Type: application/xml |
 | 412 | PreconditionFailed | Content-Type: application/xml |
 | 404 | NoSuchKey | Content-Type: application/xml |
 
@@ -241,7 +307,7 @@ All authentication/authorization errors return HTTP 403 with CORS headers. The t
 | Operation | HTTP 200 Success Headers | HTTP 400 Errors | HTTP 404 Errors | HTTP 5xx Errors |
 |-----------|------------------------|-----------------|-----------------|----------------|
 | CreateMultipartUpload | (none) | (none) | (none) | InternalError |
-| UploadPart | ETag | InvalidRequest | NoSuchUpload | InternalError |
+| UploadPart | ETag | InvalidRequest, InvalidPart, InvalidPartSize | NoSuchUpload | InternalError, SlowDown (503) |
 | CompleteMultipartUpload | Content-Type: application/xml | MalformedXML, InvalidRequest | NoSuchUpload | InternalError |
 | AbortMultipartUpload | (none - 204) | (none) | NoSuchUpload | InternalError |
 | ListParts | Content-Type: application/xml | (none) | NoSuchUpload | InternalError |
@@ -250,7 +316,7 @@ All authentication/authorization errors return HTTP 403 with CORS headers. The t
 #### Bulk Operations
 
 | Operation | HTTP 200 Success | HTTP 400 Errors | HTTP 5xx Errors |
-|-----------|------------------|-----------------|----------------|
+|-----------|------------------|-----------------|-----------------|
 | DeleteObjects (POST with ?delete) | Content-Type: application/xml | MalformedXML | InternalError |
 
 #### Backend Error Propagation
@@ -341,8 +407,6 @@ Content-Type: text/plain
 Not ready - manifest writer last flush 120s ago (threshold 60s)
 ```
 
-**Code Reference:** `internal/server/server.go:359-376`
-
 ### Key Management
 
 #### `/admin/key/verify` - Verify MEK
@@ -382,8 +446,6 @@ Content-Type: text/plain
 
 Method not allowed
 ```
-
-**Code Reference:** `internal/server/server.go:486-507`
 
 ---
 
@@ -431,8 +493,6 @@ Method not allowed
 }
 ```
 
-**Code Reference:** `internal/server/server.go:510-573`
-
 ---
 
 #### `/admin/key/export` - Export Current MEK
@@ -459,8 +519,6 @@ Must include ?confirm=yes to export key
 ```
 Method not allowed
 ```
-
-**Code Reference:** `internal/server/server.go:576-596`
 
 ### Pre-signed URLs
 
@@ -515,8 +573,6 @@ Invalid expires_in: <error details>
 ```
 Failed to generate URL: <error details>
 ```
-
-**Code Reference:** `internal/server/server.go:828-913`
 
 ### B2 Key Management
 
@@ -589,8 +645,6 @@ Failed to generate URL: <error details>
 {"error":"capabilities is required"}
 ```
 
-**Code Reference:** `internal/server/server.go:1246-1324`
-
 ---
 
 #### `/admin/b2/keys/{id}` - Delete B2 Key
@@ -618,8 +672,6 @@ Failed to generate URL: <error details>
 ```
 {"error":"key ID is required"}
 ```
-
-**Code Reference:** `internal/server/server.go:1326-1364`
 
 ### Status Endpoints
 
@@ -650,8 +702,6 @@ Failed to generate URL: <error details>
 Method not allowed
 ```
 
-**Code Reference:** `internal/server/server.go:599-615`
-
 ---
 
 #### `/armor/audit` - Audit Status
@@ -680,8 +730,6 @@ Method not allowed
 ```
 Method not allowed
 ```
-
-**Code Reference:** `internal/server/server.go:617-639`
 
 ---
 
@@ -715,8 +763,6 @@ armor_replication_dropped_total 0
 
 **Headers:** `Content-Type: text/plain; version=0.0.4` (Prometheus text format)
 
-**Code Reference:** `internal/server/server.go:641-680`
-
 #### `/share/{token}` - Access Pre-signed URL
 
 **Method:** GET
@@ -736,7 +782,53 @@ armor_replication_dropped_total 0
 | 410 | `Link expired` | Token expiration time passed |
 | 500 | `Failed to [operation]` | Decryption or backend failure |
 
-**Code Reference:** `internal/server/server.go:915-1015`
+---
+
+## Verification Error Format
+
+The restore-verification pipeline (ADR-004) uses a separate, non-HTTP error
+type to report byte-level decompression mismatches: `VerificationError` in
+`internal/crypto/verify_decompress.go`. It is a Go struct, not a wire format,
+but its fields follow a fixed, documented structure so callers can build
+consistent diagnostics without parsing the `Error()` string.
+
+```go
+type VerificationError struct {
+    // Offset is the byte position where the first difference occurs.
+    // Special values: -1 (no error, unused sentinel), -2 (length mismatch)
+    Offset int64
+
+    // Expected is the byte(s) that should be present at the error offset.
+    // Single-byte errors: 1 byte. With context: [ContextBefore + 1 + ContextAfter] bytes.
+    Expected []byte
+
+    // Actual is the byte(s) found in the decompressed content at the error offset.
+    // Mirrors Expected's structure.
+    Actual []byte
+
+    // ContextBytes, ContextBefore, ContextAfter control how much surrounding
+    // data Expected/Actual carry around the error offset.
+    ContextBytes, ContextBefore, ContextAfter int
+
+    // ExpectedLength and ActualLength are the total expected/actual data
+    // lengths, used to diagnose length-mismatch errors (Offset == -2).
+    ExpectedLength, ActualLength int
+}
+```
+
+**Offset calculation:** start byte-by-byte comparison from position 0; the
+first index `i` where `decompressed[i] != expected[i]` is the offset.
+
+**Error message format:**
+
+```
+verification failed: byte mismatch at offset {offset} (expected 0x{Expected}, got 0x{Actual})
+```
+
+**Error classification examples:**
+
+- Byte mismatch: `Offset: 512, Expected: 0x03, Actual: 0x00` — single byte corrupted.
+- Length mismatch: `Offset: -2, ExpectedLength: 1024, ActualLength: 997` — decompressed output 27 bytes short.
 
 ---
 
@@ -750,6 +842,7 @@ armor_replication_dropped_total 0
 | Content-Type mismatches | Medium | `/admin/b2/keys/*` | JSON in text/plain |
 | 405 returns plain text | Medium | Most admin endpoints | Not S3-compatible |
 | Admin endpoint format inconsistency | Low | All admin endpoints | Poor DX |
+| `InvalidRange` status code varies by code path | Low | GetObject (non-multipart range handler) | AWS uses 416; one path returns 400 for the identical failure |
 
 ### Known Inconsistencies
 
@@ -789,7 +882,7 @@ This is handled by Go's `http.Error()` function.
 </Error>
 ```
 
-This is because `/admin/presign` calls `s.writeError()` which uses the S3 error format.
+This is because `/admin/presign` calls the server's `writeError` helper, which uses the S3 error format.
 
 #### 4. Response Format Variation Within Endpoints
 
@@ -803,6 +896,14 @@ This is because `/admin/presign` calls `s.writeError()` which uses the S3 error 
 | `/armor/canary` | JSON | Plain text | ⚠️ Inconsistent |
 | `/armor/audit` | JSON | Mixed | ⚠️ Inconsistent |
 
+#### 5. `InvalidRange` Status Code Varies by Code Path
+
+**Issue:** GetObject's inline range-parsing (compressed-object rejection and the
+V3 multipart range path) returns 416, matching AWS S3 semantics for
+`InvalidRange`. The shared non-multipart `handleRangeRequest` path returns 400
+for the identical malformed-Range-header failure. Both paths use the same
+error code and message shape; only the HTTP status differs.
+
 ### Remediation Plan
 
 #### Priority 1 (S3 Protocol Compliance)
@@ -811,6 +912,7 @@ This is because `/admin/presign` calls `s.writeError()` which uses the S3 error 
 |-------|--------|----------------|
 | Method Not Allowed XML format | Low | Convert 405 errors to XML for S3 endpoints |
 | Presigned URL endpoint format | Low | Convert `/admin/presign` errors to XML consistently |
+| `InvalidRange` status code | Low | Make `handleRangeRequest` return 416, matching the other range-parsing paths |
 
 #### Priority 2 (Admin Interface Consistency)
 
@@ -836,7 +938,7 @@ This is because `/admin/presign` calls `s.writeError()` which uses the S3 error 
 | Aspect | Status | Details |
 |--------|--------|---------|
 | S3 Content-Type consistency | ✅ PASS | All S3 error responses return `application/xml` |
-| S3 HTTP status code consistency | ✅ PASS | All auth errors return 403 |
+| S3 HTTP status code consistency | ⚠️ PARTIAL | All auth errors return 403; `InvalidRange` varies by code path (see above) |
 | S3 XML structure consistency | ✅ PASS | All responses follow S3 XML error format |
 | S3 error code casing | ✅ PASS | All codes use PascalCase |
 | S3 XML escaping | ✅ PASS | Special characters properly escaped |
@@ -851,10 +953,10 @@ This is because `/admin/presign` calls `s.writeError()` which uses the S3 error 
 
 ARMOR has two `writeError` functions that handle S3 error responses:
 
-1. **`internal/server/server.go:writeError`** (lines 796-805) - Handles authentication/authorization errors
-2. **`internal/server/handlers/handlers.go:writeError`** (lines 2695-2704) - Handles S3 operation errors
+1. **`internal/server/server.go`'s `writeError`** - Handles authentication/authorization errors and admin-endpoint auth failures
+2. **`internal/server/handlers/handlers.go`'s `writeError`** - Handles S3 operation errors; delegates to `writeErrorCause`, which also reclassifies the response as `RequestTimeout` or a client disconnect, logs a structured `s3_error` event, and increments `armor_errors_total{code,operation}` (or `armor_client_disconnects_total{operation}` for disconnects)
 
-Both implementations are **identical**:
+Both implementations build the same XML shape:
 
 ```go
 func writeError(w http.ResponseWriter, code, message string, statusCode int) {
@@ -869,6 +971,12 @@ func writeError(w http.ResponseWriter, code, message string, statusCode int) {
 ```
 
 **Note:** This code duplication is a maintainability concern (both functions must be updated together), but is not currently a functional inconsistency.
+
+**Observability (ADR-008):** every call through `writeError`/`writeErrorCause`
+logs a structured `s3_error` event (code, operation, bucket, key, request ID,
+status, message) and increments the `armor_errors_total{code,operation}`
+counter, giving operators a code-granular axis beyond the generic
+request/status counter.
 
 ### Admin Error Responses
 
@@ -891,16 +999,34 @@ Error responses are consistently fast:
 - Response time dominated by authentication verification, not header setting
 - Single `WriteHeader` call per response
 
-**Average Response Time:** <150µs (measured 2026-07-14)
+### S3 Compliance
 
-### Testing
+✅ **Compliant** with [AWS S3 Error Responses](https://docs.aws.amazon.com/AmazonS3/latest/API/ErrorResponses.html):
+- XML format matches S3 specification
+- Error codes match S3 error codes
+- HTTP status codes match S3 behavior (except the `InvalidRange` path noted above)
+- Content-Type header matches S3 (`application/xml`)
 
-See the following test files for error response verification:
+⚠️ **Partial Deviations:**
+- CORS headers on errors differ from AWS (present in ARMOR, absent in AWS unless configured)
+- Backend errors wrapped as `InternalError` hide specific S3 error codes
 
-- `internal/server/invalid_credential_test.go` - Auth rejection scenarios
+✅ **Implemented:**
+- `x-amz-request-id` header (request tracing) - set from middleware context
+- `x-amz-id-2` header (extended request ID) - set from middleware context
+
+---
+
+## Test Coverage
+
+Error-response behavior is exercised by:
+
+- `internal/server/invalid_credential_test.go` and `internal/server/invalid_credential_integration_test.go` - Auth rejection scenarios
 - `internal/server/malformed_signature_test.go` - Malformed signature scenarios
 - `internal/server/content_type_consistency_test.go` - Content-Type verification
 - `internal/server/error_response_verification_test.go` - Comprehensive error verification
+- `internal/server/auth_test.go` - Authentication unit tests
+- `internal/docsindex` - Verifies every S3 error code `internal/server/handlers` can emit appears in this document, and no documented code goes unemitted
 
 **Run tests:**
 ```bash
@@ -912,25 +1038,15 @@ go test -v -run TestContentTypeConsistencyAcrossAllRejections ./internal/server/
 
 # Run comprehensive error verification
 go test -v -run TestComprehensiveErrorVerification ./internal/server/
+
+# Run the doc/code error-code parity check
+go test ./internal/docsindex/
 ```
 
-### S3 Compliance
-
-✅ **Compliant** with [AWS S3 Error Responses](https://docs.aws.amazon.com/AmazonS3/latest/API/ErrorResponses.html):
-- XML format matches S3 specification
-- Error codes match S3 error codes
-- HTTP status codes match S3 behavior
-- Content-Type header matches S3 (`application/xml`)
-
-⚠️ **Partial Deviations:**
-- CORS headers on errors differ from AWS (present in ARMOR, absent in AWS unless configured)
-- Backend errors wrapped as `InternalError` hide specific S3 error codes
-
-✅ **Implemented (2026-08-29):**
-- `x-amz-request-id` header (request tracing) - Now set from middleware context
-- `x-amz-id-2` header (extended request ID) - Now set from middleware context
-
-**Note:** These headers are now implemented in the `writeError` functions in both `server.go` (line 1562) and `handlers.go` (line 4712), an improvement from the original 2026-07-14 documentation which noted them as missing.
+**Coverage gaps:** validation errors (`InvalidArgument`, `InvalidPart`,
+`InvalidPartSize`, `MalformedXML`) and backend-triggered `InternalError`
+responses have limited or no dedicated unit tests; most are exercised only
+indirectly through integration tests against a real backend.
 
 ---
 
@@ -943,25 +1059,14 @@ go test -v -run TestComprehensiveErrorVerification ./internal/server/
 ### Implementation Files
 - `internal/server/server.go` - Main server, admin endpoints, auth errors
 - `internal/server/handlers/handlers.go` - S3 operation error responses
+- `internal/server/handlers/conditional_put.go` - Conditional/append-only PUT error translation
 - `internal/server/auth.go` - Authentication error definitions
+- `internal/crypto/verify_decompress.go` - Restore-verification error structure
 
-### Verification Beads
-- bf-2n6273: Comprehensive header specification
-- bf-649uw6: Error response header consistency verification
-- bf-4bwxtc: Content-Type header consistency verification
-- bf-o7eo21: HTTP status code consistency verification
-- bf-5ppsfh: Authentication rejection response headers documentation
-- bf-58oib3: Invalid AWS credentials rejection testing
-
-### Backend HEAD/GET Failure Classification
-
-GetObject and HeadObject return `NoSuchKey`/404 only when the backend
-definitively reports that the object is absent. A backend timeout returns
-`RequestTimeout`/503, an upstream 5xx returns `ServiceUnavailable`/503, and
-an otherwise unclassified backend failure returns `InternalError`/500. The
-structured `s3_error` log records the resulting HTTP status and the backend
-failure detail in its message, so clients do not mistake a storage outage for
-an absent object.
+### Related ADRs
+- [ADR-004](adr/004-continuous-restore-verification.md) - Continuous dual-path restore verification (defines the verification error's role)
+- [ADR-008](adr/008-multipart-part-size-error-clarity.md) - Server-side observability for error responses (`armor_errors_total`, structured `s3_error` logging)
+- [ADR-015](adr/015-out-of-order-multipart-uniform-part-size.md) - Uniform-part-size contract (`InvalidPartSize`, `InvalidPart`, `SlowDown`)
 
 ---
 

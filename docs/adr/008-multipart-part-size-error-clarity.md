@@ -1,6 +1,10 @@
 # ADR-008: Server-Side Observability for Multipart Part-Size Rejections
 
-**Status:** Proposed
+**Status:** Accepted (implemented — `writeError`/`writeErrorCause` in
+`internal/server/handlers/handlers.go` log a structured `s3_error` event for
+every call, and `armor_errors_total{code,operation}` in
+`internal/metrics/metrics.go` is incremented for every code, not only the
+multipart part-size paths this ADR originally scoped)
 **Date:** 2026-08-06
 
 ## Context

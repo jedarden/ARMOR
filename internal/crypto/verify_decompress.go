@@ -4,7 +4,7 @@
 // The VerificationError type in this package implements the error message format
 // specification defined in the following documentation:
 //
-// 1. docs/error-format.md
+// 1. docs/error-responses.md#verification-error-format
 //   - Core error message format with required fields (offset, expected, actual)
 //   - Optional context fields for detailed diagnostics
 //   - JSON serialization structure
@@ -169,7 +169,7 @@ type VerifyResult struct {
 //
 // **Documentation Reference:**
 // This type maps to the core error message structure defined in:
-// - docs/error-format.md (core format with required fields)
+// - docs/error-responses.md#verification-error-format (core format with required fields)
 // - docs/archive/verification-error-to-message-mapping.md (field-by-field mapping)
 // - docs/archive/verification-error-message-examples.md (concrete scenarios)
 //
@@ -212,7 +212,7 @@ type VerificationError struct {
 	//
 	// **Message Format Mapping:**
 	// This field maps directly to the "offset" field in the error message format
-	// (see docs/error-format.md). The Error() method uses this field
+	// (see docs/error-responses.md#verification-error-format). The Error() method uses this field
 	// to construct messages like:
 	// - "byte mismatch at offset 512..." (when Offset >= 0)
 	// - "length mismatch..." (when Offset == -2)
@@ -651,7 +651,7 @@ type VerificationError struct {
 //
 // **Message Construction Process:**
 // This method implements the error message format specification defined in
-// docs/error-format.md. The mapping from VerificationError fields
+// docs/error-responses.md#verification-error-format. The mapping from VerificationError fields
 // to message format is:
 //
 // 1. nil error → "verification failed: nil error"
@@ -692,14 +692,14 @@ func (ve *VerificationError) Error() string {
 	}
 
 	// Out of range offset
-	// Reserved for future error types (see docs/error-format.md §Offset)
+	// Reserved for future error types (see docs/error-responses.md#verification-error-format §Offset)
 	if ve.Offset < 0 {
 		return fmt.Sprintf("verification failed: invalid offset %d", ve.Offset)
 	}
 
 	// Build expected/actual representation
 	// Transformation: byte arrays → formatted strings
-	// - Single byte: hex format "0x03" (from docs/error-format.md)
+	// - Single byte: hex format "0x03" (from docs/error-responses.md#verification-error-format)
 	// - Multi-byte: description "N-byte context"
 	expectedStr := "<nil>"
 	actualStr := "<nil>"

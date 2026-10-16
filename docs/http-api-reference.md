@@ -345,6 +345,5 @@ validated. Callers should never send the internal `.armor/` prefix.
 - [Metrics](metrics.md)
 - [Canary and observability contract](observability-contract.md)
 - [Error responses](error-responses.md)
-- [ARMOR HTTP status codes](armor-http-status-codes.md)
 - [Multipart client compatibility](multipart-client-compatibility.md)
 - [Manifest repair/quarantine runbook](notes/manifest-repair-quarantine.md)

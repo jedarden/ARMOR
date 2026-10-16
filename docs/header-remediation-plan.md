@@ -420,8 +420,8 @@ if r.Method != http.MethodGet {
 - ✅ Improves code maintainability
 
 **Current State:**
-- `internal/server/server.go:796-805` (auth errors)
-- `internal/server/handlers/handlers.go:2695-2704` (S3 errors)
+- `internal/server/server.go`'s `writeError` (auth errors)
+- `internal/server/handlers/handlers.go`'s `writeError` (S3 errors)
 
 **Target Structure:**
 ```
