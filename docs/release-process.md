@@ -84,8 +84,9 @@ harmless: the tag still lands on the release commit.
 Pushing a commit that changes `VERSION` reaches the `armor-build`
 WorkflowTemplate in iad-ci (declarative-config
 `k8s/iad-ci/argo-workflows/armor-workflowtemplate.yml`, triggered by
-`k8s/iad-ci/argo-events/armor-sensor.yml`, which fires only for pushes whose
-commit list touches `VERSION`). The run posts a `iad-ci/armor-build` commit
+`k8s/iad-ci/argo-events/armor-sensor.yml`, which fires for pushes whose
+commit list touches `VERSION` and conservatively admits incomplete commit lists).
+The run posts a `iad-ci/armor-build` commit
 status on GitHub at start and at the end, which is what the README badge shows.
 
 | Step | What it proves |
@@ -366,8 +367,10 @@ Details: [drift-check.md](drift-check.md).
   field, so every push built and failed here, turning the README badge red for
   non-release commits. The filter is now a script filter that scans push commits
   for a non-generated `VERSION` change, including a release commit followed by
-  later commits in the same push. If it fires wrongly again, check the live
-  Sensor's `spec.dependencies[0].filters` against the manifest.
+  later commits in the same push. A missing or truncated commit list also runs
+  the resolver, so the webhook cannot silently hide a release commit. If it
+  fires wrongly again, check the live Sensor's `spec.dependencies[0].filters`
+  against the manifest.
 - **The GitHub status stays `pending` or never appears.** The status posts wait
   up to two minutes for the Forgejo→GitHub mirror and need a full-length SHA.
   A manual submission without `revision` posts against `main`, which GitHub
