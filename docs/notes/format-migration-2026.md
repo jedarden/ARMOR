@@ -108,19 +108,19 @@ This is expected: secret creation requires operator-level credentials beyond aut
 
 1. **Dry-run migration:**
    ```bash
-   curl -s -H "Authorization: Bearer REMOVED-NOT-A-SECRET-VALUE \
+   curl -s -H "Authorization: Bearer $ARMOR_ADMIN_TOKEN" \
      "http://127.0.0.1:8001/api/v1/namespaces/armor/services/armor:9001/proxy/admin/format/migrate?dry_run=true" | jq .
    ```
 
 2. **Execute migration:**
    ```bash
-   curl -s -X POST -H "Authorization: Bearer REMOVED-NOT-A-SECRET-VALUE \
+   curl -s -X POST -H "Authorization: Bearer $ARMOR_ADMIN_TOKEN" \
      "http://127.0.0.1:8001/api/v1/namespaces/armor/services/armor:9001/proxy/admin/format/migrate?include=v1" | jq .
    ```
 
 3. **Monitor progress:**
    ```bash
-   watch -n 5 'curl -s -H "Authorization: Bearer REMOVED-NOT-A-SECRET-VALUE \
+   watch -n 5 'curl -s -H "Authorization: Bearer $ARMOR_ADMIN_TOKEN" \
      "http://127.0.0.1:8001/api/v1/namespaces/armor/services/armor:9001/proxy/admin/format/migrate" | jq .'
    ```
 
@@ -227,21 +227,21 @@ Assessment performed for bead armor-3c278621:
 2. **Dry-run migration** (record counts):
 
    ```bash
-   curl -s -H "Authorization: Bearer REMOVED-NOT-A-SECRET-VALUE \
+   curl -s -H "Authorization: Bearer $ARMOR_ADMIN_TOKEN" \
      "http://127.0.0.1:8001/api/v1/namespaces/devimprint/services/armor:9001/proxy/admin/format/migrate?dry_run=true" | jq .
    ```
 
 3. **Execute migration**:
 
    ```bash
-   curl -s -X POST -H "Authorization: Bearer REMOVED-NOT-A-SECRET-VALUE \
+   curl -s -X POST -H "Authorization: Bearer $ARMOR_ADMIN_TOKEN" \
      "http://127.0.0.1:8001/api/v1/namespaces/devimprint/services/armor:9001/proxy/admin/format/migrate?include=v1" | jq .
    ```
 
 4. **Monitor progress**:
 
    ```bash
-   watch -n 5 'curl -s -H "Authorization: Bearer REMOVED-NOT-A-SECRET-VALUE \
+   watch -n 5 'curl -s -H "Authorization: Bearer $ARMOR_ADMIN_TOKEN" \
      "http://127.0.0.1:8001/api/v1/namespaces/devimprint/services/armor:9001/proxy/admin/format/migrate" | jq .'
    ```
 
@@ -320,19 +320,19 @@ Assessment performed for bead armor-5b2b7eb3:
 
 2. **Dry-run migration** (record counts):
    ```bash
-   curl -s -H "Authorization: Bearer REMOVED-NOT-A-SECRET-VALUE \
+   curl -s -H "Authorization: Bearer $ARMOR_ADMIN_TOKEN" \
      "http://127.0.0.1:8001/api/v1/namespaces/armor/services/armor:9001/proxy/admin/format/migrate?dry_run=true" | jq .
    ```
 
 3. **Execute migration**:
    ```bash
-   curl -s -X POST -H "Authorization: Bearer REMOVED-NOT-A-SECRET-VALUE \
+   curl -s -X POST -H "Authorization: Bearer $ARMOR_ADMIN_TOKEN" \
      "http://127.0.0.1:8001/api/v1/namespaces/armor/services/armor:9001/proxy/admin/format/migrate?include=v1" | jq .
    ```
 
 4. **Monitor progress**:
    ```bash
-   watch -n 5 'curl -s -H "Authorization: Bearer REMOVED-NOT-A-SECRET-VALUE \
+   watch -n 5 'curl -s -H "Authorization: Bearer $ARMOR_ADMIN_TOKEN" \
      "http://127.0.0.1:8001/api/v1/namespaces/armor/services/armor:9001/proxy/admin/format/migrate" | jq .'
    ```
 

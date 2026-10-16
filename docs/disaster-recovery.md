@@ -337,7 +337,7 @@ type: Opaque
 stringData:
   b2-access-key-id: "your-b2-key-id"
   b2-secret-access-key: "your-b2-secret-key"
-  master-encryption-key: "REMOVED-NOT-A-SECRET-VALUE" # From escrow
+  master-encryption-key: "your-mek-value" # From escrow
 ---
 apiVersion: v1
 kind: ConfigMap
@@ -411,7 +411,7 @@ type: Opaque
 stringData:
   b2-access-key-id: "your-b2-key-id"
   b2-secret-access-key: "your-b2-secret-key"
-  master-encryption-key: "REMOVED-NOT-A-SECRET-VALUE" # Active key from escrow
+  master-encryption-key: "your-mek-value" # Active key from escrow
   mek_ring: "fedcba9876543210...,9876543210abcdef..." # Ring keys (comma-separated)
 ---
 # Rest of deployment same as above, with ARMOR_MEK_RING env var added:
@@ -847,9 +847,10 @@ To resume rotation, simply POST to the `/admin/key/rotate` endpoint again:
 
 ```bash
 # Rotation will automatically resume from .armor/rotation-state.json
-kubectl exec deploy/armor -n <namespace> -- \
-  curl -s -X POST http://localhost:9001/admin/key/rotate \
-    -H "Authorization: Bearer REMOVED-NOT-A-SECRET-VALUE | jq .
+# (run against a port-forward or proxy to the pod — the ARMOR image is
+# `scratch` and has no curl, so this cannot run via `kubectl exec`)
+curl -s -X POST http://localhost:9001/admin/key/rotate \
+  -H "Authorization: Bearer $ARMOR_ADMIN_TOKEN" | jq .
 ```
 
 ARMOR reads `.armor/rotation-state.json`, determines which objects were successfully processed, and continues from where it left off.
@@ -1403,10 +1404,12 @@ for i in {1..100}; do
   aws s3 cp --endpoint-url http://localhost:9000 test-file.bin s3://test-bucket/file-$i.bin
 done
 
-# 2. Start rotation (v0.1.1922+ - no request body needed)
-kubectl exec deploy/armor -- \
-  curl -X POST http://localhost:9001/admin/key/rotate \
-    -H "Authorization: Bearer REMOVED-NOT-A-SECRET-VALUE &
+# 2. Start rotation (v0.1.1922+ - no request body needed; port-forward
+#    first — the ARMOR image is `scratch` and has no curl, so this cannot
+#    run via `kubectl exec`)
+kubectl port-forward deploy/armor 9001:9001 &
+curl -X POST http://localhost:9001/admin/key/rotate \
+  -H "Authorization: Bearer $ARMOR_ADMIN_TOKEN" &
 
 # 3. Kill ARMOR after 5 seconds (simulating crash)
 sleep 5
@@ -1414,9 +1417,9 @@ kubectl delete pod armor-xxx-yyy
 
 # 4. Restart ARMOR and verify rotation resumes
 kubectl wait --for=condition=available deployment/armor
-kubectl exec deploy/armor -- \
-  curl -s -X POST http://localhost:9001/admin/key/rotate \
-    -H "Authorization: Bearer REMOVED-NOT-A-SECRET-VALUE | jq .
+kubectl port-forward deploy/armor 9001:9001 &
+curl -s -X POST http://localhost:9001/admin/key/rotate \
+  -H "Authorization: Bearer $ARMOR_ADMIN_TOKEN" | jq .
 
 # 5. Verify all files still decrypt (they should - ring makes this safe)
 for i in {1..100}; do
@@ -1492,15 +1495,16 @@ kubectl exec deploy/armor -- curl -s http://localhost:9001/armor/canary | jq .
 
 ```bash
 # Get ring census (per-key active/ring fingerprints and object-count
-# histogram by fingerprint — no key material)
-kubectl exec deploy/armor -n <namespace> -- \
-  curl -s -H "Authorization: Bearer $ARMOR_ADMIN_TOKEN" \
-    "http://localhost:9001/admin/key/ring" | jq .
+# histogram by fingerprint — no key material); port-forward first — the
+# ARMOR image is `scratch` and has no curl, so this cannot run via
+# `kubectl exec`
+kubectl port-forward deploy/armor -n <namespace> 9001:9001 &
+curl -s -H "Authorization: Bearer $ARMOR_ADMIN_TOKEN" \
+  "http://localhost:9001/admin/key/ring" | jq .
 
 # Resume rotation (if interrupted)
-kubectl exec deploy/armor -n <namespace> -- \
-  curl -s -X POST http://localhost:9001/admin/key/rotate \
-    -H "Authorization: Bearer REMOVED-NOT-A-SECRET-VALUE | jq .
+curl -s -X POST http://localhost:9001/admin/key/rotate \
+  -H "Authorization: Bearer $ARMOR_ADMIN_TOKEN" | jq .
 ```
 
 ### Offline Decrypt (Single MEK)

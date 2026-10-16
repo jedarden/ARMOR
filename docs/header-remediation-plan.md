@@ -197,7 +197,7 @@ w.Header().Set("Content-Type", "application/json")
 **Testing:**
 ```bash
 # Verify B2 error endpoints return correct content-type
-curl -H "Authorization: Bearer REMOVED-NOT-A-SECRET-VALUE https://armor.example.com/admin/b2/keys
+curl -H "Authorization: Bearer $ARMOR_ADMIN_TOKEN" https://armor.example.com/admin/b2/keys
 # Should return: Content-Type: application/json
 ```
 
@@ -804,7 +804,7 @@ curl https://armor.example.com/nonexistent 2>/dev/null | grep "<RequestId>" && e
 
 # Test 3: B2 content-type
 echo "Test 3: B2 content-type"
-curl -H "Authorization: Bearer REMOVED-NOT-A-SECRET-VALUE https://armor.example.com/admin/b2/keys 2>/dev/null -D - | grep "Content-Type: application/json" && echo "✓ PASS" || echo "✗ FAIL"
+curl -H "Authorization: Bearer $ARMOR_ADMIN_TOKEN" https://armor.example.com/admin/b2/keys 2>/dev/null -D - | grep "Content-Type: application/json" && echo "✓ PASS" || echo "✗ FAIL"
 
 # Test 4: x-amz-id-2 header
 echo "Test 4: Extended ID header"

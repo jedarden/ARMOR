@@ -19,7 +19,8 @@
 # tests/test_restore_verifier_inventory.py,
 # tests/test_restore_verifier_scope_validation.py,
 # tests/test_prohibited_constructs.py, tests/test_gate_inventory.py,
-# tests/test_documentation_status.py, tests/test_publish_release.py). The
+# tests/test_documentation_status.py, tests/test_publish_release.py,
+# tests/test_docs_code_blocks.py). The
 # default mode adds `go test ./... -short` and the Agentation browser mount
 # smoke (scripts/verify-agentation-mount.sh): the proxy dashboard, demo
 # dashboard, and fleet console each load in a headless Chromium and must show
@@ -68,7 +69,7 @@ run ./scripts/documentation-status-gate.sh
 run ./scripts/cli-contract-gate.sh
 run "$GO" build "${go_build_flags[@]}" ./...
 run "$GO" vet "${go_build_flags[@]}" ./...
-run "$PY" -m pytest tests/test_drift_check.py tests/test_toolchain_parity.py tests/test_compose_version_parity.py tests/test_image_contract_gate.py tests/test_cut_release.py tests/test_restore_verifier_inventory.py tests/test_restore_verifier_scope_validation.py tests/test_prohibited_constructs.py tests/test_gate_inventory.py tests/test_documentation_status.py tests/test_publish_release.py -q
+run "$PY" -m pytest tests/test_drift_check.py tests/test_toolchain_parity.py tests/test_compose_version_parity.py tests/test_image_contract_gate.py tests/test_cut_release.py tests/test_restore_verifier_inventory.py tests/test_restore_verifier_scope_validation.py tests/test_prohibited_constructs.py tests/test_gate_inventory.py tests/test_documentation_status.py tests/test_publish_release.py tests/test_docs_code_blocks.py -q
 
 if [ "$fast" = 0 ]; then
   run "$GO" test ./... -short

@@ -559,7 +559,7 @@ type: Opaque
 stringData:
   b2-access-key-id: "..."
   b2-secret-access-key: "..."
-  master-encryption-key: "REMOVED-NOT-A-SECRET-VALUE"
+  master-encryption-key: "..."
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -671,7 +671,7 @@ In Kubernetes, operators interact via:
 # The runtime image is FROM scratch (no shell, no curl); reach the admin
 # listener through the API server's service proxy instead (Phase 8 decision):
 kubectl proxy --port=8001 &
-curl -s -H "Authorization: Bearer REMOVED-NOT-A-SECRET-VALUE \
+curl -s -H "Authorization: Bearer $ARMOR_ADMIN_TOKEN" \
   http://127.0.0.1:8001/api/v1/namespaces/armor/services/armor:9001/proxy/admin/key/verify
 ```
 

@@ -12,6 +12,13 @@ When running ARMOR locally, the dashboard is available on the admin port (defaul
 curl http://localhost:9001/dashboard
 ```
 
+The `armor demo` command sets neither a dashboard credential
+(`ARMOR_DASHBOARD_USER`/`PASS`/`TOKEN`) nor `ARMOR_ADMIN_TOKEN`, so the bearer
+fallback described under [Security Notes](#security-notes) fails closed and
+this request gets `403 admin API disabled` against a plain `armor demo`
+instance. Set one of those environment variables before starting it to reach
+the dashboard locally.
+
 Or open in a browser:
 ```
 http://localhost:9001/dashboard
@@ -82,7 +89,7 @@ env:
 When accessing the dashboard, provide credentials:
 ```bash
 # Using curl
-curl -u REMOVED-NOT-A-SECRET-VALUE http://localhost:9001/dashboard
+curl -u "$ARMOR_DASHBOARD_USER:$ARMOR_DASHBOARD_PASS" http://localhost:9001/dashboard
 
 # Browser will prompt for username/password
 ```
@@ -99,7 +106,7 @@ env:
 
 When accessing the dashboard, provide the token in the Authorization header:
 ```bash
-curl -H "Authorization: Bearer REMOVED-NOT-A-SECRET-VALUE http://localhost:9001/dashboard
+curl -H "Authorization: Bearer $ARMOR_DASHBOARD_TOKEN" http://localhost:9001/dashboard
 ```
 
 ### Security Notes
@@ -225,6 +232,8 @@ Returns:
 | `/dashboard/metrics` | GET | All metrics (JSON) |
 | `/dashboard/api/list?prefix=data/` | GET | List objects (JSON) |
 | `/dashboard/encryption-stats` | GET | Encryption statistics (JSON) |
+| `/dashboard/upload` | POST | Upload a file (`multipart/form-data`, field `file`; optional `key`, `content_type`) — 403 unless a dashboard credential is configured |
+| `/dashboard/download?key=path/to/file` | GET | Download an object — 403 unless a dashboard credential is configured |
 
 ### JSON List Endpoint
 
@@ -280,7 +289,9 @@ curl http://localhost:9001/dashboard/api/list?prefix=data/
 
 ### Dashboard shows "Failed to list objects"
 
-1. Check B2 connectivity: `kubectl exec deploy/armor -- curl -s localhost:9001/healthz`
+1. Check B2 connectivity: `kubectl exec deploy/armor -- armor check` (the
+   image is `scratch` and has no `curl`), or port-forward and
+   `curl -s localhost:9001/healthz` from your machine
 2. Verify credentials: Check B2 credentials in the `armor-secrets` Secret
 3. Check logs: `kubectl logs -f deploy/armor`
 
@@ -307,7 +318,6 @@ Potential improvements for the dashboard:
 - **Object search** - Full-text search across object keys
 - **Bulk operations** - Select multiple objects for deletion or re-encryption
 - **Key management UI** - Add a read-only view of key-ring status. Rotate keys through the empty-body admin API request in the [key-ring runbook](key-rotation-runbook.md).
-- **Upload/download** - Direct file upload and download through the web UI
 - **Real-time updates** - WebSocket updates for live metrics and new objects
 
 ## Contributing
@@ -316,4 +326,9 @@ The dashboard is implemented in Go with no external frontend dependencies. The H
 
 1. Edit `internal/dashboard/dashboard.go`
 2. Update the `dashboardHTML` template constant
-3. Rebuild and redeploy: `docker build -t armor:local . && kubectl rollout restart deployment/armor`
+3. Ship it like any other change: commit, then cut a release
+   (`scripts/cut-release.sh <version>`) so CI builds and publishes the image,
+   and roll the fleet forward by bumping the image tag in
+   `declarative-config` for ArgoCD to apply. Never run `docker build` or
+   `kubectl rollout restart` by hand — see
+   [docs/release-process.md](release-process.md) and `AGENTS.md`.

@@ -25,7 +25,7 @@ the remediation is discoverable from the log line during the outage.
 ## Inspect first
 
 ```bash
-curl -s -H "Authorization: Bearer REMOVED-NOT-A-SECRET-VALUE \
+curl -s -H "Authorization: Bearer $ARMOR_ADMIN_TOKEN" \
   'http://<armor-admin>/admin/manifest?key=<object-key>' | jq .
 ```
 
@@ -49,7 +49,7 @@ manifest key.
 ### Repair — re-stamp completedAt
 
 ```bash
-curl -s -X POST -H "Authorization: Bearer REMOVED-NOT-A-SECRET-VALUE \
+curl -s -X POST -H "Authorization: Bearer $ARMOR_ADMIN_TOKEN" \
   'http://<armor-admin>/admin/manifest/repair?key=<object-key>' | jq .
 ```
 
@@ -65,7 +65,7 @@ GetObject applies, so a 200 with `fresh: true` means reads have resumed.
 ### Quarantine — definitive non-retryable error
 
 ```bash
-curl -s -X POST -H "Authorization: Bearer REMOVED-NOT-A-SECRET-VALUE \
+curl -s -X POST -H "Authorization: Bearer $ARMOR_ADMIN_TOKEN" \
   'http://<armor-admin>/admin/manifest/quarantine?key=<object-key>&reason=ciphertext+overwritten+pending+review' | jq .
 ```
 
@@ -80,7 +80,7 @@ quarantined-and-stale manifest gets the 403, not the 500).
 ### Release — lift a quarantine
 
 ```bash
-curl -s -X POST -H "Authorization: Bearer REMOVED-NOT-A-SECRET-VALUE \
+curl -s -X POST -H "Authorization: Bearer $ARMOR_ADMIN_TOKEN" \
   'http://<armor-admin>/admin/manifest/release?key=<object-key>' | jq .
 ```
 

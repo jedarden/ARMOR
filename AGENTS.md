@@ -25,7 +25,7 @@ The release-image boundary and known limitations are maintained in
 | `cmd/armor` | The server binary and its subcommands (`serve`, `demo`, `check`, `decrypt`, `verify`, `migrate`, `client-config`, `version`, `help`) |
 | `cmd/restore-verifier`, `cmd/armor-fleet` | Companion binaries (restore verification harness, fleet console). The old offline verifier `cmd/verify-objects` was deleted 2026-09-20 — stale against fingerprinted DEKs and v3, and fully folded into `armor verify` (armor-da67956d). The current source has focused coverage for ring fallback and v3 manifest/sidecar verification; release and live DR evidence remains bounded by [docs/release-status.md](docs/release-status.md) |
 | `internal/` | All packages: `server` (S3 + admin handlers), `crypto`, `backend`, `config`, `keymanager`, `manifest`, `acl`, `canary`, `dashboard`, `presign`, `provenance`, `replication`, `restoreverifier`, `metrics`, `logging`, `b2keys`, `docsindex`, `version`, `testutil` |
-| `tests/` | Go test suites outside the package tree: `integration/` (real B2, build-tagged), `aws-cli-compatibility/`, `docker-demo-smoke/`, `fixtures/`; plus the Python gate suites (`test_drift_check.py`, `test_toolchain_parity.py`, `test_compose_version_parity.py`, `test_image_contract_gate.py` — the Dockerfile default-image contract pin, `test_cut_release.py` — the cut-release isolated-repo workflow pin, `test_restore_verifier_inventory.py` — the restore-verifier fleet-inventory doc pin, `test_restore_verifier_scope_validation.py`, `test_prohibited_constructs.py`, `test_gate_inventory.py` — the documented-inventory parity pin, `test_documentation_status.py` — the release-status claim gate, and `test_publish_release.py` — the release-publisher contract suite, also run by the release gate) |
+| `tests/` | Go test suites outside the package tree: `integration/` (real B2, build-tagged), `aws-cli-compatibility/`, `docker-demo-smoke/`, `fixtures/`; plus the Python gate suites (`test_drift_check.py`, `test_toolchain_parity.py`, `test_compose_version_parity.py`, `test_image_contract_gate.py` — the Dockerfile default-image contract pin, `test_cut_release.py` — the cut-release isolated-repo workflow pin, `test_restore_verifier_inventory.py` — the restore-verifier fleet-inventory doc pin, `test_restore_verifier_scope_validation.py`, `test_prohibited_constructs.py`, `test_gate_inventory.py` — the documented-inventory parity pin, `test_documentation_status.py` — the release-status claim gate, `test_publish_release.py` — the release-publisher contract suite, also run by the release gate, and `test_docs_code_blocks.py` — the scrubber-placeholder-in-fenced-code-block pin) |
 | `scripts/` | Operator tooling: `definition-of-done.sh`, `release-gate.sh`, `cut-release.sh`, drift check, starvation watch. See `scripts/README.md` |
 | `docs/` | ADRs, runbooks, notes, plan. `docs/plan/plan.md` is the architecture and phase record |
 | `config/drift-config.json` | Fleet drift-check configuration |
@@ -88,7 +88,8 @@ make help                            # the rest of the targets
   `tests/test_restore_verifier_inventory.py`,
   `tests/test_restore_verifier_scope_validation.py`,
   `tests/test_prohibited_constructs.py`, `tests/test_gate_inventory.py`,
-  `tests/test_documentation_status.py`, and `tests/test_publish_release.py`
+  `tests/test_documentation_status.py`, `tests/test_publish_release.py`, and
+  `tests/test_docs_code_blocks.py`
   (all run by the definition of done —
   the inventory pin holds these documented lists, the `scripts/README.md`
   gate section, the script's own header and the `tests/README.md` table to

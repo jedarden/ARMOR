@@ -137,19 +137,20 @@ object whose wrapped DEK fingerprint does not match the active key's fingerprint
 using the active key already loaded from config.
 
 ```bash
-# Via kubectl exec (uses the pod's own ARMOR_ADMIN_TOKEN env var)
-kubectl exec deploy/armor -n <namespace> -- \
-  curl -s -X POST http://localhost:9001/admin/key/rotate \
-    -H "Authorization: Bearer REMOVED-NOT-A-SECRET-VALUE | jq .
+# Via kubectl port-forward (curl runs on your machine, not in the pod —
+# the ARMOR image is `scratch` and has no curl or shell)
+kubectl port-forward deploy/armor -n <namespace> 9001:9001 &
+curl -s -X POST http://localhost:9001/admin/key/rotate \
+  -H "Authorization: Bearer $(bao kv get -field=admin_token secret/<cluster>/<app>/armor)" | jq .
 
 # Via kubectl proxy (plan §8.6 credential-file pattern)
 kubectl proxy --port=8001
 curl -s -X POST http://127.0.0.1:8001/api/v1/namespaces/<namespace>/services/armor:9001/proxy/admin/key/rotate \
-  -H "Authorization: Bearer REMOVED-NOT-A-SECRET-VALUE kv get -field=admin_token secret/<cluster>/<app>/armor)" | jq .
+  -H "Authorization: Bearer $(bao kv get -field=admin_token secret/<cluster>/<app>/armor)" | jq .
 ```
 
 **Auth (bf-5m9nde):** every `/admin/*` route requires
-`Authorization: Bearer REMOVED-NOT-A-SECRET-VALUE (constant-time compare). With no
+`Authorization: Bearer <ARMOR_ADMIN_TOKEN>` (constant-time compare). With no
 token configured, the admin API is **disabled fail-closed** — the MEK cannot be
 exported or rotated. Never rotate over an unauthenticated admin surface.
 
@@ -188,14 +189,15 @@ manifest entry records at PUT time — it does not touch the backend and answers
 in well under a second even on a bucket with tens of thousands of objects:
 
 ```bash
-# Via kubectl exec
-kubectl exec deploy/armor -n <namespace> -- \
-  curl -s http://localhost:9001/admin/key/ring \
-    -H "Authorization: Bearer REMOVED-NOT-A-SECRET-VALUE | jq .
+# Via kubectl port-forward (curl runs on your machine, not in the pod —
+# the ARMOR image is `scratch` and has no curl or shell)
+kubectl port-forward deploy/armor -n <namespace> 9001:9001 &
+curl -s http://localhost:9001/admin/key/ring \
+  -H "Authorization: Bearer $(bao kv get -field=admin_token secret/<cluster>/<app>/armor)" | jq .
 
 # Via kubectl proxy
 curl -s http://127.0.0.1:8001/api/v1/namespaces/<namespace>/services/armor:9001/proxy/admin/key/ring \
-  -H "Authorization: Bearer REMOVED-NOT-A-SECRET-VALUE kv get -field=admin_token secret/<cluster>/<app>/armor)" | jq .
+  -H "Authorization: Bearer $(bao kv get -field=admin_token secret/<cluster>/<app>/armor)" | jq .
 ```
 
 **Response:**
@@ -352,15 +354,15 @@ Migrate when:
 ```bash
 # Start a migration (dry run by default - counts objects without re-encrypting)
 curl -s -X POST "http://localhost:9001/admin/format/migrate?dry_run=true&include=1&concurrency=4" \
-  -H "Authorization: Bearer REMOVED-NOT-A-SECRET-VALUE | jq .
+  -H "Authorization: Bearer $ARMOR_ADMIN_TOKEN" | jq .
 
 # Actual migration (re-encrypts V1 objects to V2)
 curl -s -X POST "http://localhost:9001/admin/format/migrate?dry_run=false&include=1&concurrency=4" \
-  -H "Authorization: Bearer REMOVED-NOT-A-SECRET-VALUE | jq .
+  -H "Authorization: Bearer $ARMOR_ADMIN_TOKEN" | jq .
 
 # Check migration progress
 curl -s -X GET "http://localhost:9001/admin/format/migrate" \
-  -H "Authorization: Bearer REMOVED-NOT-A-SECRET-VALUE | jq .
+  -H "Authorization: Bearer $ARMOR_ADMIN_TOKEN" | jq .
 ```
 
 ### Using the `armor migrate` CLI
