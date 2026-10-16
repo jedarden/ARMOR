@@ -364,9 +364,10 @@ Details: [drift-check.md](drift-check.md).
   The build ran for a push that did not change `VERSION`. Before 2026-09-18 the
   sensor's version filter was written as `filters.expr`, which is not a Sensor
   field, so every push built and failed here, turning the README badge red for
-  non-release commits. The filter is now a gjson data filter on
-  `body.commits.#(modified.#(=="VERSION")).id`. If it fires wrongly again, check
-  the live Sensor's `spec.dependencies[0].filters` against the manifest.
+  non-release commits. The filter is now a script filter that scans push commits
+  for a non-generated `VERSION` change, including a release commit followed by
+  later commits in the same push. If it fires wrongly again, check the live
+  Sensor's `spec.dependencies[0].filters` against the manifest.
 - **The GitHub status stays `pending` or never appears.** The status posts wait
   up to two minutes for the Forgejo→GitHub mirror and need a full-length SHA.
   A manual submission without `revision` posts against `main`, which GitHub
