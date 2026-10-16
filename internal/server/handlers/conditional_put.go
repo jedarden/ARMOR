@@ -86,7 +86,7 @@ func (h *Handlers) writePutObjectError(w http.ResponseWriter, r *http.Request, e
 	case errors.Is(err, backend.ErrConditionalPutUnsupported):
 		h.writeError(w, r, "NotImplemented", "The storage backend does not support atomic conditional writes", http.StatusNotImplemented)
 	default:
-		h.writeError(w, r, "InternalError", "Failed to upload object", http.StatusInternalServerError)
+		h.writeBackendError(w, r, "InternalError", "Failed to upload object", http.StatusInternalServerError, err)
 	}
 }
 

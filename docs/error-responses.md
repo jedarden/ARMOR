@@ -28,6 +28,7 @@ ARMOR has two distinct API surfaces with different error response formats:
 - [S3-Facing Endpoints](#s3-facing-endpoints)
   - [Error Response Structure](#error-response-structure)
   - [Error Codes by HTTP Status](#error-codes-by-http-status)
+  - [Client Disconnects and Request Deadlines](#client-disconnects-and-request-deadlines)
   - [Authentication Errors](#authentication-errors-http-403)
   - [Per-Operation Errors](#per-operation-errors)
 - [Admin Endpoints](#admin-endpoints)
@@ -155,6 +156,11 @@ Access-Control-Allow-Headers: Authorization, Content-Type, Range, Content-Length
 
 #### HTTP 503 Service Unavailable
 
+An ARMOR-owned request deadline returns the S3 XML error `RequestTimeout`
+with HTTP 503 when a response can be written. This is a server error and
+increments `armor_errors_total`. The readiness endpoint has a separate
+plain-text 503 response contract:
+
 | Status | Response | When |
 |--------|----------|------|
 | 200 | `Ready` | Readiness probe healthy |
@@ -164,6 +170,21 @@ Access-Control-Allow-Headers: Authorization, Content-Type, Range, Content-Length
 | 503 | `Not ready - no health signal available` | Health check unavailable |
 
 **Note:** `/readyz` returns plain text, not XML, as it is a health endpoint.
+
+### Client Disconnects and Request Deadlines
+
+When a client cancels while ARMOR reads the request body or processes the
+request, or the response writer detects a disconnected client, ARMOR records
+the request as a client disconnect. The access log uses
+`outcome=client_disconnect`, synthetic `status=499`, and WARN level;
+`armor_client_disconnects_total{operation}` increments once. The 499 value is
+for the access log: the disconnected client cannot receive an S3 XML error
+response, and the event does not increment `armor_errors_total`.
+
+When ARMOR's own request deadline expires, the request is a server failure:
+ARMOR returns `RequestTimeout` with HTTP 503 where a response can be written,
+and counts the S3 error in `armor_errors_total`. Other backend network
+failures remain `InternalError` responses as described below.
 
 ### Authentication Errors (HTTP 403)
 
@@ -239,7 +260,7 @@ ARMOR's backend (B2/Cloudflare R2) may return errors that are wrapped in `Intern
 | Backend Error | ARMOR Response |
 |---------------|----------------|
 | B2 auth failure | 500 InternalError |
-| Network timeout | 500 InternalError |
+| Backend network failure without a deadline expiry | 500 InternalError |
 | Storage full | 500 InternalError |
 | Rate limited | 500 InternalError |
 

@@ -1638,22 +1638,43 @@ func (s *Server) wrapHandler(h http.HandlerFunc) http.HandlerFunc {
 		rw := &responseWriter{ResponseWriter: w, statusCode: http.StatusOK}
 
 		h(rw, r)
+		statusCode := rw.statusCode
+		failure := middleware.ClassifyRequestFailure(r.Context(), rw.writeErr)
+		if middleware.IsClientDisconnect(r.Context()) || failure == middleware.RequestFailureClientDisconnect {
+			statusCode = 499 // access-log/metrics status; the wire response may have started
+			if !middleware.IsClientDisconnect(r.Context()) {
+				s.metrics.IncClientDisconnects(handlers.S3OperationForRequest(r))
+				*r = *r.WithContext(middleware.MarkClientDisconnect(r.Context()))
+				*r = *r.WithContext(middleware.SetErrorCode(r.Context(), "ClientDisconnect"))
+			}
+		} else if failure == middleware.RequestFailureDeadline && middleware.GetErrorCode(r.Context()) == "" {
+			if !rw.wroteHeader {
+				s.writeError(rw, r, "RequestTimeout", "ARMOR request deadline exceeded", http.StatusServiceUnavailable)
+			}
+			statusCode = http.StatusServiceUnavailable
+			s.metrics.IncErrors("RequestTimeout", handlers.S3OperationForRequest(r))
+			if middleware.GetErrorCode(r.Context()) == "" {
+				*r = *r.WithContext(middleware.SetErrorCode(r.Context(), "RequestTimeout"))
+			}
+		}
 
 		// Record metrics
 		duration := time.Since(start)
-		s.metrics.IncRequestsTotal(r.Method, rw.statusCode)
+		s.metrics.IncRequestsTotal(r.Method, statusCode)
 		s.metrics.RecordRequestDuration(r.Method, duration)
 
 		// Log completed request with identity audit fields (ADR-012)
-		s.logCompletedRequest(r, start, rw.statusCode, authzResult, accessKeyID, verb, objectKey, rw.bytesOut)
+		s.logCompletedRequest(r, start, statusCode, authzResult, accessKeyID, verb, objectKey, rw.bytesOut)
 	}
 }
 
 // responseWriter wraps http.ResponseWriter to capture the status code.
 type responseWriter struct {
 	http.ResponseWriter
-	statusCode int
-	bytesOut   int64
+	statusCode  int
+	bytesOut    int64
+	writeErr    error
+	wroteHeader bool
 }
 
 // countingReadCloser records bytes actually consumed from a request body. It
@@ -1674,13 +1695,18 @@ func (r *countingReadCloser) Read(p []byte) (int, error) {
 // WriteHeader captures the status code.
 func (rw *responseWriter) WriteHeader(code int) {
 	rw.statusCode = code
+	rw.wroteHeader = true
 	rw.ResponseWriter.WriteHeader(code)
 }
 
 // Write captures bytes written.
 func (rw *responseWriter) Write(b []byte) (int, error) {
+	rw.wroteHeader = true
 	n, err := rw.ResponseWriter.Write(b)
 	rw.bytesOut += int64(n)
+	if err != nil && rw.writeErr == nil {
+		rw.writeErr = err
+	}
 	return n, err
 }
 
@@ -1777,6 +1803,9 @@ func (s *Server) logCompletedRequest(r *http.Request, start time.Time, statusCod
 	if errorCode := middleware.GetErrorCode(r.Context()); errorCode != "" {
 		fields["error_code"] = errorCode
 	}
+	if middleware.IsClientDisconnect(r.Context()) {
+		fields["outcome"] = "client_disconnect"
+	}
 
 	// Add bytes_in (request body bytes actually consumed). The fallback keeps
 	// direct unit tests and callers that invoke this logger without the common
@@ -1823,7 +1852,7 @@ func (s *Server) logCompletedRequest(r *http.Request, start time.Time, statusCod
 	}
 
 	// Log at appropriate level: denials at Warn, allows at Info
-	if authzResult == "deny-auth" || authzResult == "deny-acl" {
+	if authzResult == "deny-auth" || authzResult == "deny-acl" || middleware.IsClientDisconnect(r.Context()) {
 		s.logger.WithFields(fields).Warn("request completed")
 	} else {
 		s.logger.WithFields(fields).Info("request completed")

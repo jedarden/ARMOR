@@ -130,6 +130,12 @@ func s3OperationForRequest(r *http.Request) string {
 	}
 }
 
+// S3OperationForRequest exposes the same operation label to the outer request
+// wrapper, which counts disconnects discovered while writing a response.
+func S3OperationForRequest(r *http.Request) string {
+	return s3OperationForRequest(r)
+}
+
 // splitBucketAndKey splits a request path into bucket and key with the same
 // shape rules ActionForRequest uses, so the metric label and the ACL verb
 // always agree on which resource a request addressed.

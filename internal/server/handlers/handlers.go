@@ -14,6 +14,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"hash"
 	"io"
@@ -421,7 +422,7 @@ func (h *Handlers) PutObject(w http.ResponseWriter, r *http.Request, bucket, key
 	// Small file: buffer in memory
 	plaintext, err := io.ReadAll(r.Body)
 	if err != nil {
-		h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to read body: %v", err), 500)
+		h.writeErrorCause(w, r, "InternalError", fmt.Sprintf("Failed to read body: %v", err), 500, err)
 		return
 	}
 
@@ -749,7 +750,7 @@ func (h *Handlers) putObjectStreaming(ctx context.Context, w http.ResponseWriter
 	plaintextSize, err := io.Copy(tmpFile, teeReader)
 	if err != nil {
 		tmpFile.Close()
-		h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to read body: %v", err), 500)
+		h.writeErrorCause(w, r, "InternalError", fmt.Sprintf("Failed to read body: %v", err), 500, err)
 		return
 	}
 
@@ -1105,7 +1106,7 @@ func (h *Handlers) GetObject(w http.ResponseWriter, r *http.Request, bucket, key
 		// Get ciphertext object info for size check
 		ciphertextInfo, ciphertextErr := h.backend.Head(ctx, bucket, manifestBody.CiphertextObject)
 		if ciphertextErr != nil {
-			h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to head ciphertext object: %v", ciphertextErr), 500)
+			h.writeBackendError(w, r, "InternalError", fmt.Sprintf("Failed to head ciphertext object: %v", ciphertextErr), 500, ciphertextErr)
 			return
 		}
 
@@ -1129,7 +1130,7 @@ func (h *Handlers) GetObject(w http.ResponseWriter, r *http.Request, bucket, key
 	}
 
 	if err != nil && info == nil {
-		h.writeError(w, r, "NoSuchKey", fmt.Sprintf("Object not found: %v", err), 404)
+		h.writeBackendError(w, r, "NoSuchKey", fmt.Sprintf("Object not found: %v", err), 404, err)
 		return
 	}
 
@@ -1149,7 +1150,7 @@ func (h *Handlers) GetObject(w http.ResponseWriter, r *http.Request, bucket, key
 		// Passthrough for non-ARMOR objects
 		body, _, err := h.backend.Get(ctx, bucket, prefixedKey)
 		if err != nil {
-			h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to get object: %v", err), 500)
+			h.writeBackendError(w, r, "InternalError", fmt.Sprintf("Failed to get object: %v", err), 500, err)
 			return
 		}
 		defer body.Close()
@@ -2947,7 +2948,7 @@ func (h *Handlers) DeleteObjects(w http.ResponseWriter, r *http.Request, bucket 
 
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
-		h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to read body: %v", err), 500)
+		h.writeErrorCause(w, r, "InternalError", fmt.Sprintf("Failed to read body: %v", err), 500, err)
 		return
 	}
 
@@ -3417,7 +3418,7 @@ func (h *Handlers) UploadPart(w http.ResponseWriter, r *http.Request, bucket, ke
 	// Read plaintext part
 	plaintext, err := io.ReadAll(r.Body)
 	if err != nil {
-		h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to read body: %v", err), 500)
+		h.writeErrorCause(w, r, "InternalError", fmt.Sprintf("Failed to read body: %v", err), 500, err)
 		return
 	}
 	plaintextSize := int64(len(plaintext))
@@ -3645,7 +3646,7 @@ func (h *Handlers) UploadPart(w http.ResponseWriter, r *http.Request, bucket, ke
 	// storage key the upload was created under.
 	etag, err := h.backend.UploadPart(ctx, bucket, h.applyPrefix(key), uploadID, int32(partNumber), bytes.NewReader(encrypted), int64(len(encrypted)))
 	if err != nil {
-		h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to upload part: %v", err), 500)
+		h.writeBackendError(w, r, "InternalError", fmt.Sprintf("Failed to upload part: %v", err), 500, err)
 		return
 	}
 
@@ -3963,7 +3964,7 @@ func (h *Handlers) CompleteMultipartUpload(w http.ResponseWriter, r *http.Reques
 	var completeReq CompleteMultipartUploadReq
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
-		h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to read body: %v", err), 500)
+		h.writeErrorCause(w, r, "InternalError", fmt.Sprintf("Failed to read body: %v", err), 500, err)
 		return
 	}
 
@@ -4826,7 +4827,7 @@ func (h *Handlers) PutBucketLifecycleConfiguration(w http.ResponseWriter, r *htt
 	// Read the lifecycle configuration XML
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
-		h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to read body: %v", err), 500)
+		h.writeErrorCause(w, r, "InternalError", fmt.Sprintf("Failed to read body: %v", err), 500, err)
 		return
 	}
 
@@ -4875,7 +4876,7 @@ func (h *Handlers) PutObjectLockConfiguration(w http.ResponseWriter, r *http.Req
 	// Read the object lock configuration XML
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
-		h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to read body: %v", err), 500)
+		h.writeErrorCause(w, r, "InternalError", fmt.Sprintf("Failed to read body: %v", err), 500, err)
 		return
 	}
 
@@ -4911,7 +4912,7 @@ func (h *Handlers) PutObjectRetention(w http.ResponseWriter, r *http.Request, bu
 	// Read the retention XML
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
-		h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to read body: %v", err), 500)
+		h.writeErrorCause(w, r, "InternalError", fmt.Sprintf("Failed to read body: %v", err), 500, err)
 		return
 	}
 
@@ -4947,7 +4948,7 @@ func (h *Handlers) PutObjectLegalHold(w http.ResponseWriter, r *http.Request, bu
 	// Read the legal hold XML
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
-		h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to read body: %v", err), 500)
+		h.writeErrorCause(w, r, "InternalError", fmt.Sprintf("Failed to read body: %v", err), 500, err)
 		return
 	}
 
@@ -4996,18 +4997,30 @@ func (h *Handlers) stripPrefixFromCommonPrefix(commonPrefix string) string {
 // The request ID is extracted from the request context and included in the XML body.
 // The resource is the request path. This function also logs a structured s3_error event.
 func (h *Handlers) writeError(w http.ResponseWriter, r *http.Request, code, message string, statusCode int) {
-	// Increment error counter (ADR-008) - always increment, even without logger.
-	// The metric's operation label is the S3 operation name (docs/metrics.md),
-	// not the ADR-012 verb — InvalidPartSize alerting depends on distinguishing
-	// CompleteMultipartUpload from the other "put" stages.
-	if h.metrics != nil {
-		h.metrics.IncErrors(code, s3OperationForRequest(r))
-	}
+	h.writeErrorCause(w, r, code, message, statusCode, nil)
+}
 
-	// Log structured S3 error event before writing response
-	if h.logger != nil {
-		h.logS3Error(r, code, message, statusCode)
+// writeBackendError keeps backend deadline causes without treating upstream
+// connection errors as evidence that the downstream client disconnected.
+func (h *Handlers) writeBackendError(w http.ResponseWriter, r *http.Request, code, message string, statusCode int, cause error) {
+	if errors.Is(cause, context.DeadlineExceeded) {
+		h.writeErrorCause(w, r, code, message, statusCode, cause)
+		return
 	}
+	h.writeError(w, r, code, message, statusCode)
+}
+
+// writeErrorCause retains the typed body-read error so connection failures
+// can be distinguished from backend and application errors.
+func (h *Handlers) writeErrorCause(w http.ResponseWriter, r *http.Request, code, message string, statusCode int, cause error) {
+	switch middleware.ClassifyRequestFailure(r.Context(), cause) {
+	case middleware.RequestFailureDeadline:
+		code, message, statusCode = "RequestTimeout", "ARMOR request deadline exceeded", http.StatusServiceUnavailable
+	case middleware.RequestFailureClientDisconnect:
+		code, statusCode = "ClientDisconnect", 499
+		*r = *r.WithContext(middleware.MarkClientDisconnect(r.Context()))
+	}
+	*r = *r.WithContext(middleware.SetErrorCode(r.Context(), code))
 
 	// Extract request ID from middleware context
 	requestID := middleware.GetRequestID(r.Context())
@@ -5026,12 +5039,30 @@ func (h *Handlers) writeError(w http.ResponseWriter, r *http.Request, code, mess
 	xml.EscapeText(&ridBuf, []byte(requestID))
 	xml.EscapeText(&resBuf, []byte(resource))
 
+	var writeErr error
 	if requestID != "" {
-		fmt.Fprintf(w, `<?xml version="1.0" encoding="UTF-8"?>`+"\n<Error>\n  <Code>%s</Code>\n  <Message>%s</Message>\n  <RequestId>%s</RequestId>\n  <Resource>%s</Resource>\n</Error>",
+		_, writeErr = fmt.Fprintf(w, `<?xml version="1.0" encoding="UTF-8"?>`+"\n<Error>\n  <Code>%s</Code>\n  <Message>%s</Message>\n  <RequestId>%s</RequestId>\n  <Resource>%s</Resource>\n</Error>",
 			codeBuf.String(), msgBuf.String(), ridBuf.String(), resBuf.String())
 	} else {
-		fmt.Fprintf(w, `<?xml version="1.0" encoding="UTF-8"?>`+"\n<Error>\n  <Code>%s</Code>\n  <Message>%s</Message>\n  <Resource>%s</Resource>\n</Error>",
+		_, writeErr = fmt.Fprintf(w, `<?xml version="1.0" encoding="UTF-8"?>`+"\n<Error>\n  <Code>%s</Code>\n  <Message>%s</Message>\n  <Resource>%s</Resource>\n</Error>",
 			codeBuf.String(), msgBuf.String(), resBuf.String())
+	}
+	if middleware.ClassifyRequestFailure(r.Context(), writeErr) == middleware.RequestFailureClientDisconnect {
+		code, statusCode = "ClientDisconnect", 499
+		*r = *r.WithContext(middleware.MarkClientDisconnect(r.Context()))
+		*r = *r.WithContext(middleware.SetErrorCode(r.Context(), code))
+	}
+	// Count after writing so a failed writer cannot leave both a server error
+	// and a client disconnect in the two counters.
+	if h.metrics != nil {
+		if middleware.IsClientDisconnect(r.Context()) {
+			h.metrics.IncClientDisconnects(s3OperationForRequest(r))
+		} else {
+			h.metrics.IncErrors(code, s3OperationForRequest(r))
+		}
+	}
+	if h.logger != nil {
+		h.logS3Error(r, code, message, statusCode)
 	}
 }
 
@@ -5062,6 +5093,9 @@ func (h *Handlers) logS3Error(r *http.Request, code, message string, statusCode 
 		"request_id": requestID,
 		"status":     statusCode,
 		"message":    message,
+	}
+	if code == "ClientDisconnect" {
+		fields["outcome"] = "client_disconnect"
 	}
 
 	// Add access_key_id only when present (no empty fields)

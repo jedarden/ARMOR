@@ -289,6 +289,24 @@ sum(rate(armor_put_backend_ms_sum[5m])) by (operation)
 - `code` — S3 error code (e.g., "InvalidPartSize", "AccessDenied", "NoSuchBucket")
 - `operation` — S3 operation that triggered the error (e.g., "PutObject", "GetObject", "CompleteMultipartUpload")
 
+Client disconnects are excluded: they do not produce an S3 error response and
+increment `armor_client_disconnects_total` instead. An ARMOR-owned request
+deadline is a server error (`RequestTimeout`, HTTP 503) and is counted here.
+
+### `armor_client_disconnects_total`
+
+**Type:** Counter
+
+**Description:** Total number of S3 requests abandoned by the client during
+request-body reading or processing, or detected when writing the response.
+
+**Labels:** `operation` — S3 operation name (e.g., "PutObject", "GetObject")
+
+Each classified disconnect increments this counter once. Its corresponding
+access log entry has `outcome=client_disconnect`, synthetic `status=499`, and
+WARN level. Status 499 is an observability value, not an HTTP response sent
+to the disconnected client.
+
 ## Authorization Metrics
 
 ### `armor_requests_by_credential_total`

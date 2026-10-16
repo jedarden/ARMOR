@@ -10,7 +10,8 @@ surface defined by [ADR-002](adr/002-multipart-corruption-detection-gaps.md)
 - the exact Prometheus series names, types, and labels each component emits,
 - the freshness windows and alert thresholds that consume them,
 - the failure-escalation and deduplication rules that make the escalation
-  path storm-proof.
+  path storm-proof,
+- the S3 request outcome for client disconnects and ARMOR-owned deadlines.
 
 A field, series, label, or threshold listed here is contractual: renaming or
 removing one is a breaking change and must update this document and the
@@ -52,6 +53,22 @@ kubelet probes and Prometheus scrape them. Every other admin path, including
 `/armor/audit`, requires the `ARMOR_ADMIN_TOKEN` bearer token. The
 restore-verifier's own listener exposes no authentication — it is
 cluster-internal only; do not publish it through an ingress.
+
+## S3 request cancellation outcomes
+
+A client cancellation during request-body reading or request processing, or
+a disconnect detected by the response writer, is logged at WARN with
+`outcome=client_disconnect` and synthetic `status=499`. The S3 operation's
+`armor_client_disconnects_total{operation}` counter increments once. The
+status is an access-log classification, not an HTTP response sent to the
+disconnected client. Client disconnects are excluded from
+`armor_errors_total`.
+
+An ARMOR-owned request deadline is a server failure: it returns the S3 XML
+error `RequestTimeout` with HTTP 503 when a response is writable and counts
+in `armor_errors_total`. Other backend network failures retain their separate
+`InternalError` mapping. See [error-responses.md](error-responses.md) for the
+response contract and [metrics.md](metrics.md) for the counters.
 
 ## Canary status API — `GET /armor/canary`
 
