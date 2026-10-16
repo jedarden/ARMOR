@@ -347,6 +347,9 @@ func TestFleetCLIReferenceUsageAndValidationMatchBinary(t *testing.T) {
 			if !strings.Contains(stderr, "Usage of") {
 				t.Errorf("armor-fleet %s: stderr missing the usage header:\n%s", strings.Join(args, " "), stderr)
 			}
+			// -seam-token stays listed in the defaults because the flag is
+			// still registered (as the rejected deprecated form); its help
+			// string names SEAM_TOKEN.
 			for _, f := range []string{"-targets", "-listen", "-interval", "-seam-token"} {
 				if !strings.Contains(stderr, f) {
 					t.Errorf("armor-fleet %s: usage output missing -%s:\n%s", strings.Join(args, " "), f, stderr)
@@ -424,7 +427,7 @@ func TestFleetCLIReferenceUsageAndValidationMatchBinary(t *testing.T) {
 						t.Fatalf("write targets file: %v", err)
 					}
 				}
-				_, stderr, code := runFleet(t, env, "-targets", path, "-seam-token", "smoke-fake-token")
+				_, stderr, code := runFleet(t, append(append([]string{}, env...), "SEAM_TOKEN=smoke-fake-token"), "-targets", path)
 				if code != 1 {
 					t.Errorf("%s: exit = %d, want 1\nstderr: %s", tc.name, code, stderr)
 				}
@@ -466,9 +469,8 @@ func TestFleetCLIReferenceStartupServesConsoleAndShutsDownCleanly(t *testing.T) 
 		"-targets", targets,
 		"-listen", addr,
 		"-interval", "3600",
-		"-seam-token", "smoke-fake-token",
 	)
-	cmd.Env = fleetReferenceEnv(t)
+	cmd.Env = fleetReferenceEnv(t, "SEAM_TOKEN=smoke-fake-token")
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	if err := cmd.Start(); err != nil {

@@ -20,14 +20,15 @@ import (
 
 	"github.com/jedarden/armor/internal/backend"
 	"github.com/jedarden/armor/internal/crypto"
+	"github.com/jedarden/armor/internal/mekring"
 )
 
 func init() {
 	// decrypt's flags, on decrypt's own flag set
 	decryptFlags := flag.NewFlagSet("decrypt", flag.ExitOnError)
-	decryptFlags.StringVar(&mekFlag, "mek", "", "Master encryption key (hex, 64 chars)")
+	decryptFlags.StringVar(&mekFlag, "mek", "", "Master encryption key (hex, 64 chars; deprecated — prefer -mek-file or ARMOR_MEK)")
 	decryptFlags.StringVar(&mekFileFlag, "mek-file", "", "Read MEK from file (hex, 64 chars)")
-	decryptFlags.StringVar(&mekRingFlag, "mek-ring", "", "Comma-separated MEK ring (hex fingerprints, each 16 chars)")
+	decryptFlags.StringVar(&mekRingFlag, "mek-ring", "", "MEK ring: comma-separated fingerprint:hexkey entries (16-hex fingerprint : 64-hex MEK), or @file holding the same list")
 	decryptFlags.BoolVar(&mekEnvFallback, "mek-env", true, "Fallback to ARMOR_MEK env var if flags not set")
 	decryptFlags.StringVar(&escrowFile, "escrow", "", "Path to escrow JSON file containing MEK and B2 credentials (self-contained recovery)")
 	decryptFlags.StringVar(&inputFlag, "input", "", "Input: B2 URL (b2://bucket/key) or local file path")
@@ -39,9 +40,11 @@ func init() {
 	decryptFlags.StringVar(&wrappedDEKFlag, "wrapped-dek", "", "Wrapped DEK (base64, for local files)")
 	decryptFlags.StringVar(&sidecarFlag, "sidecar", "", "Path to a JSON HMAC sidecar file for a local multipart object (ADR-003 headerless layout)")
 	decryptFlags.StringVar(&ivFlag, "iv", "", "Object IV (hex, 16 bytes) for a local multipart object (required with -sidecar)")
-	decryptFlags.IntVar(&versionFlag, "version", 1, "Envelope version (1 or 2), for local multipart files without envelope header (default: 1)")
+	decryptFlags.IntVar(&versionFlag, "envelope-version", 1, "Envelope version (1, 2, or 3), for local multipart sidecars lacking a version field (default: 1)")
+	decryptFlags.IntVar(&versionFlag, "version", 1, "DEPRECATED alias of -envelope-version")
 	decryptFlags.StringVar(&outputFlag, "output", "", "Output file path (default: stdout)")
-	decryptFlags.BoolVar(&decryptVerboseFlag, "v", false, "Verbose output")
+	decryptFlags.BoolVar(&decryptVerboseFlag, "verbose", false, "Verbose output")
+	decryptFlags.BoolVar(&decryptVerboseFlag, "v", false, "DEPRECATED alias of -verbose")
 	decryptFlags.IntVar(&readConcurrency, "read-concurrency", envInt("ARMOR_READ_CONCURRENCY", 16), "Maximum concurrent ranged reads")
 
 	registerCommand(Command{
@@ -75,7 +78,7 @@ var (
 	// Multipart local-file inputs (ADR-003 headerless layout)
 	sidecarFlag string // path to a JSON HMAC sidecar file (HMACTableSidecar wire format)
 	ivFlag      string // object IV (hex), required for local multipart — no header to read it from
-	versionFlag int    // envelope version (1 or 2), for local multipart files (default: 1)
+	versionFlag int    // envelope version (1, 2, or 3), for local multipart sidecars without a version field (default: 1)
 
 	// Output
 	outputFlag string
@@ -93,6 +96,12 @@ func decrypt(fs *flag.FlagSet) {
 		fmt.Fprintf(os.Stderr, "Usage: armor decrypt [flags] (run \"armor decrypt --help\" for the full flag list)\n")
 		os.Exit(2)
 	}
+
+	printDeprecatedFlagPointers(fs, map[string]string{
+		"v":       "-verbose",
+		"version": "-envelope-version",
+		"mek":     "-mek-file or the ARMOR_MEK environment variable",
+	})
 
 	// Get MEK and ring keys - try escrow file first, then fall back to other methods
 	var mek []byte
@@ -196,56 +205,35 @@ func getMEK() ([]byte, error) {
 	return mek, nil
 }
 
-// parseMEKRing parses a comma-separated list of hex fingerprints into ring key entries.
-// This is used when -mek-ring is provided without an escrow file. The actual MEK values
-// must be retrieved from a key store by fingerprint in a real deployment; for testing,
-// this simply parses the fingerprint format and returns entries with nil MEK values that
-// will be populated by the lookup function.
+// parseMEKRing parses the -mek-ring flag (or an @file it names) into ring
+// key entries, using the shared mekring grammar: fingerprint:key pairs are
+// canonical; the legacy bare-fingerprint form is accepted with a one-release
+// deprecation pointer printed to stderr. Bare-fingerprint entries carry no
+// key material and can never unwrap — ring decryption still needs an escrow
+// file or fingerprint:key pairs.
 func parseMEKRing(ringStr string) ([]crypto.RingKeyEntry, error) {
-	if ringStr == "" {
-		return nil, nil
+	ringKeys, notes, err := mekring.Parse(ringStr)
+	if err != nil {
+		return nil, err
 	}
-
-	fingerprints := strings.Split(ringStr, ",")
-	var ringKeys []crypto.RingKeyEntry
-
-	for _, fp := range fingerprints {
-		fp = strings.TrimSpace(fp)
-		if fp == "" {
-			continue
-		}
-		if len(fp) != 16 {
-			return nil, fmt.Errorf("invalid fingerprint length: got %d chars, expected 16", len(fp))
-		}
-		// Validate hex format
-		if !isHex(fp) {
-			return nil, fmt.Errorf("invalid hex fingerprint: %s", fp)
-		}
-
-		// Note: The actual MEK values need to be retrieved from a key store.
-		// For now, we create ring entries with nil MEK that will be populated
-		// by the lookup function during unwrapping.
-		ringKeys = append(ringKeys, crypto.RingKeyEntry{
-			MEK:         nil, // Will be populated by lookup
-			Fingerprint: fp,
-		})
+	for _, note := range notes {
+		fmt.Fprintf(os.Stderr, "Warning: -mek-ring %s (deprecated forms are removed after one release)\n", note)
 	}
-
 	if decryptVerboseFlag {
-		fmt.Fprintf(os.Stderr, "Parsed MEK ring: %d fingerprints\n", len(ringKeys))
+		fmt.Fprintf(os.Stderr, "Parsed MEK ring: %d entries\n", len(ringKeys))
 	}
-
 	return ringKeys, nil
 }
 
-// isHex checks if a string is valid hexadecimal.
-func isHex(s string) bool {
-	for _, c := range s {
-		if (c < '0' || c > '9') && (c < 'a' || c > 'f') && (c < 'A' || c > 'F') {
-			return false
+// printDeprecatedFlagPointers prints a one-release deprecation pointer for
+// every deprecated alias actually set on fs. Unset aliases print nothing, so
+// the shim stays quiet for scripts that already moved to the new names.
+func printDeprecatedFlagPointers(fs *flag.FlagSet, replacements map[string]string) {
+	fs.Visit(func(f *flag.Flag) {
+		if repl, ok := replacements[f.Name]; ok {
+			fmt.Fprintf(os.Stderr, "Warning: -%s is deprecated; use %s instead (deprecated aliases are removed after one release)\n", f.Name, repl)
 		}
-	}
-	return true
+	})
 }
 
 // escrowPackage represents the complete escrow package for break-glass recovery.

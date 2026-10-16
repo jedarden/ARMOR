@@ -13,7 +13,9 @@
 //	ARMOR_B2_ACCESS_KEY_ID       B2 application key ID
 //	ARMOR_B2_SECRET_ACCESS_KEY   B2 application key
 //	ARMOR_CF_DOMAIN              Cloudflare domain (optional)
-//	ARMOR_MEK                    Master encryption key (hex, 64 chars)
+//	ARMOR_MEK                    Master encryption key (hex, 64 chars); the
+//	                             -mek flag is rejected — key material never
+//	                             comes from argv
 //	ARMOR_BLOCK_SIZE             Encryption block size (default: 65536)
 //	VERIFIER_CHECK_INTERVAL      How often to run verification (default: 6h)
 //	VERIFIER_SAMPLE_SIZE         Number of historical objects to sample (default: 10)
@@ -47,20 +49,26 @@ import (
 	"github.com/jedarden/armor/internal/backend"
 	"github.com/jedarden/armor/internal/crypto"
 	"github.com/jedarden/armor/internal/manifest"
+	"github.com/jedarden/armor/internal/mekring"
 	"github.com/jedarden/armor/internal/metrics"
 	"github.com/jedarden/armor/internal/restoreverifier"
 	"github.com/jedarden/armor/internal/version"
 )
 
 var (
-	// Configuration flags
+	// Configuration flags. The two credential-value flags (-mek,
+	// -b2-secret-key) are registered but rejected when set: a value on the
+	// command line lands in shell history, ps, and transcripts. They keep
+	// their registrations so a deployment still carrying them fails with a
+	// diagnostic naming the environment variable instead of a bare
+	// "flag provided but not defined".
 	b2Region        = flag.String("b2-region", os.Getenv("ARMOR_B2_REGION"), "B2 region")
 	b2Endpoint      = flag.String("b2-endpoint", os.Getenv("ARMOR_B2_ENDPOINT"), "B2 S3 endpoint")
 	b2AccessKey     = flag.String("b2-access-key", os.Getenv("ARMOR_B2_ACCESS_KEY_ID"), "B2 access key ID")
-	b2SecretKey     = flag.String("b2-secret-key", os.Getenv("ARMOR_B2_SECRET_ACCESS_KEY"), "B2 secret key")
+	b2SecretKeyFlag = flag.String("b2-secret-key", "", "DEPRECATED: rejected — set ARMOR_B2_SECRET_ACCESS_KEY instead")
 	cfDomain        = flag.String("cf-domain", os.Getenv("ARMOR_CF_DOMAIN"), "Cloudflare domain")
-	mekHex          = flag.String("mek", os.Getenv("ARMOR_MEK"), "Master encryption key (hex)")
-	mekRingHex      = flag.String("mek-ring", os.Getenv("VERIFIER_MEK_RING"), "Comma-separated list of retired MEKs (hex, 64 chars each)")
+	mekFlagArg      = flag.String("mek", "", "DEPRECATED: rejected — set ARMOR_MEK instead")
+	mekRingSpec     = flag.String("mek-ring", os.Getenv("VERIFIER_MEK_RING"), "MEK ring: comma-separated fingerprint:hexkey entries, or @file holding the same list (bare retired MEKs still accepted, deprecated)")
 	blockSize       = flag.Int("block-size", 65536, "Encryption block size")
 	readConcurrency = flag.Int("read-concurrency", parseInt(os.Getenv("ARMOR_READ_CONCURRENCY"), 16), "Maximum concurrent ranged reads")
 
@@ -187,6 +195,18 @@ func main() {
 
 	flag.Parse()
 
+	// Secret values never come from argv: a credential on the command line
+	// lands in shell history, ps, and session transcripts. The rejected
+	// flags name the environment variable that carries the value instead.
+	if *mekFlagArg != "" {
+		log.Fatal("flag -mek no longer accepts the MEK: a value on the command line lands in shell history, ps, and transcripts. Set the ARMOR_MEK environment variable instead")
+	}
+	if *b2SecretKeyFlag != "" {
+		log.Fatal("flag -b2-secret-key no longer accepts the B2 secret key: a value on the command line lands in shell history, ps, and transcripts. Set the ARMOR_B2_SECRET_ACCESS_KEY environment variable instead")
+	}
+	b2SecretKey := os.Getenv("ARMOR_B2_SECRET_ACCESS_KEY")
+	mekHex := os.Getenv("ARMOR_MEK")
+
 	// Derive the B2 S3 endpoint from the region when not supplied, mirroring the
 	// ARMOR server (internal/config/config.go). This lets each per-cluster
 	// restore-verifier Deployment reuse the cluster's existing ARMOR_B2_REGION
@@ -194,16 +214,16 @@ func main() {
 	*b2Endpoint = deriveB2Endpoint(*b2Region, *b2Endpoint)
 
 	// Validate required flags
-	if *b2Region == "" || *b2Endpoint == "" || *b2AccessKey == "" || *b2SecretKey == "" {
+	if *b2Region == "" || *b2Endpoint == "" || *b2AccessKey == "" || b2SecretKey == "" {
 		log.Fatal("Missing required B2 credentials. Set ARMOR_B2_REGION, ARMOR_B2_ENDPOINT, ARMOR_B2_ACCESS_KEY_ID, ARMOR_B2_SECRET_ACCESS_KEY")
 	}
 
-	if *mekHex == "" {
-		log.Fatal("Missing MEK. Set ARMOR_MEK environment variable or -mek flag")
+	if mekHex == "" {
+		log.Fatal("Missing MEK. Set the ARMOR_MEK environment variable")
 	}
 
 	// Decode MEK
-	mek, err := hex.DecodeString(*mekHex)
+	mek, err := hex.DecodeString(mekHex)
 	if err != nil {
 		log.Fatalf("Invalid MEK hex: %v", err)
 	}
@@ -211,28 +231,27 @@ func main() {
 		log.Fatalf("Invalid MEK length: got %d bytes, expected 32", len(mek))
 	}
 
-	// Parse MEK ring (comma-separated hex MEKs)
+	// Parse the MEK ring through the shared grammar (fingerprint:key pairs,
+	// an @file, or the VERIFIER_MEK_RING environment source; the legacy bare
+	// retired-MEK form still works and prints the one-release pointer).
+	// A ring entry without key material is rejected here: unlike armor
+	// decrypt's fingerprint-only placeholder, a verifier ring entry that
+	// cannot unwrap anything would silently narrow verification coverage.
 	var mekRing []crypto.RingKeyEntry
-	if *mekRingHex != "" {
-		ringMEKs := strings.Split(*mekRingHex, ",")
-		for i, mekStr := range ringMEKs {
-			mekStr = strings.TrimSpace(mekStr)
-			if mekStr == "" {
-				continue
+	if *mekRingSpec != "" {
+		entries, notes, err := mekring.Parse(*mekRingSpec)
+		if err != nil {
+			log.Fatal(err)
+		}
+		for _, note := range notes {
+			log.Printf("Warning: -mek-ring/VERIFIER_MEK_RING %s (deprecated forms are removed after one release)", note)
+		}
+		for i, entry := range entries {
+			if entry.MEK == nil {
+				log.Fatalf("Invalid MEK ring entry %d: fingerprint-only entries carry no key material; pass fingerprint:key pairs, an @file, or set VERIFIER_MEK_RING", i)
 			}
-			ringMEK, err := hex.DecodeString(mekStr)
-			if err != nil {
-				log.Fatalf("Invalid MEK ring entry %d: invalid hex: %v", i, err)
-			}
-			if len(ringMEK) != 32 {
-				log.Fatalf("Invalid MEK ring entry %d: got %d bytes, expected 32", i, len(ringMEK))
-			}
-			fp := crypto.MEKFingerprint(ringMEK)
-			mekRing = append(mekRing, crypto.RingKeyEntry{
-				MEK:         ringMEK,
-				Fingerprint: fp,
-			})
-			log.Printf("Loaded ring key %d: fingerprint %s", i, fp)
+			log.Printf("Loaded ring key %d: fingerprint %s", i, entry.Fingerprint)
+			mekRing = append(mekRing, entry)
 		}
 		if len(mekRing) > 0 {
 			log.Printf("Loaded %d ring keys for verification", len(mekRing))
@@ -248,7 +267,7 @@ func main() {
 		Region:          *b2Region,
 		Endpoint:        *b2Endpoint,
 		AccessKeyID:     *b2AccessKey,
-		SecretKey:       *b2SecretKey,
+		SecretKey:       b2SecretKey,
 		CFDomain:        *cfDomain,
 		ReadConcurrency: *readConcurrency,
 	})
@@ -451,8 +470,12 @@ Environment Variables:
   ARMOR_B2_ACCESS_KEY_ID       B2 application key ID
   ARMOR_B2_SECRET_ACCESS_KEY   B2 application key
   ARMOR_CF_DOMAIN              Cloudflare domain (optional)
-  ARMOR_MEK                    Master encryption key (hex, 64 chars)
-  VERIFIER_MEK_RING            Comma-separated list of retired MEKs (hex, 64 chars each) for key rotation support
+  ARMOR_MEK                    Master encryption key (hex, 64 chars) — the only
+                               MEK source; the -mek flag is rejected
+  VERIFIER_MEK_RING            MEK ring for key rotation support: comma-separated
+                               fingerprint:hexkey entries (16-hex fingerprint :
+                               64-hex MEK); legacy bare retired MEKs still accepted
+                               (deprecated)
   VERIFIER_CHECK_INTERVAL      Verification check interval (default: 6h)
   VERIFIER_SAMPLE_SIZE         Historical sample size (default: 10)
   VERIFIER_HTTP_LISTEN         HTTP listen address (default: :9002)

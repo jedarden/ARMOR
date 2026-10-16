@@ -177,7 +177,7 @@ substitute for a DR drill against the published image and its escrow package.
 |------|---------|
 | `-mek` | Master encryption key as hex (32 bytes / 64 chars) |
 | `-mek-file` | File holding the MEK hex |
-| `-mek-ring` | Comma-separated MEK ring fingerprints (16 hex chars each); validates format only — it carries no key material, so ring unwrapping requires an escrow file |
+| `-mek-ring` | MEK ring: comma-separated `fingerprint:key` entries (16-hex fingerprint : 64-hex MEK — the same grammar restore-verifier takes), or `@file` holding the same list. Bare fingerprints (the old form) still parse for one release but carry no key material, so they can never unwrap |
 | `-mek-env` | Allow the `ARMOR_MEK` environment fallback when no MEK flag is set (default true) |
 | `-escrow` | Escrow JSON file: MEK, ring, and B2 credentials in one package |
 | `-input` | The object: a `b2://bucket/key` URL or a local file path |
@@ -189,9 +189,9 @@ substitute for a DR drill against the published image and its escrow package.
 | `-wrapped-dek` | Base64 wrapped DEK — required for local single-PUT files (the `x-amz-meta-armor-wrapped-dek` metadata value) |
 | `-sidecar` | JSON HMAC sidecar file for a local multipart object |
 | `-iv` | Object IV as hex (16 bytes) — required for a local multipart object (it has no header to read one from) |
-| `-version` | Envelope version (1 or 2) for local multipart sidecars lacking a version field (default 1) |
+| `-envelope-version` | Envelope version (1, 2, or 3) for local multipart sidecars lacking a version field (default 1); `-version` is a deprecated alias that still works and prints a pointer |
 | `-output` | Write plaintext here instead of stdout |
-| `-v` | Verbose progress on stderr |
+| `-verbose` | Verbose progress on stderr; `-v` is a deprecated alias that still works and prints a pointer (the top-level `armor -v` still prints the version) |
 | `-read-concurrency` | Maximum concurrent ranged reads (default `ARMOR_READ_CONCURRENCY` or 16) |
 
 - **Inputs:** one object, from B2 (`-input b2://bucket/key`, or `-input` +
@@ -233,7 +233,7 @@ performs, without a running server.
 | `-mek-file` | File holding the MEK hex |
 | `-escrow` | Escrow JSON file — the only way to verify objects written under ring keys other than the active one |
 | `-output` | Write the JSON report here (default stdout) |
-| `-v` | Verbose output on stderr |
+| `-verbose` | Verbose output on stderr; `-v` is a deprecated alias that still works and prints a pointer |
 | `-prefix` | Only verify keys under this prefix |
 | `-keys-file` | Verify exactly these keys: a JSON array or one key per line (`#` comments allowed) |
 | `-since` | Skip objects modified before this time (RFC3339 or YYYY-MM-DD) |

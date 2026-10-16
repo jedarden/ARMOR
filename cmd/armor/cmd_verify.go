@@ -42,7 +42,8 @@ func init() {
 	verifyFlags.StringVar(&mekFileFlag, "mek-file", "", "Read MEK from file (hex, 64 chars)")
 	verifyFlags.StringVar(&escrowFile, "escrow", "", "Path to escrow JSON file containing MEK, MEK ring and B2 credentials (self-contained recovery; the only multi-key source)")
 	verifyFlags.StringVar(&outputFlag, "output", "", "Output report file path (default: stdout)")
-	verifyFlags.BoolVar(&decryptVerboseFlag, "v", false, "Verbose output")
+	verifyFlags.BoolVar(&decryptVerboseFlag, "verbose", false, "Verbose output")
+	verifyFlags.BoolVar(&decryptVerboseFlag, "v", false, "DEPRECATED alias of -verbose")
 	verifyFlags.StringVar(&prefixFlag, "prefix", "", "Key prefix to filter objects (optional)")
 	verifyFlags.StringVar(&keysFileFlag, "keys-file", "", "Path to JSON file listing object keys to verify (one per line or JSON array)")
 	verifyFlags.StringVar(&sinceFlag, "since", "", "Only verify objects modified after this timestamp (RFC3339 or YYYY-MM-DD)")
@@ -91,6 +92,11 @@ func verify(fs *flag.FlagSet) {
 		fmt.Fprintf(os.Stderr, "Usage: armor verify [flags]\n")
 		os.Exit(2)
 	}
+
+	printDeprecatedFlagPointers(fs, map[string]string{
+		"v":   "-verbose",
+		"mek": "-mek-file or the ARMOR_MEK environment variable",
+	})
 
 	// Validate required flags
 	if bucketFlag == "" {

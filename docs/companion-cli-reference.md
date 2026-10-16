@@ -50,6 +50,17 @@ beside this reference when planning a rollout.
   both of which trigger a graceful shutdown and exit 0.
 - `restore-verifier --version` (also `-v`) prints the version line and exits
   0 before any configuration is read. armor-fleet has no version flag.
+- **One flag vocabulary with the armor CLI** (armor-b1e3a56b): verbosity is
+  `-verbose` (`armor decrypt`/`armor verify` keep `-v` as a deprecated alias
+  that still works and prints a pointer — the top-level `armor -v` remains
+  the version flag), and `-mek-ring` means the same grammar everywhere:
+  comma-separated `fingerprint:key` entries (16-hex fingerprint : 64-hex
+  MEK) or an `@file` holding the same list.
+- **Credential values never come from argv.** A secret on a command line
+  lands in shell history, `ps`, and session transcripts, so the flags that
+  historically accepted one (`restore-verifier -mek` and
+  `-b2-secret-key`, `armor-fleet -seam-token`) are rejected with a
+  diagnostic naming the environment variable to set instead.
 
 Exit-code conventions used by both binaries:
 
@@ -76,10 +87,10 @@ to run forever beside the ARMOR proxy whose bucket scope it verifies.
 | `-b2-region` | B2 region, e.g. `us-west-004` (default `ARMOR_B2_REGION`) |
 | `-b2-endpoint` | B2 S3 endpoint (default `ARMOR_B2_ENDPOINT`); when empty and a region is set it is derived as `https://s3.<region>.backblazeb2.com`, so a Deployment can reuse the cluster's `ARMOR_B2_REGION` alone |
 | `-b2-access-key` | B2 access key ID (default `ARMOR_B2_ACCESS_KEY_ID`) |
-| `-b2-secret-key` | B2 secret key (default `ARMOR_B2_SECRET_ACCESS_KEY`) |
+| `-b2-secret-key` | REJECTED when set: key material on the command line lands in shell history and `ps`. Set `ARMOR_B2_SECRET_ACCESS_KEY` instead |
 | `-cf-domain` | Cloudflare domain for reads through the proxy leg (default `ARMOR_CF_DOMAIN`) |
-| `-mek` | Active master encryption key, 32-byte hex (default `ARMOR_MEK`) |
-| `-mek-ring` | Comma-separated retired MEKs, 32-byte hex each (default `VERIFIER_MEK_RING`); lets mid-rotation buckets verify objects written under retired keys. Each entry is fingerprinted at startup and logged |
+| `-mek` | REJECTED when set: key material on the command line lands in shell history and `ps`. Set `ARMOR_MEK` instead |
+| `-mek-ring` | MEK ring for mid-rotation buckets: comma-separated `fingerprint:key` entries (16-hex fingerprint : 64-hex MEK — the same grammar `armor decrypt -mek-ring` takes), or `@file` holding the same list (default `VERIFIER_MEK_RING`, same grammar). Bare retired MEKs still parse for one release and log a deprecation pointer |
 | `-block-size` | Encryption block size (default 65536) |
 | `-read-concurrency` | Maximum concurrent ranged reads (default `ARMOR_READ_CONCURRENCY` or 16) |
 | `-check-interval` | Verification cadence (default `VERIFIER_CHECK_INTERVAL` or 6h). One dual-path run per interval; a tick that fires while a run executes is dropped, so runs never chain back-to-back |
@@ -101,11 +112,13 @@ to run forever beside the ARMOR proxy whose bucket scope it verifies.
 ### Environment
 
 Every flag above takes its value from argv or, when unset there, from the
-environment named in its row. Exactly two variables have no flag:
-`ARMOR_BUCKET` and `ARMOR_PREFIX` build the single default bucket scope when
-no `-bucket` flag is passed. The environment-only path is how a
-restore-verifier Deployment reuses its co-located ARMOR proxy's config
-sources unchanged.
+environment named in its row — except the two credential-value flags, which
+are argv-rejected outright: `-mek` and `-b2-secret-key` exist only to fail
+with a pointer to `ARMOR_MEK` and `ARMOR_B2_SECRET_ACCESS_KEY`. Exactly two
+variables have no flag at all: `ARMOR_BUCKET` and `ARMOR_PREFIX` build the
+single default bucket scope when no `-bucket` flag is passed. The
+environment path is how a restore-verifier Deployment reuses its co-located
+ARMOR proxy's config sources unchanged.
 
 ### Outputs
 
@@ -129,7 +142,8 @@ sources unchanged.
   shutdown: the verification loop is stopped, then the HTTP server drains
   with a 30-second cap.
 - **1** — startup validation or a fatal runtime error, each logged with its
-  reason: missing B2 credentials (region, endpoint, access key, or secret
+  reason: key material passed on the rejected `-mek` or `-b2-secret-key`
+  flag, missing B2 credentials (region, endpoint, access key, or secret
   key), missing MEK, MEK that is not valid hex or not 32 bytes, an invalid
   MEK-ring entry, B2 backend construction failure, no bucket scope (no
   `-bucket` flags and no `ARMOR_BUCKET`), and failure to bind the HTTP
@@ -197,11 +211,11 @@ page shows and how it complements the drift checker are the
 | `-targets` | Required. Path to the targets YAML file: a list of `name`, `cluster`, `namespace`, `service`, `admin_port` entries, every field required — name labels the card, the rest locate the instance's admin Service through SEAM. A file that is unreadable, unparseable, empty, or has an entry missing a field is a startup failure |
 | `-listen` | Console HTTP listen address (default `:8080`) |
 | `-interval` | Poll interval in seconds (default 60). The first poll runs synchronously at startup, before the HTTP server binds |
-| `-seam-token` | SEAM bearer token; required, from this flag or `SEAM_TOKEN`. Missing from both is a usage error |
+| `-seam-token` | REJECTED when set: a token on the command line lands in shell history and `ps`. Set `SEAM_TOKEN` instead |
 
 ### Environment
 
-`SEAM_TOKEN` — the SEAM bearer token when `-seam-token` is not passed. The
+`SEAM_TOKEN` — the SEAM bearer token, and the only way to supply it. The
 token needs only SEAM's read-only `k8s-ro` scope: the console issues GETs
 against `/k8s/<cluster>/api/v1/namespaces/<namespace>/services/<service>:<admin_port>/proxy`
 and nothing else.
@@ -229,9 +243,10 @@ leg's error and skips the rest. A failed poll never stops the process.
 - **0** — graceful SIGINT/SIGTERM shutdown (HTTP drain capped at 5 seconds).
 - **1** — startup or runtime failure: targets file unreadable or
   unparseable, zero targets in it, an entry missing a required field, HTTP
-  listener bind failure, a shutdown error, or no SEAM token from flag and
+  listener bind failure, a shutdown error, or no SEAM token in the
   environment.
-- **2** — missing `-targets` or an undefined flag.
+- **2** — missing `-targets`, an undefined flag, or a token passed on the
+  rejected `-seam-token` flag.
 
 Positional arguments are ignored (see Shared behavior).
 
@@ -248,10 +263,10 @@ Positional arguments are ignored (see Shared behavior).
 
 ### Safe use
 
-- **The SEAM token is a credential.** Prefer `SEAM_TOKEN` in the
-  Deployment's env source over `-seam-token` on a command line — argv lands
-  in shell history and `ps`. The read-only scope is the boundary: the token
-  cannot mutate anything even if it leaks.
+- **The SEAM token is a credential.** `SEAM_TOKEN` in the Deployment's env
+  source is the only accepted form — `-seam-token` on a command line is
+  rejected because argv lands in shell history and `ps`. The read-only scope
+  is the boundary: the token cannot mutate anything even if it leaks.
 - **Keep `-listen` off public interfaces** (loopback or tailnet). The
   console exposes fleet topology (clusters, namespaces, services, ports) and
   instance health to anyone who can reach it.

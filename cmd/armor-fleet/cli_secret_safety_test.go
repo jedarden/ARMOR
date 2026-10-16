@@ -24,9 +24,11 @@ import (
 )
 
 // TestFleetCLIReferenceTokenNeverReachesOutput runs the documented startup
-// smoke with a distinctive SEAM token, lets the first poll fail against the
-// unreachable SEAM host, and asserts the token appears nowhere in the
-// process's stderr or the served fleet.json before a clean SIGTERM shutdown.
+// smoke with a distinctive SEAM token supplied through the environment (the
+// only token source — the -seam-token flag is rejected), lets the first poll
+// fail against the unreachable SEAM host, and asserts the token appears
+// nowhere in the process's stderr or the served fleet.json before a clean
+// SIGTERM shutdown.
 func TestFleetCLIReferenceTokenNeverReachesOutput(t *testing.T) {
 	const token = "smoke-fake-token-4leakcheck"
 
@@ -39,9 +41,8 @@ func TestFleetCLIReferenceTokenNeverReachesOutput(t *testing.T) {
 		"-targets", targets,
 		"-listen", addr,
 		"-interval", "3600",
-		"-seam-token", token,
 	)
-	cmd.Env = fleetReferenceEnv(t)
+	cmd.Env = fleetReferenceEnv(t, "SEAM_TOKEN="+token)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	if err := cmd.Start(); err != nil {
@@ -111,5 +112,30 @@ func TestFleetCLIReferenceTokenNeverReachesOutput(t *testing.T) {
 
 	if strings.Contains(stderr.String(), token) {
 		t.Errorf("armor-fleet stderr carries the SEAM token value; the console must never echo credential material:\n%s", stderr.String())
+	}
+}
+
+// TestFleetSeamTokenFlagIsRejected pins the secrets-by-reference rule for
+// the console (armor-b1e3a56b): -seam-token no longer accepts the token
+// value — argv lands in shell history, ps, and transcripts — so passing it
+// is a usage error whose diagnostic names the SEAM_TOKEN environment
+// variable and never echoes the value it was given.
+func TestFleetSeamTokenFlagIsRejected(t *testing.T) {
+	const token = "rejected-token-4safety"
+
+	_, stderr, code := runFleet(t, fleetReferenceEnv(t),
+		"-targets", fleetSmokeTargets(t),
+		"-seam-token", token,
+	)
+	if code != 2 {
+		t.Errorf("-seam-token: exit = %d, want 2 (usage error)\nstderr:\n%s", code, stderr)
+	}
+	for _, want := range []string{"-seam-token no longer accepts", "SEAM_TOKEN environment variable"} {
+		if !strings.Contains(stderr, want) {
+			t.Errorf("-seam-token rejection missing %q:\n%s", want, stderr)
+		}
+	}
+	if strings.Contains(stderr, token) {
+		t.Errorf("-seam-token rejection echoed the token value:\n%s", stderr)
 	}
 }
