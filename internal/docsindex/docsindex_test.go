@@ -210,6 +210,13 @@ func repoRoot(t *testing.T) string {
 // is false when git cannot answer (no binary, or a clean extraction without a
 // repository), in which case the caller must fall back to the raw walk.
 func trackedFiles(root string) (map[string]bool, bool) {
+	// A git archive nested under the shared checkout has no repository of
+	// its own. Git can still succeed by discovering the parent checkout, but
+	// its index cannot describe the archived docs tree.
+	top, err := exec.Command("git", "-C", root, "rev-parse", "--show-toplevel").Output()
+	if err != nil || filepath.Clean(strings.TrimSpace(string(top))) != filepath.Clean(root) {
+		return nil, false
+	}
 	out, err := exec.Command("git", "-C", root, "ls-files", "-z", "--", "docs").Output()
 	if err != nil {
 		return nil, false
