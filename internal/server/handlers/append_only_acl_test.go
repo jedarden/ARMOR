@@ -138,19 +138,19 @@ func signedACLRequest(t *testing.T, method, rawURL, accessKey, secretKey string,
 
 func presignedACLRequest(t *testing.T, rawURL, accessKey, secretKey string, body []byte) *http.Request {
 	t.Helper()
-	// The server's query-auth verifier intentionally treats presigned request
-	// bodies as empty. Rebuild the request using the empty payload hash and
-	// retain the JSON body for handlePresign to decode.
+	// Query authentication signs the literal UNSIGNED-PAYLOAD, while the
+	// request keeps its JSON body for handlePresign to decode.
 	querySigner := v4.NewSigner()
-	emptyHash := sha256.Sum256(nil)
-	emptyHashHex := hex.EncodeToString(emptyHash[:])
 	unsigned := httptest.NewRequest(http.MethodPost, rawURL, bytes.NewReader(body))
 	unsigned.Header.Set("Content-Type", "application/json")
+	query := unsigned.URL.Query()
+	query.Set("X-Amz-Expires", "3600")
+	unsigned.URL.RawQuery = query.Encode()
 	uri, headers, err := querySigner.PresignHTTP(
 		context.Background(),
 		aws.Credentials{AccessKeyID: accessKey, SecretAccessKey: secretKey},
 		unsigned,
-		emptyHashHex,
+		"UNSIGNED-PAYLOAD",
 		"s3",
 		"us-east-005",
 		time.Now().UTC(),
