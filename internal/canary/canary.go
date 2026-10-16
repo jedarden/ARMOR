@@ -113,6 +113,7 @@ type Monitor struct {
 	blockSize          int
 	instanceID         string
 	formatWriteVersion int // Format version to write (2 or 3)
+	readObject         func(context.Context, string, string) ([]byte, error)
 
 	state CanaryState
 
@@ -144,17 +145,18 @@ type Config struct {
 	MEK                 []byte
 	BlockSize           int
 	InstanceID          string
-	FormatWriteVersion  int           // Format version to write (2 or 3)
-	Interval            time.Duration // Check interval (default 5 minutes)
-	StaleAfter          time.Duration // Healthy status becomes stale after this age (default 2*Interval)
-	CanarySize          int           // Size of canary content (default 1024 bytes)
-	MaxRetries          int           // Max retries on failure (default 3)
-	RetryDelay          time.Duration // Delay between retries (default 10s)
-	MultipartInterval   time.Duration // Multipart check interval (default 1 hour)
-	MultipartStaleAfter time.Duration // Multipart healthy status becomes stale after this age (default 2*MultipartInterval)
-	MultipartSize       int           // Size of multipart canary (default 6MB)
-	SecondaryInterval   time.Duration // Secondary backend check interval (default 5 minutes)
-	SecondaryStaleAfter time.Duration // Secondary healthy status becomes stale after this age (default 2*SecondaryInterval)
+	FormatWriteVersion  int                                                   // Format version to write (2 or 3)
+	ReadObject          func(context.Context, string, string) ([]byte, error) // Normal S3 GetObject read path, when supplied by the server
+	Interval            time.Duration                                         // Check interval (default 5 minutes)
+	StaleAfter          time.Duration                                         // Healthy status becomes stale after this age (default 2*Interval)
+	CanarySize          int                                                   // Size of canary content (default 1024 bytes)
+	MaxRetries          int                                                   // Max retries on failure (default 3)
+	RetryDelay          time.Duration                                         // Delay between retries (default 10s)
+	MultipartInterval   time.Duration                                         // Multipart check interval (default 1 hour)
+	MultipartStaleAfter time.Duration                                         // Multipart healthy status becomes stale after this age (default 2*MultipartInterval)
+	MultipartSize       int                                                   // Size of multipart canary (default 10.5 MiB at 64 KiB blocks)
+	SecondaryInterval   time.Duration                                         // Secondary backend check interval (default 5 minutes)
+	SecondaryStaleAfter time.Duration                                         // Secondary healthy status becomes stale after this age (default 2*SecondaryInterval)
 }
 
 // NewMonitor creates a new canary monitor.
@@ -181,9 +183,8 @@ func NewMonitor(cfg Config) *Monitor {
 		cfg.MultipartStaleAfter = 2 * cfg.MultipartInterval
 	}
 	if cfg.MultipartSize == 0 {
-		// Two canary parts so the multipart path is exercised with at least one
-		// non-final part subject to B2's 5 MiB minimum. For the default 64 KiB
-		// block this is 2 * 5.25 MiB = 10.5 MiB.
+		// 10.5 MiB at the default block size: enough for two B2-sized
+		// non-final v3 parts plus a final part, or two full v2 parts.
 		cfg.MultipartSize = 2 * canaryMultipartPartSize(crypto.DefaultBlockSize)
 	}
 	if cfg.SecondaryInterval == 0 {
@@ -193,7 +194,7 @@ func NewMonitor(cfg Config) *Monitor {
 		cfg.SecondaryStaleAfter = 2 * cfg.SecondaryInterval
 	}
 	if cfg.FormatWriteVersion == 0 {
-		cfg.FormatWriteVersion = 2 // Default to version 2
+		cfg.FormatWriteVersion = 3 // Match the server's default write version
 	}
 
 	instanceID := cfg.InstanceID
@@ -218,6 +219,7 @@ func NewMonitor(cfg Config) *Monitor {
 		blockSize:           cfg.BlockSize,
 		instanceID:          instanceID,
 		formatWriteVersion:  cfg.FormatWriteVersion,
+		readObject:          cfg.ReadObject,
 		interval:            cfg.Interval,
 		staleAfter:          cfg.StaleAfter,
 		canarySize:          cfg.CanarySize,
@@ -408,7 +410,8 @@ func (m *Monitor) check(ctx context.Context) (*Result, error) {
 	binary.LittleEndian.PutUint64(canaryContent[:8], uint64(timestamp))
 
 	// Generate unique key for this canary
-	key := m.applyPrefix(fmt.Sprintf(".armor/canary/%s/%d", m.instanceID, timestamp))
+	clientKey := fmt.Sprintf(".armor/canary/%s/%d", m.instanceID, timestamp)
+	key := m.applyPrefix(clientKey)
 
 	// Generate DEK and IV
 	dek, err := crypto.GenerateDEK()
@@ -431,40 +434,18 @@ func (m *Monitor) check(ctx context.Context) (*Result, error) {
 	// Compute plaintext SHA-256
 	plaintextSHA := crypto.ComputePlaintextSHA256(canaryContent)
 
-	// Create envelope header
-	header, err := crypto.NewEnvelopeHeader(iv, int64(len(canaryContent)), m.blockSize, plaintextSHA)
+	// Use the configured single-PUT format, including v3's trailer block table.
+	envelope, err := encryptCanaryEnvelope(canaryContent, dek, iv, m.blockSize, uint8(m.formatWriteVersion))
 	if err != nil {
-		return nil, fmt.Errorf("failed to create header: %w", err)
+		return nil, err
 	}
-
-	headerBytes, err := header.Encode()
-	if err != nil {
-		return nil, fmt.Errorf("failed to encode header: %w", err)
-	}
-
-	// Encrypt
-	encryptor, err := crypto.NewEncryptor(dek, iv, m.blockSize)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create encryptor: %w", err)
-	}
-
-	encrypted, hmacTable, err := encryptor.Encrypt(canaryContent)
-	if err != nil {
-		return nil, fmt.Errorf("failed to encrypt: %w", err)
-	}
-
-	// Build envelope
-	envelope := make([]byte, 0, len(headerBytes)+len(encrypted)+len(hmacTable))
-	envelope = append(envelope, headerBytes...)
-	envelope = append(envelope, encrypted...)
-	envelope = append(envelope, hmacTable...)
 
 	// Compute ETag
 	etag := backend.ComputeETag(canaryContent)
 
 	// Build metadata
 	meta := (&backend.ARMORMetadata{
-		Version:        1,
+		Version:        m.formatWriteVersion,
 		BlockSize:      m.blockSize,
 		PlaintextSize:  int64(len(canaryContent)),
 		ContentType:    "application/octet-stream",
@@ -501,48 +482,13 @@ func (m *Monitor) check(ctx context.Context) (*Result, error) {
 		result.CFCacheHit = (cfStatus == "HIT" || cfStatus == "STALE" || cfStatus == "REVALIDATED")
 	}
 
-	// Parse header
-	downloadedHeader, err := crypto.DecodeHeader(downloadedEnvelope)
+	stored, err := m.backend.Head(ctx, m.bucket, key)
 	if err != nil {
-		return nil, fmt.Errorf("failed to decode header: %w", err)
+		return nil, fmt.Errorf("failed to read canary metadata: %w", err)
 	}
-
-	// Extract encrypted blocks and HMAC table
-	dataStart := int64(crypto.HeaderSize)
-	dataEnd := dataStart + int64(len(canaryContent))
-	hmacStart := downloadedHeader.HMACTableOffset()
-	hmacEnd := hmacStart + int64(downloadedHeader.BlockCount())*crypto.HMACSize
-
-	if hmacEnd > int64(len(downloadedEnvelope)) {
-		return nil, fmt.Errorf("downloaded envelope too short for HMAC table")
-	}
-
-	downloadedEncrypted := downloadedEnvelope[dataStart:dataEnd]
-	downloadedHMAC := downloadedEnvelope[hmacStart:hmacEnd]
-
-	// Unwrap DEK
-	unwrappedDEK, err := crypto.UnwrapDEK(m.mek, wrappedDEK)
+	decrypted, err := decryptCanaryEnvelope(downloadedEnvelope, stored.Metadata, m.mek)
 	if err != nil {
-		return nil, fmt.Errorf("failed to unwrap DEK: %w", err)
-	}
-
-	// Create decryptor (explicitly use Version1 to match the canary's metadata)
-	decryptor, err := crypto.NewDecryptorWithVersion(unwrappedDEK, iv, m.blockSize, crypto.Version1)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create decryptor: %w", err)
-	}
-
-	// Verify HMACs
-	if err := decryptor.VerifyHMACs(downloadedEncrypted, downloadedHMAC); err != nil {
-		result.HMACVerified = false
-		return nil, fmt.Errorf("HMAC verification failed: %w", err)
-	}
-	result.HMACVerified = true
-
-	// Decrypt
-	decrypted, err := decryptor.Decrypt(downloadedEncrypted, downloadedHMAC)
-	if err != nil {
-		return nil, fmt.Errorf("failed to decrypt: %w", err)
+		return nil, err
 	}
 
 	// Verify decrypted content matches original
@@ -551,10 +497,15 @@ func (m *Monitor) check(ctx context.Context) (*Result, error) {
 		return nil, fmt.Errorf("decrypted content does not match original")
 	}
 	result.DecryptVerified = true
-
-	// Verify plaintext SHA
-	if err := downloadedHeader.VerifyPlaintextSHA(decrypted); err != nil {
-		return nil, fmt.Errorf("plaintext SHA verification failed: %w", err)
+	result.HMACVerified = true
+	if m.readObject != nil {
+		throughServer, err := m.readObject(ctx, m.bucket, clientKey)
+		if err != nil {
+			return nil, fmt.Errorf("canary GetObject failed: %w", err)
+		}
+		if !bytes.Equal(throughServer, canaryContent) {
+			return nil, fmt.Errorf("canary GetObject plaintext does not match the probe")
+		}
 	}
 
 	// Clean up canary (best effort)
@@ -651,8 +602,11 @@ func canaryMultipartPartSize(blockSize int) int {
 	return partSize
 }
 
-// checkMultipart performs a multipart canary check to exercise the multipart upload path.
+// checkMultipart exercises the configured multipart write and read format.
 func (m *Monitor) checkMultipart(ctx context.Context) (*Result, error) {
+	if m.formatWriteVersion == 3 {
+		return m.checkMultipartV3(ctx)
+	}
 	result := &Result{
 		LastCheck: time.Now(),
 	}
@@ -667,13 +621,9 @@ func (m *Monitor) checkMultipart(ctx context.Context) (*Result, error) {
 	// Embed timestamp for verification
 	binary.LittleEndian.PutUint64(canaryContent[:8], uint64(timestamp))
 
-	// Generate unique key for this canary
-	var key string
-	if m.formatWriteVersion == 3 {
-		key = m.applyPrefix(fmt.Sprintf(".armor/canary-multipart-v3/%s/%d", m.instanceID, timestamp))
-	} else {
-		key = m.applyPrefix(fmt.Sprintf(".armor/canary-multipart/%s/%d", m.instanceID, timestamp))
-	}
+	// The remaining path is the legacy v2 multipart layout.
+	clientKey := fmt.Sprintf(".armor/canary-multipart/%s/%d", m.instanceID, timestamp)
+	key := m.applyPrefix(clientKey)
 
 	// Generate DEK and IV
 	dek, err := crypto.GenerateDEK()
@@ -696,19 +646,8 @@ func (m *Monitor) checkMultipart(ctx context.Context) (*Result, error) {
 	// Compute plaintext SHA-256
 	plaintextSHA := crypto.ComputePlaintextSHA256(canaryContent)
 
-	// Determine envelope version based on formatWriteVersion
-	var envelopeVersion int
-	switch m.formatWriteVersion {
-	case 3:
-		envelopeVersion = crypto.Version3
-	case 2:
-		envelopeVersion = crypto.Version2
-	default:
-		envelopeVersion = crypto.Version2 // Default to Version2 for security
-	}
-
 	// Create envelope header
-	header, err := crypto.NewEnvelopeHeaderWithVersion(iv, int64(len(canaryContent)), m.blockSize, plaintextSHA, uint8(envelopeVersion))
+	header, err := crypto.NewEnvelopeHeaderWithVersion(iv, int64(len(canaryContent)), m.blockSize, plaintextSHA, crypto.Version2)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create header: %w", err)
 	}
@@ -718,17 +657,7 @@ func (m *Monitor) checkMultipart(ctx context.Context) (*Result, error) {
 		return nil, fmt.Errorf("failed to encode header: %w", err)
 	}
 
-	// Encrypt with the appropriate version
-	var encryptor crypto.Encryptor
-	if envelopeVersion == crypto.Version3 {
-		var enc *crypto.Encryptor
-		enc, err = crypto.NewEncryptorWithVersion(dek, iv, m.blockSize, crypto.Version3)
-		encryptor = *enc
-	} else {
-		var enc *crypto.Encryptor
-		enc, err = crypto.NewEncryptor(dek, iv, m.blockSize)
-		encryptor = *enc
-	}
+	encryptor, err := crypto.NewEncryptor(dek, iv, m.blockSize)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create encryptor: %w", err)
 	}
@@ -747,18 +676,8 @@ func (m *Monitor) checkMultipart(ctx context.Context) (*Result, error) {
 	// Compute ETag
 	etag := backend.ComputeETag(canaryContent)
 
-	// Build metadata with appropriate version
-	var metaVersion int
-	switch envelopeVersion {
-	case crypto.Version3:
-		metaVersion = 3
-	case crypto.Version2:
-		metaVersion = 2
-	default:
-		metaVersion = 2 // Default to Version2
-	}
 	meta := (&backend.ARMORMetadata{
-		Version:        metaVersion,
+		Version:        2,
 		BlockSize:      m.blockSize,
 		PlaintextSize:  int64(len(canaryContent)),
 		ContentType:    "application/octet-stream",
@@ -787,50 +706,24 @@ func (m *Monitor) checkMultipart(ctx context.Context) (*Result, error) {
 	// ("shuffled") order and the ETags are reassembled in ascending part-number
 	// order below, as CompleteMultipartUpload requires.
 	//
-	// For v3 format, use exactly 3 parts with random sizes (>= 5 MiB except the last).
-	// For v1/v2, use uniform block-aligned parts as before.
+	// V2 uses uniform block-aligned parts.
 	type canaryPart struct {
 		num  int32
 		data []byte
 	}
 	var canaryParts []canaryPart
-
-	if m.formatWriteVersion == 3 {
-		// V3: Use exactly 3 parts with random sizes
-		partSizes := generateV3PartSizes(len(envelope))
-
-		for i, partSize := range partSizes {
-			partNum := int32(i + 1)
-			// Calculate offset based on previous part sizes
-			offset := 0
-			for j := 0; j < i; j++ {
-				offset += partSizes[j]
-			}
-			end := offset + partSize
-			if end > len(envelope) {
-				end = len(envelope)
-			}
-			canaryParts = append(canaryParts, canaryPart{
-				num:  partNum,
-				data: envelope[offset:end],
-			})
+	partSize := canaryMultipartPartSize(m.blockSize)
+	partNum := int32(1)
+	for offset := 0; offset < len(envelope); offset += partSize {
+		end := offset + partSize
+		if end > len(envelope) {
+			end = len(envelope)
 		}
-	} else {
-		// V1/V2: Use uniform block-aligned parts
-		partSize := canaryMultipartPartSize(m.blockSize)
-
-		partNum := int32(1)
-		for offset := 0; offset < len(envelope); offset += partSize {
-			end := offset + partSize
-			if end > len(envelope) {
-				end = len(envelope)
-			}
-			canaryParts = append(canaryParts, canaryPart{
-				num:  partNum,
-				data: envelope[offset:end],
-			})
-			partNum++
-		}
+		canaryParts = append(canaryParts, canaryPart{
+			num:  partNum,
+			data: envelope[offset:end],
+		})
+		partNum++
 	}
 
 	// ETags indexed by part number (position num-1); each goroutine writes a
@@ -899,44 +792,6 @@ func (m *Monitor) checkMultipart(ctx context.Context) (*Result, error) {
 		result.CFCacheHit = (cfStatus == "HIT" || cfStatus == "STALE" || cfStatus == "REVALIDATED")
 	}
 
-	// For v3, verify a range straddling a part boundary
-	if m.formatWriteVersion == 3 && len(canaryParts) >= 2 {
-		// Pick a boundary between part 1 and part 2
-		// Read a range that starts before the boundary and ends after it
-		part1EndOffset := int64(len(canaryParts[0].data))
-		// Read a 1 MiB range centered on the boundary
-		rangeSize := int64(1024 * 1024) // 1 MiB
-		rangeOffset := part1EndOffset - rangeSize/2
-		if rangeOffset < 0 {
-			rangeOffset = 0
-		}
-		rangeEnd := rangeOffset + rangeSize
-		if rangeEnd > int64(len(envelope)) {
-			rangeEnd = int64(len(envelope))
-			rangeOffset = rangeEnd - rangeSize
-			if rangeOffset < 0 {
-				rangeOffset = 0
-			}
-		}
-
-		// Read the range
-		rangeBody, _, err := m.backend.GetRangeWithHeaders(ctx, m.bucket, key, rangeOffset, rangeEnd-rangeOffset)
-		if err != nil {
-			return nil, fmt.Errorf("failed to download range for boundary verification: %w", err)
-		}
-		downloadedRange, err := io.ReadAll(rangeBody)
-		rangeBody.Close()
-		if err != nil {
-			return nil, fmt.Errorf("failed to read downloaded range: %w", err)
-		}
-
-		// Verify the range matches the original envelope
-		expectedRange := envelope[rangeOffset:rangeEnd]
-		if !bytes.Equal(downloadedRange, expectedRange) {
-			return nil, fmt.Errorf("range verification failed: boundary range does not match")
-		}
-	}
-
 	// Verify size matches
 	if len(downloadedEnvelope) != len(envelope) {
 		return nil, fmt.Errorf("multipart download size mismatch: got %d, expected %d", len(downloadedEnvelope), len(envelope))
@@ -973,7 +828,7 @@ func (m *Monitor) checkMultipart(ctx context.Context) (*Result, error) {
 	}
 
 	// Create decryptor with the appropriate version (matching the envelope version used during upload)
-	decryptor, err := crypto.NewDecryptorWithVersion(unwrappedDEK, iv, m.blockSize, uint8(envelopeVersion))
+	decryptor, err := crypto.NewDecryptorWithVersion(unwrappedDEK, iv, m.blockSize, crypto.Version2)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create decryptor: %w", err)
 	}
@@ -1001,6 +856,15 @@ func (m *Monitor) checkMultipart(ctx context.Context) (*Result, error) {
 	// Verify plaintext SHA
 	if err := downloadedHeader.VerifyPlaintextSHA(decrypted); err != nil {
 		return nil, fmt.Errorf("plaintext SHA verification failed: %w", err)
+	}
+	if m.readObject != nil {
+		throughServer, err := m.readObject(ctx, m.bucket, clientKey)
+		if err != nil {
+			return nil, fmt.Errorf("multipart GetObject failed: %w", err)
+		}
+		if !bytes.Equal(throughServer, canaryContent) {
+			return nil, fmt.Errorf("multipart GetObject plaintext does not match the probe")
+		}
 	}
 
 	// Clean up canary (best effort)
@@ -1168,40 +1032,17 @@ func (m *Monitor) checkSecondaryBackend(ctx context.Context) (*Result, error) {
 	// Compute plaintext SHA-256
 	plaintextSHA := crypto.ComputePlaintextSHA256(canaryContent)
 
-	// Create envelope header
-	header, err := crypto.NewEnvelopeHeader(iv, int64(len(canaryContent)), m.blockSize, plaintextSHA)
+	envelope, err := encryptCanaryEnvelope(canaryContent, dek, iv, m.blockSize, uint8(m.formatWriteVersion))
 	if err != nil {
-		return nil, fmt.Errorf("failed to create header: %w", err)
+		return nil, err
 	}
-
-	headerBytes, err := header.Encode()
-	if err != nil {
-		return nil, fmt.Errorf("failed to encode header: %w", err)
-	}
-
-	// Encrypt
-	encryptor, err := crypto.NewEncryptor(dek, iv, m.blockSize)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create encryptor: %w", err)
-	}
-
-	encrypted, hmacTable, err := encryptor.Encrypt(canaryContent)
-	if err != nil {
-		return nil, fmt.Errorf("failed to encrypt: %w", err)
-	}
-
-	// Build envelope
-	envelope := make([]byte, 0, len(headerBytes)+len(encrypted)+len(hmacTable))
-	envelope = append(envelope, headerBytes...)
-	envelope = append(envelope, encrypted...)
-	envelope = append(envelope, hmacTable...)
 
 	// Compute ETag
 	etag := backend.ComputeETag(canaryContent)
 
 	// Build metadata
 	meta := (&backend.ARMORMetadata{
-		Version:        1,
+		Version:        m.formatWriteVersion,
 		BlockSize:      m.blockSize,
 		PlaintextSize:  int64(len(canaryContent)),
 		ContentType:    "application/octet-stream",
@@ -1232,7 +1073,6 @@ func (m *Monitor) checkSecondaryBackend(ctx context.Context) (*Result, error) {
 	}
 	primaryEnvelope, err := io.ReadAll(primaryBody)
 	primaryBody.Close()
-	_ = primaryInfo // Not used but required by Get signature
 	if err != nil {
 		return nil, fmt.Errorf("failed to read secondary canary from primary: %w", err)
 	}
@@ -1244,7 +1084,6 @@ func (m *Monitor) checkSecondaryBackend(ctx context.Context) (*Result, error) {
 	}
 	secondaryEnvelope, err := io.ReadAll(secondaryBody)
 	secondaryBody.Close()
-	_ = secondaryInfo // Not used but required by Get signature
 	if err != nil {
 		return nil, fmt.Errorf("failed to read secondary canary from secondary backend: %w", err)
 	}
@@ -1255,46 +1094,10 @@ func (m *Monitor) checkSecondaryBackend(ctx context.Context) (*Result, error) {
 		return nil, fmt.Errorf("secondary backend envelope does not match primary")
 	}
 
-	// Parse header from secondary envelope
-	downloadedHeader, err := crypto.DecodeHeader(secondaryEnvelope)
-	if err != nil {
-		return nil, fmt.Errorf("failed to decode secondary header: %w", err)
+	if primaryInfo.Metadata["x-amz-meta-armor-wrapped-dek"] != secondaryInfo.Metadata["x-amz-meta-armor-wrapped-dek"] {
+		return nil, fmt.Errorf("secondary backend metadata does not match primary")
 	}
-
-	// Extract encrypted blocks and HMAC table
-	dataStart := int64(crypto.HeaderSize)
-	dataEnd := dataStart + int64(len(canaryContent))
-	hmacStart := downloadedHeader.HMACTableOffset()
-	hmacEnd := hmacStart + int64(downloadedHeader.BlockCount())*crypto.HMACSize
-
-	if hmacEnd > int64(len(secondaryEnvelope)) {
-		return nil, fmt.Errorf("downloaded envelope too short for HMAC table")
-	}
-
-	downloadedEncrypted := secondaryEnvelope[dataStart:dataEnd]
-	downloadedHMAC := secondaryEnvelope[hmacStart:hmacEnd]
-
-	// Unwrap DEK
-	unwrappedDEK, err := crypto.UnwrapDEK(m.mek, wrappedDEK)
-	if err != nil {
-		return nil, fmt.Errorf("failed to unwrap DEK: %w", err)
-	}
-
-	// Create decryptor (explicitly use Version1 to match the canary's metadata)
-	decryptor, err := crypto.NewDecryptorWithVersion(unwrappedDEK, iv, m.blockSize, crypto.Version1)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create decryptor: %w", err)
-	}
-
-	// Verify HMACs
-	if err := decryptor.VerifyHMACs(downloadedEncrypted, downloadedHMAC); err != nil {
-		result.HMACVerified = false
-		return nil, fmt.Errorf("secondary HMAC verification failed: %w", err)
-	}
-	result.HMACVerified = true
-
-	// Decrypt
-	decrypted, err := decryptor.Decrypt(downloadedEncrypted, downloadedHMAC)
+	decrypted, err := decryptCanaryEnvelope(secondaryEnvelope, secondaryInfo.Metadata, m.mek)
 	if err != nil {
 		return nil, fmt.Errorf("failed to decrypt secondary canary: %w", err)
 	}
@@ -1305,11 +1108,7 @@ func (m *Monitor) checkSecondaryBackend(ctx context.Context) (*Result, error) {
 		return nil, fmt.Errorf("secondary decrypted content does not match original")
 	}
 	result.DecryptVerified = true
-
-	// Verify plaintext SHA
-	if err := downloadedHeader.VerifyPlaintextSHA(decrypted); err != nil {
-		return nil, fmt.Errorf("secondary plaintext SHA verification failed: %w", err)
-	}
+	result.HMACVerified = true
 
 	// Get replication lag metrics
 	if m.replicationQueue != nil {

@@ -705,6 +705,16 @@ scrapes `/metrics` in the cluster (see the Phase 6 caveat in `docs/plan/plan.md`
 
 ## Canary Metrics
 
+The small-object probe writes a 1 KiB object in the server's configured format
+(v3 by default), then reads its stored metadata and envelope and verifies the
+plaintext with that format's authenticated decryptor. `/readyz` consumes this
+probe's health. The independent hourly multipart probe also uses the configured
+format: for v3 it uploads three independently encrypted parts, stores and reads
+the v3 HMAC sidecar, and decrypts each part. Its two non-final parts are at
+least 5 MiB so B2 accepts completion. Both probes also invoke ARMOR's normal
+`GetObject` handler internally, so readiness covers the client read path
+without sending an external S3 request.
+
 Every canary sample is numeric. The last-check times ship as unix-seconds
 `*_last_check_timestamp` gauges (below); the error-string diagnostics remain
 in `/armor/canary` and verifier status responses only — a Prometheus parser

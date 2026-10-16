@@ -16,6 +16,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/http/httptest"
 	"strconv"
 	"strings"
 	"time"
@@ -416,21 +417,25 @@ func New(cfg *config.Config) (*Server, error) {
 
 	// Create canary monitor (after replicationQueue is available)
 	canaryMonitor := canary.NewMonitor(canary.Config{
-		Backend:           primaryBackend,
-		SecondaryBackend:  secondaryBackend,
-		SecondaryBucket:   secondaryCfg.Bucket,
-		ReplicationQueue:  replicationQueue,
-		Bucket:            cfg.Bucket,
-		Prefix:            cfg.Prefix,
-		MEK:               cfg.MEK,
-		BlockSize:         cfg.BlockSize,
-		InstanceID:        cfg.WriterID,
+		Backend:            primaryBackend,
+		SecondaryBackend:   secondaryBackend,
+		SecondaryBucket:    secondaryCfg.Bucket,
+		ReplicationQueue:   replicationQueue,
+		Bucket:             cfg.Bucket,
+		Prefix:             cfg.Prefix,
+		MEK:                cfg.MEK,
+		BlockSize:          cfg.BlockSize,
+		InstanceID:         cfg.WriterID,
+		FormatWriteVersion: cfg.FormatWriteVersion,
+		ReadObject: func(ctx context.Context, bucket, key string) ([]byte, error) {
+			return readCanaryObject(ctx, cfg, primaryBackend, cache, footerCache, keyMgr, listCache, bucket, key)
+		},
 		Interval:          5 * time.Minute,
 		CanarySize:        1024,
 		MaxRetries:        3,
 		RetryDelay:        10 * time.Second,
 		MultipartInterval: 1 * time.Hour,
-		MultipartSize:     10*1024*1024 + 512*1024, // 10.5 MiB — two 5.25 MiB parts (B2 requires non-final parts >= 5 MiB)
+		MultipartSize:     10*1024*1024 + 512*1024, // 10.5 MiB — v3 uses two B2-sized non-final parts and a final part
 		SecondaryInterval: 5 * time.Minute,
 	})
 
@@ -476,6 +481,20 @@ func New(cfg *config.Config) (*Server, error) {
 		requestTracker:    metrics.DefaultRequestTracker,
 		logger:            logger,
 	}, nil
+}
+
+// readCanaryObject invokes the production GetObject implementation for an
+// internal probe key. Authentication is unnecessary because the monitor owns
+// the key and never exposes this call as an HTTP endpoint.
+func readCanaryObject(ctx context.Context, cfg *config.Config, be backend.Backend, cache *backend.MetadataCache, footerCache *backend.FooterCache, km *keymanager.KeyManager, listCache *backend.ListCache, bucket, key string) ([]byte, error) {
+	h := handlers.New(cfg, be, cache, footerCache, km, listCache)
+	r := httptest.NewRequestWithContext(ctx, http.MethodGet, "/"+bucket+"/"+key, nil)
+	w := httptest.NewRecorder()
+	h.GetObject(w, r, bucket, key)
+	if w.Code != http.StatusOK {
+		return nil, fmt.Errorf("GetObject returned HTTP %d: %s", w.Code, w.Body.String())
+	}
+	return w.Body.Bytes(), nil
 }
 
 // manifestRecorder implements handlers.ManifestRecorder. It updates the

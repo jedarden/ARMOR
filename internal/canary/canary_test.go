@@ -754,12 +754,13 @@ func TestMonitorMultipartCheck(t *testing.T) {
 	rand.Read(mek)
 
 	cfg := Config{
-		Backend:       mb,
-		Bucket:        "test-bucket",
-		MEK:           mek,
-		BlockSize:     65536,
-		InstanceID:    "test-instance",
-		MultipartSize: 100, // Small size for testing (would be 10.5 MiB in prod)
+		Backend:            mb,
+		Bucket:             "test-bucket",
+		MEK:                mek,
+		BlockSize:          65536,
+		InstanceID:         "test-instance",
+		MultipartSize:      100, // Small v2 fixture; v3 needs two B2-sized parts.
+		FormatWriteVersion: 2,
 	}
 
 	m := NewMonitor(cfg)
@@ -803,12 +804,13 @@ func TestMonitorMultipartIntegration(t *testing.T) {
 	rand.Read(mek)
 
 	cfg := Config{
-		Backend:       mb,
-		Bucket:        "test-bucket",
-		MEK:           mek,
-		BlockSize:     65536,
-		InstanceID:    "test-instance",
-		MultipartSize: 100, // Small size for testing
+		Backend:            mb,
+		Bucket:             "test-bucket",
+		MEK:                mek,
+		BlockSize:          65536,
+		InstanceID:         "test-instance",
+		MultipartSize:      100, // Small v2 fixture.
+		FormatWriteVersion: 2,
 	}
 
 	m := NewMonitor(cfg)
@@ -846,12 +848,13 @@ func TestMultipartHealthyBoolField(t *testing.T) {
 	rand.Read(mek)
 
 	cfg := Config{
-		Backend:       mb,
-		Bucket:        "test-bucket",
-		MEK:           mek,
-		BlockSize:     65536,
-		InstanceID:    "test-instance",
-		MultipartSize: 100, // Small size for testing
+		Backend:            mb,
+		Bucket:             "test-bucket",
+		MEK:                mek,
+		BlockSize:          65536,
+		InstanceID:         "test-instance",
+		MultipartSize:      100, // Small v2 fixture.
+		FormatWriteVersion: 2,
 	}
 
 	m := NewMonitor(cfg)
@@ -901,12 +904,13 @@ func TestMultipartHealthyBoolFieldFailure(t *testing.T) {
 	rand.Read(mek)
 
 	cfg := Config{
-		Backend:       mb,
-		Bucket:        "test-bucket",
-		MEK:           mek,
-		BlockSize:     65536,
-		InstanceID:    "test-instance",
-		MultipartSize: 100,
+		Backend:            mb,
+		Bucket:             "test-bucket",
+		MEK:                mek,
+		BlockSize:          65536,
+		InstanceID:         "test-instance",
+		MultipartSize:      100,
+		FormatWriteVersion: 2,
 	}
 
 	m := NewMonitor(cfg)
@@ -932,12 +936,13 @@ func TestCanaryHealthResponseJSON(t *testing.T) {
 	rand.Read(mek)
 
 	cfg := Config{
-		Backend:       mb,
-		Bucket:        "test-bucket",
-		MultipartSize: 100,
-		BlockSize:     65536,
-		MEK:           mek,
-		InstanceID:    "test-instance",
+		Backend:            mb,
+		Bucket:             "test-bucket",
+		MultipartSize:      100,
+		FormatWriteVersion: 2,
+		BlockSize:          65536,
+		MEK:                mek,
+		InstanceID:         "test-instance",
 	}
 
 	m := NewMonitor(cfg)
@@ -970,12 +975,13 @@ func TestMultipartCanaryMetricsEmission(t *testing.T) {
 	rand.Read(mek)
 
 	cfg := Config{
-		Backend:       mb,
-		Bucket:        "test-bucket",
-		MultipartSize: 100,
-		BlockSize:     65536,
-		MEK:           mek,
-		InstanceID:    "test-instance",
+		Backend:            mb,
+		Bucket:             "test-bucket",
+		MultipartSize:      100,
+		FormatWriteVersion: 2,
+		BlockSize:          65536,
+		MEK:                mek,
+		InstanceID:         "test-instance",
 	}
 
 	m := NewMonitor(cfg)
@@ -1091,11 +1097,12 @@ func TestCanaryMultipartPartSizing(t *testing.T) {
 	// Production-default monitor: no explicit MultipartSize, so it gets the
 	// package default (two parts at the default block size).
 	m := NewMonitor(Config{
-		Backend:    newMockBackend(),
-		Bucket:     "test-bucket",
-		MEK:        mek,
-		BlockSize:  crypto.DefaultBlockSize,
-		InstanceID: "test-instance",
+		Backend:            newMockBackend(),
+		Bucket:             "test-bucket",
+		MEK:                mek,
+		BlockSize:          crypto.DefaultBlockSize,
+		InstanceID:         "test-instance",
+		FormatWriteVersion: 2,
 	})
 
 	blockSize := m.blockSize
@@ -1144,25 +1151,25 @@ func TestCanaryMultipartPartSizing(t *testing.T) {
 // TestGenerateV3PartSizes tests the generateV3PartSizes function.
 func TestGenerateV3PartSizes(t *testing.T) {
 	tests := []struct {
-		name       string
-		totalSize  int
-		wantParts  int // expected number of parts
-		minPart1   int // minimum size for part 1
-		minPart2   int // minimum size for part 2
+		name      string
+		totalSize int
+		wantParts int // expected number of parts
+		minPart1  int // minimum size for part 1
+		minPart2  int // minimum size for part 2
 	}{
 		{
 			name:      "three parts for typical size",
 			totalSize: 15 * 1024 * 1024, // 15 MiB
 			wantParts: 3,
-			minPart1:  b2MinPartSize,     // >= 5 MiB
-			minPart2:  b2MinPartSize,     // >= 5 MiB
+			minPart1:  b2MinPartSize, // >= 5 MiB
+			minPart2:  b2MinPartSize, // >= 5 MiB
 		},
 		{
 			name:      "small three-part canary",
 			totalSize: 12 * 1024 * 1024, // 12 MiB
 			wantParts: 3,
-			minPart1:  b2MinPartSize,     // >= 5 MiB
-			minPart2:  b2MinPartSize,     // >= 5 MiB
+			minPart1:  b2MinPartSize, // >= 5 MiB
+			minPart2:  b2MinPartSize, // >= 5 MiB
 		},
 	}
 
@@ -1203,13 +1210,13 @@ func TestMonitorMultipartCheckV3(t *testing.T) {
 	rand.Read(mek)
 
 	m := NewMonitor(Config{
-		Backend:           newMockBackend(),
-		Bucket:            "test-bucket",
-		MEK:               mek,
-		BlockSize:         crypto.DefaultBlockSize,
-		InstanceID:        "test-instance",
-		FormatWriteVersion: 3, // Use v3 format
-		MultipartSize:     15 * 1024 * 1024, // 15 MiB to ensure 3 parts
+		Backend:            newMockBackend(),
+		Bucket:             "test-bucket",
+		MEK:                mek,
+		BlockSize:          crypto.DefaultBlockSize,
+		InstanceID:         "test-instance",
+		FormatWriteVersion: 3,                // Use v3 format
+		MultipartSize:      15 * 1024 * 1024, // 15 MiB to ensure 3 parts
 	})
 
 	ctx := context.Background()
@@ -1247,13 +1254,13 @@ func TestMonitorMultipartCheckV2(t *testing.T) {
 	rand.Read(mek)
 
 	m := NewMonitor(Config{
-		Backend:           newMockBackend(),
-		Bucket:            "test-bucket",
-		MEK:               mek,
-		BlockSize:         crypto.DefaultBlockSize,
-		InstanceID:        "test-instance",
-		FormatWriteVersion: 2, // Use v2 format (default)
-		MultipartSize:     15 * 1024 * 1024,
+		Backend:            newMockBackend(),
+		Bucket:             "test-bucket",
+		MEK:                mek,
+		BlockSize:          crypto.DefaultBlockSize,
+		InstanceID:         "test-instance",
+		FormatWriteVersion: 2, // Exercise the legacy v2 format
+		MultipartSize:      15 * 1024 * 1024,
 	})
 
 	ctx := context.Background()
@@ -1352,10 +1359,8 @@ func TestMonitorCheckAppliesPrefix(t *testing.T) {
 // TestMonitorMultipartCheckAppliesPrefix tests that the multipart canary is
 // written below the configured prefix, for both the v2 and v3 key namespaces.
 func TestMonitorMultipartCheckAppliesPrefix(t *testing.T) {
-	// Per TestMonitorMultipartCheck (v2) and TestMonitorMultipartCheckV3: the v2
-	// path accepts a tiny object, while v3 sizes its parts against a minimum
-	// envelope and panics on one smaller than a part. v1 and v2 share the
-	// unversioned .armor/canary-multipart/ namespace; only v3 gets -v3.
+	// The v2 path accepts a tiny object; v3 needs two B2-sized non-final
+	// parts. V3 also writes a sidecar below the tenant's .armor/hmac namespace.
 	cases := []struct {
 		version       int
 		multipartSize int
@@ -1387,7 +1392,26 @@ func TestMonitorMultipartCheckAppliesPrefix(t *testing.T) {
 			}
 
 			wantNamespace := fmt.Sprintf("tenants/acme/.armor/%s/test-instance/", tc.namespace)
-			assertAllPrefixed(t, mb, wantNamespace)
+			if tc.version == 2 {
+				assertAllPrefixed(t, mb, wantNamespace)
+				return
+			}
+			mb.mu.Lock()
+			defer mb.mu.Unlock()
+			var objectSeen, sidecarSeen bool
+			for _, key := range mb.putKeys {
+				switch {
+				case strings.HasPrefix(key, wantNamespace):
+					objectSeen = true
+				case strings.HasPrefix(key, "tenants/acme/.armor/hmac/"):
+					sidecarSeen = true
+				default:
+					t.Errorf("multipart canary wrote key %q outside its tenant prefix", key)
+				}
+			}
+			if !objectSeen || !sidecarSeen {
+				t.Errorf("v3 multipart writes: object=%v sidecar=%v", objectSeen, sidecarSeen)
+			}
 		})
 	}
 }
