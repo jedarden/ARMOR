@@ -100,15 +100,16 @@ The table identifies the last specific image proof where one is recorded.
   via declarative-config commits `d8faa9f10`–`5807786f3`; `armor-test` gained
   the digest pin it lacked. The manifest-only drift check classifies all 15
   pins as current with zero stale or mismatched entries. The configured
-  host-side live drift check reported 15 unavailable entries, so this is only
-  manifest evidence. The live check remains incomplete: `iad-ci` and
-  `iad-kalshi` verifiers reported 11/11 on the new
-  image, while `ardenone-cluster` reported 7/11. The `ord-devimprint` verifier
-  reached Ready on `0.1.1993` through GitOps commit `231a87a97`, but its first
-  verification cycle was still running when checked. The `rs-manager` verifier
-  still ran `0.1.1975`; its rollout strategy needs the same GitOps correction.
-  Argo rejected `Recreate` against the retained live `rollingUpdate` field, so
-  `ord-devimprint` uses zero-surge rolling updates to drain the RWO PVC pod
+  host-side live drift check reported 15 unavailable entries, so it is not
+  yet independent evidence of running versions. Read-only pod inspection
+  confirms all 15 workloads Ready on `0.1.1993` with zero restarts.
+  `iad-ci`, `iad-kalshi`, and `rs-manager` verifiers reported 11/11 on the
+  new image; `ardenone-cluster` reported 7/11. The `ord-devimprint` verifier
+  reached Ready through GitOps commit `231a87a97`, but its first verification
+  cycle was still running when checked. The `rs-manager` verifier reached
+  Ready and completed 11/11 through GitOps commit `e15c5d6c0`. Argo had
+  rejected `Recreate` against the retained live `rollingUpdate` field, so
+  both verifiers use zero-surge rolling updates to drain their RWO PVC pods
   first. This is not a client-matrix or DR-drill proof (see the capability
   table above).
 
