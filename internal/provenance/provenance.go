@@ -454,8 +454,8 @@ type pendingAppend struct {
 	// writeCtx is the caller's context with cancellation detached: a client
 	// that disconnects mid-batch must not fail its batch-mates, and an object
 	// that was successfully uploaded must still land in the chain even if its
-	// requester is gone — the handlers ignore RecordUpload errors, so a
-	// dropped entry would surface as an untracked object at the next audit.
+	// requester is gone. A failed append is logged and counted by the
+	// handlers; an object without a prior entry is untracked at the next audit.
 	writeCtx context.Context
 
 	// done receives exactly one result, buffered so the appender never blocks

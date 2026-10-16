@@ -289,6 +289,21 @@ sum(rate(armor_put_backend_ms_sum[5m])) by (operation)
 
 ## Error Metrics
 
+### `armor_provenance_record_failures_total`
+
+**Type:** Counter
+
+**Description:** Failed synchronous provenance `RecordUpload` calls after a
+buffered PUT, streaming PUT, server-side COPY, or multipart completion has
+stored the object. Each failure emits a WARN with the object key and error.
+The S3 write still succeeds; a surviving encrypted object without a chain
+entry appears as `untracked_objects` with audit status `invalid` when that key
+has no prior chain entry. An overwrite of a previously tracked key can still
+produce a valid audit after a failed append. The counter is cumulative since
+process start, so it does not represent the number of currently untracked objects.
+
+**Labels:** None
+
 ### `armor_errors_total`
 
 **Type:** Counter  

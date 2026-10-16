@@ -215,6 +215,27 @@ func (h *Handlers) WithProvenance(p ProvenanceRecorder) {
 	h.provenance = p
 }
 
+// recordProvenanceUpload records a per-object provenance entry after the
+// object is durable. A failed append leaves an audit gap; the S3 write still
+// succeeds, while a warning and counter make the gap observable.
+func (h *Handlers) recordProvenanceUpload(ctx context.Context, key, plaintextSHA256, operation string) {
+	if err := h.provenance.RecordUpload(ctx, key, plaintextSHA256, operation); err != nil {
+		if h.logger != nil {
+			h.logger.WithFields(map[string]interface{}{
+				"event":     "provenance_record_failure",
+				"operation": operation,
+				"key":       key,
+				"error":     err.Error(),
+			}).Warn("provenance RecordUpload failed; audit chain gap for this key")
+		} else {
+			log.Printf("WARN provenance RecordUpload failed (operation=%s key=%q error=%v): audit chain gap", operation, key, err)
+		}
+		if h.metrics != nil {
+			h.metrics.IncProvenanceRecordFailures()
+		}
+	}
+}
+
 // WithManifest wires a ManifestRecorder into the handlers so that successful
 // PutObject and DeleteObject calls update the in-memory index and enqueue
 // delta ops for async B2 persistence.
@@ -743,7 +764,7 @@ func (h *Handlers) PutObject(w http.ResponseWriter, r *http.Request, bucket, key
 	// Record provenance (fallback when manifest is disabled)
 	if h.manifest == nil && h.provenance != nil && h.provenance.ShouldRecord(key) {
 		plaintextSHAHex := hex.EncodeToString(plaintextSHA[:])
-		_ = h.provenance.RecordUpload(provenance.WithTimings(ctx, provTimings), key, plaintextSHAHex, "put")
+		h.recordProvenanceUpload(provenance.WithTimings(ctx, provTimings), key, plaintextSHAHex, "put")
 	}
 
 	// Publish the PUT latency split to the request context (the in-place
@@ -1074,7 +1095,7 @@ func (h *Handlers) putObjectStreaming(ctx context.Context, w http.ResponseWriter
 	// Record provenance (fallback when manifest is disabled)
 	if h.manifest == nil && h.provenance != nil && h.provenance.ShouldRecord(key) {
 		plaintextSHAHex := hex.EncodeToString(plaintextSHA[:])
-		_ = h.provenance.RecordUpload(provenance.WithTimings(ctx, provTimings), key, plaintextSHAHex, "put-streaming")
+		h.recordProvenanceUpload(provenance.WithTimings(ctx, provTimings), key, plaintextSHAHex, "put-streaming")
 	}
 
 	// Publish the PUT latency split to the request context (the in-place
@@ -2690,7 +2711,7 @@ func (h *Handlers) CopyObject(w http.ResponseWriter, r *http.Request, dstBucket,
 
 		// Record provenance for the copy
 		if h.provenance != nil && h.provenance.ShouldRecord(dstKey) {
-			_ = h.provenance.RecordUpload(ctx, dstKey, armorMeta.PlaintextSHA, "copy")
+			h.recordProvenanceUpload(ctx, dstKey, armorMeta.PlaintextSHA, "copy")
 		}
 
 		// Invalidate cache for destination
@@ -4437,7 +4458,7 @@ func (h *Handlers) CompleteMultipartUpload(w http.ResponseWriter, r *http.Reques
 
 	// Record provenance (fallback when manifest is disabled)
 	if h.manifest == nil && h.provenance != nil && h.provenance.ShouldRecord(key) {
-		_ = h.provenance.RecordUpload(ctx, key, plaintextSHAHex, "multipart")
+		h.recordProvenanceUpload(ctx, key, plaintextSHAHex, "multipart")
 	}
 
 	// Build XML response

@@ -209,6 +209,9 @@ type Metrics struct {
 	// Manifest compaction metrics
 	CompactionErrorsTotal *expvar.Int // Total number of manifest compaction errors
 
+	// Failed per-object provenance appends after durable writes.
+	ProvenanceRecordFailures *expvar.Int
+
 	// S3 error metrics (ADR-008)
 	ErrorsTotal            *labelledCounter // Total S3 errors by error code and operation
 	ClientDisconnectsTotal *labelledCounter // Client-aborted requests by S3 operation
@@ -346,6 +349,9 @@ func NewMetrics() *Metrics {
 
 	// Manifest compaction metrics
 	m.CompactionErrorsTotal = new(expvar.Int)
+
+	// Provenance record failures
+	m.ProvenanceRecordFailures = new(expvar.Int)
 
 	// S3 error metrics
 	m.ErrorsTotal = newLabelledCounter()
@@ -1163,6 +1169,9 @@ func (m *Metrics) PrometheusFormat() string {
 	// Manifest compaction metrics
 	writeMetric("manifest_compaction_errors_total", "Total number of manifest compaction errors", "counter", m.CompactionErrorsTotal)
 
+	// A surviving object without a prior chain entry appears untracked in an audit.
+	writeMetric("provenance_record_failures_total", "Total number of provenance RecordUpload failures (audit chain gaps)", "counter", m.ProvenanceRecordFailures)
+
 	// S3 error metrics (ADR-008)
 	sb.WriteString("\n# HELP armor_errors_total Total number of S3 errors by error code and operation\n")
 	sb.WriteString("# TYPE armor_errors_total counter\n")
@@ -1442,6 +1451,11 @@ func (m *Metrics) IncReplicationRetries() {
 // IncCompactionErrors increments the manifest compaction error counter.
 func (m *Metrics) IncCompactionErrors() {
 	m.CompactionErrorsTotal.Add(1)
+}
+
+// IncProvenanceRecordFailures counts a failed append after an object was stored.
+func (m *Metrics) IncProvenanceRecordFailures() {
+	m.ProvenanceRecordFailures.Add(1)
 }
 
 // IncErrors increments the S3 error counter for a given error code and operation.

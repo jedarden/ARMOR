@@ -67,7 +67,8 @@ The audit walker verifies:
 - **Genesis linkage**: The final `prev_chain_hash` equals the initial hash (`InitialChainHash`)
 - **Sequence ordering**: No gaps or duplicate sequence numbers
 - **Writer consistency**: All entries have the correct `writer_id`
-- **Object tracking**: All ARMOR-encrypted objects appear in the provenance chain
+- **Object tracking**: Cross-reference the current encrypted objects against
+  the provenance chain; a missing entry makes the audit `invalid`.
 
 ## API Endpoint
 
@@ -131,6 +132,17 @@ The audit walker handles various failure modes:
 - **Invalid**: Cryptographic verification fails (hash mismatch, gap, tampering)
 - **Gaps**: Missing sequence numbers indicate deleted entries
 - **Untracked objects**: ARMOR-encrypted objects not in any chain
+
+The synchronous `RecordUpload` calls run after the object has been stored.
+If it fails, the S3 write still succeeds; ARMOR logs a WARN with the key and
+error and increments `armor_provenance_record_failures_total`. A later audit
+lists a surviving encrypted object with no prior chain entry under
+`untracked_objects` and returns `invalid`. A chain can be cryptographically
+continuous yet fail this object-tracking check. The audit compares keys rather
+than object versions, so an overwrite can retain an older matching key entry
+and still report `valid` after the new append fails. The counter counts all
+append failures since process start, including failures for objects later
+overwritten or removed; investigate the warning even after a valid audit.
 
 ## Testing
 

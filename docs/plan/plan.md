@@ -1636,6 +1636,17 @@ per-prefix chains and Merkle heads (the hash is not the bottleneck). Writing
 the head less often needs tip recovery first and is unsafe with a fixed
 writer ID (parquet-mirror); not scheduled.
 
+For the existing synchronous `RecordUpload` call sites (buffered PUT, streaming
+PUT, server-side COPY, and multipart completion), a failed append after the
+object is durable does not turn the S3 response into a failure. The handler
+logs a WARN containing the key and error and increments
+`armor_provenance_record_failures_total`. The audit walker reports a surviving
+encrypted object with no prior chain entry as untracked and returns `invalid`.
+It tracks keys, not object versions: an overwrite whose new append fails can
+still appear tracked by the old entry. Operators must investigate the warning
+and counter even when the audit reports `valid`. This is the same failure
+contract as the planned async path's lost queued entries.
+
 #### 9.3 One pipelined, streaming reader (P1; tracked: `armor-73564f97`, `armor-5694713b`, `armor-272299ca`)
 
 Findings: the backend fetch window is a hard-coded 64 KiB (`b2.go`
