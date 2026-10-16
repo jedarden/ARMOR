@@ -194,7 +194,7 @@ func NewMonitor(cfg Config) *Monitor {
 		cfg.SecondaryStaleAfter = 2 * cfg.SecondaryInterval
 	}
 	if cfg.FormatWriteVersion == 0 {
-		cfg.FormatWriteVersion = 3 // Match the server's default write version
+		cfg.FormatWriteVersion = 2 // Standalone fallback; the server passes its configured version
 	}
 
 	instanceID := cfg.InstanceID

@@ -66,9 +66,9 @@ func TestCanaryV3SinglePutRoundTrip(t *testing.T) {
 	if _, err := rand.Read(mek); err != nil {
 		t.Fatal(err)
 	}
-	m := NewMonitor(Config{Backend: b, Bucket: "probe", MEK: mek, BlockSize: crypto.DefaultBlockSize, InstanceID: "v3"})
+	m := NewMonitor(Config{Backend: b, Bucket: "probe", MEK: mek, BlockSize: crypto.DefaultBlockSize, InstanceID: "v3", FormatWriteVersion: 3})
 	if m.formatWriteVersion != 3 || m.canarySize != 1024 {
-		t.Fatalf("default canary version=%d size=%d, want v3 and 1024", m.formatWriteVersion, m.canarySize)
+		t.Fatalf("canary version=%d size=%d, want v3 and 1024", m.formatWriteVersion, m.canarySize)
 	}
 	result, err := m.check(context.Background())
 	if err != nil {
@@ -131,7 +131,7 @@ func TestCanaryV3MultipartRoundTripAtB2Minimum(t *testing.T) {
 	if _, err := rand.Read(mek); err != nil {
 		t.Fatal(err)
 	}
-	m := NewMonitor(Config{Backend: b, Bucket: "probe", MEK: mek, BlockSize: crypto.DefaultBlockSize, InstanceID: "v3"})
+	m := NewMonitor(Config{Backend: b, Bucket: "probe", MEK: mek, BlockSize: crypto.DefaultBlockSize, InstanceID: "v3", FormatWriteVersion: 3})
 	result, err := m.checkMultipart(context.Background())
 	if err != nil {
 		t.Fatal(err)
