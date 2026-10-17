@@ -17,12 +17,25 @@ The ARMOR Version Drift Check automatically detects when deployed ARMOR versions
 
 ### Kubernetes Resources
 
-Both live in declarative-config, where ArgoCD applies them (the copies that
+All live in declarative-config, where ArgoCD applies them (the copies that
 used to sit under this repository's `k8s/` had diverged and were removed on
 2026-09-18):
 
-- **`declarative-config/k8s/iad-ci/argo-workflows/armor-drift-check-workflowtemplate.yml`** - Argo WorkflowTemplate for running drift checks
-- **`declarative-config/k8s/iad-ci/argo-workflows/armor-drift-check-cronworkflow.yml`** - Scheduled workflow (runs daily at 9 AM UTC)
+- **`declarative-config/k8s/iad-ci/armor/armor-drift-checker-deployment.yml`** - The deployed, continuously running checker (a Deployment with an internal hourly loop, **not** a CronJob or CronWorkflow). This is the only scheduled mechanism; see [armor-drift-checker.md](armor-drift-checker.md).
+- **`declarative-config/k8s/iad-ci/argo-workflows/armor-drift-check-workflowtemplate.yml`** - Argo WorkflowTemplate for *manual* one-off runs.
+- The `armor-drift-check-daily` CronWorkflow that used to sit beside the
+  template was **removed on 2026-09-21** (armor-c5d08177) when the
+  Deployment replaced it: a CronWorkflow leaves no continuously owned report
+  endpoint, and its broken schedule failed silently for two months before
+  being noticed (succeeded 0, failed 6, on 2026-09-20). Any doc describing a
+  "daily 9 AM CronWorkflow" drift schedule is stale.
+
+The manual template and the Deployment both clone ARMOR (full single-branch
+clone — the release record is the checkout's `v*` tags plus their commit
+messages, which is what labels correctness releases; GitHub fallback release
+sources silently lose correctness labels, since the Releases API holds only
+a handful of releases, none labeled) and declarative-config, then run
+`scripts/drift_check.py`.
 
 ### Configuration
 
@@ -155,14 +168,36 @@ python3 scripts/archive/check-armor-version-drift.py
 python3 scripts/archive/check-armor-version-drift.py --json
 ```
 
+
 ### Scheduled Execution
 
-#### Option 1: Argo Workflow (Recommended)
+There is exactly one scheduled mechanism: the **`armor-drift-checker`
+Deployment** in the iad-ci `armor` namespace (declarative-config
+`k8s/iad-ci/armor/`). It is a continuously running pod with an internal
+hourly loop — deliberately not a CronJob or CronWorkflow, so ArgoCD owns the
+checker continuously and the report endpoint stays available between runs.
+It refreshes both repositories, runs `scripts/drift_check.py --json
+--require-live`, and serves `/report.json` and `/metrics`; stale, mismatched,
+or unavailable workloads log an `ARMOR drift checker ESCALATION` line and
+raise `armor_version_drift_alert`. Its full contract, and how to inspect the
+live report, are in [armor-drift-checker.md](armor-drift-checker.md).
 
-The drift check runs automatically daily at 9 AM UTC via the CronWorkflow. To run manually:
+Earlier revisions of this document listed a daily 9 AM CronWorkflow, a host
+systemd timer, a Claude Code /loop, and a crontab entry as alternative
+schedules. None of those is deployed: the CronWorkflow was removed with the
+Deployment's introduction (2026-09-21, armor-c5d08177), and no host timer or
+crontab runs the check. The legacy host-cron recipes
+(`scripts/armor-version-drift-check.cron`,
+`scripts/setup-version-drift-schedule.sh`) remain in the tree for hosts that
+actually run cron, but nothing on this fleet uses them.
+
+### Manual one-off run
+
+The `armor-drift-check` WorkflowTemplate in declarative-config runs the same
+check as a one-off Argo Workflow:
 
 ```bash
-kubectl --kubeconfig=/home/coding/.kube/iad-ci.kubeconfig create -f - <<EOF
+kubectl --kubeconfig=/home/coding/.kube/iad-ci.kubeconfig create -f - <<'WFEOF'
 apiVersion: argoproj.io/v1alpha1
 kind: Workflow
 metadata:
@@ -177,87 +212,8 @@ spec:
         value: "50"
       - name: days-threshold
         value: "30"
-EOF
+WFEOF
 ```
-
-#### Option 2: systemd Timer (Recommended for NixOS)
-
-This system (NixOS) may not have traditional cron available. Create a systemd user service and timer:
-
-```bash
-# Create the service file
-~/.config/systemd/user/armor-version-drift-check.service
-```
-
-```ini
-[Unit]
-Description=ARMOR Version Drift Check
-After=network.target
-
-[Service]
-Type=oneshot
-WorkingDirectory=/home/coding/ARMOR
-ExecStart=/usr/bin/env python3 /home/coding/ARMOR/scripts/drift_check.py
-StandardOutput=append:/home/coding/ARMOR/logs/version-drift-check.log
-StandardError=append:/home/coding/ARMOR/logs/version-drift-check.log
-```
-
-```bash
-# Create the timer file
-~/.config/systemd/user/armor-version-drift-check.timer
-```
-
-```ini
-[Unit]
-Description=ARMOR Version Drift Check (Daily)
-Requires=armor-version-drift-check.service
-
-[Timer]
-OnCalendar=daily
-OnCalendar=09:17
-RandomizedDelaySec=600
-
-[Install]
-WantedBy=timers.target
-```
-
-Enable the timer:
-```bash
-systemctl --user daemon-reload
-systemctl --user enable armor-version-drift-check.timer
-systemctl --user start armor-version-drift-check.timer
-```
-
-#### Option 3: Claude Code Loop
-
-Use the Claude Code /loop skill:
-
-```
-/loop 1d python3 scripts/drift_check.py
-```
-
-This runs the check daily within the Claude Code session.
-
-#### Option 4: Traditional Cron
-
-Run the setup script to add a daily cron job:
-
-```bash
-./scripts/setup-version-drift-schedule.sh
-```
-
-This schedules the check to run daily at 9:17 AM (avoiding :00 and :30 marks to reduce API load).
-
-Or manually configure the schedule:
-
-```bash
-# Edit crontab
-crontab -e
-
-# Add this line (runs daily at 9:17 AM)
-17 9 * * * cd /home/coding/ARMOR && python3 scripts/drift_check.py >> /home/coding/ARMOR/logs/version-drift-check.log 2>&1
-```
-
 ## Configuration
 
 Edit `config/drift-config.json` to customize:
@@ -482,7 +438,10 @@ ARMOR uses auto-versioning on every commit, so version numbers can be large (e.g
 
 ## Log Location
 
-All methods write logs to: `/home/coding/ARMOR/logs/version-drift-check.log`
+The deployed checker's output lives in its pod logs and its `/report.json` /
+`/metrics` endpoints (see [armor-drift-checker.md](armor-drift-checker.md)).
+Manual local runs print to the terminal; only the legacy host-cron recipes
+append to `/home/coding/ARMOR/logs/version-drift-check.log`.
 
 ## Maintenance
 
@@ -493,7 +452,7 @@ To update the list of monitored deployments:
 
 ## Testing
 
-Regardless of scheduling method, test first:
+After changing the checker or the classification logic, test first:
 
 ```bash
 python3 -m pytest tests/test_drift_check.py -q   # drift_check.py test suite

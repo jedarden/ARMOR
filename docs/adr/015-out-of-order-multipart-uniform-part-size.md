@@ -1,6 +1,9 @@
 # ADR-015: Out-of-order multipart parts via a uniform-part-size contract
 
-**Status:** Implemented (design decided 2026-07-19; shipped on main 2026-07-19; amended 2026-08-07 for the single-part alignment exemption — bf-5tol4d core uniform-part-size contract, bf-4oi87m part-1 pinning + `503 SlowDown` deferral of earlier arrivals; amends ADR-003 §4). **Scope (2026-09 reconciliation): these rules govern the legacy format v2 write path (`ARMOR_FORMAT_VERSION=2`).** The default format v3 ([ADR-016](016-multipart-metadata-finalization.md)) encrypts every part in its own counter namespace and imposes **no** part-order or part-size contract at all. The client-facing statement of both contracts — with the executable test matrix — is [docs/multipart-client-compatibility.md](../multipart-client-compatibility.md)
+**Status:** Implemented (design decided 2026-07-19; shipped on main 2026-07-19; amended 2026-08-07 for the single-part alignment exemption — bf-5tol4d core uniform-part-size contract, bf-4oi87m part-1 pinning + `503 SlowDown` deferral of earlier arrivals; amends ADR-003 §4). **Scope (2026-09 reconciliation): these rules govern the legacy format v2 write path (`ARMOR_FORMAT_VERSION=2`).** The default format v3 ([ADR-016](016-multipart-metadata-finalization.md)) encrypts every part in its own counter namespace and imposes **no** part-order or part-size contract at all. The client-facing statement of both contracts — with the executable test matrix — is [docs/multipart-client-compatibility.md](../multipart-client-compatibility.md). The
+consolidated, authoritative statement of the *current* layout and read path is the
+[multipart layout and read-path contract](../multipart-layout-and-read-path.md), which is
+normative where this ADR and it disagree.
 **Date:** 2026-07-19
 
 ## Context

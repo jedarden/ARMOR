@@ -278,16 +278,25 @@ matrix](./multipart-client-compatibility.md). `armor client-config --for
 
 ## Environment Setup
 
-### Required Environment Variables
+### Client Environment Variables (example convention)
+
+`ARMOR_ENDPOINT`, `ARMOR_ACCESS_KEY`, `ARMOR_SECRET_KEY` and `ARMOR_REGION`
+are **not** variables ARMOR's server reads — they are this guide's own naming
+convention for the *connecting client's* endpoint URL and S3 credentials,
+read by the example scripts above (`os.getenv('ARMOR_ENDPOINT')`, etc.) so a
+reader can copy one block and have every example agree. Export them under
+any name your own tooling prefers; ARMOR does not care. For the variables
+ARMOR's server itself reads — including `ARMOR_BUCKET` below, which it does
+read — see the [Configuration Reference](configuration.md).
 
 ```bash
-# S3 API Configuration
+# Client-side convention used by the examples in this guide
 export ARMOR_ENDPOINT=http://localhost:9000
 export ARMOR_ACCESS_KEY=your-access-key
 export ARMOR_SECRET_KEY=your-secret-key
 export ARMOR_REGION=us-west-002
 
-# Optional: Default bucket
+# ARMOR_BUCKET: read by ARMOR's server itself (see configuration.md)
 export ARMOR_BUCKET=my-bucket
 ```
 

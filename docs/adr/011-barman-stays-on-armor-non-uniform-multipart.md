@@ -1,6 +1,8 @@
 # ADR-011: Barman stays on ARMOR; support non-uniform multipart parts
 
-**Status:** Accepted
+**Status:** Accepted. For current layout and read-path behavior, see the
+[multipart layout and read-path contract](../multipart-layout-and-read-path.md),
+which is normative where this ADR and it disagree.
 **Date:** 2026-08-07
 **Supersedes:** [ADR-010](010-barman-multipart-incompatibility.md)
 **Related:** ADR-002, ADR-003, ADR-015, ADR-008
