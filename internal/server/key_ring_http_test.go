@@ -261,14 +261,13 @@ func TestKeyRingPromptUnderConcurrentWrites(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		extra := &manifest.Entry{LastModified: time.Now()}
 		for i := 0; ; i++ {
 			select {
 			case <-stop:
 				return
 			default:
 			}
-			extra.MEKFingerprint = f.activeFP
+			extra := &manifest.Entry{LastModified: time.Now(), MEKFingerprint: f.activeFP}
 			f.idx.Put(keyRingTestBucket, fmt.Sprintf("concurrent-%d.txt", i), extra)
 			time.Sleep(time.Millisecond)
 		}
