@@ -109,7 +109,9 @@ func TestConsumerRefProblems(t *testing.T) {
 // variable they read needs a reference row held to the same standard as the
 // config-side check — non-empty Required, Default and Description cells, a
 // Default that agrees with any literal the consumer declares, and the anchors
-// of any bound or accepted value the consumer enforces.
+// of any bound or accepted value the consumer enforces. It also rejects
+// required ARMOR_* claims in docs when neither config nor a consumer reads
+// the named variable.
 func TestConsumerReferenceParity(t *testing.T) {
 	root := repoRoot(t)
 
@@ -136,4 +138,5 @@ func TestConsumerReferenceParity(t *testing.T) {
 	for _, p := range problems {
 		t.Error("docs/configuration.md consumer parity: " + p)
 	}
+	checkNoPhantomRequiredEnvVars(t, root, vars)
 }

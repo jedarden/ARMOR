@@ -90,23 +90,16 @@ func TestForEachDoc(t *testing.T) {
 	}
 }
 
-// TestNoPhantomRequiredEnvVars is the repository-level guard complementing
-// TestConsumerReferenceParity and TestConfigReferenceDocumentsEveryVariable:
-// those two catch a variable the code reads with no reference row; this one
-// catches the opposite drift — a doc claiming, under a "Required Environment
+// checkNoPhantomRequiredEnvVars extends TestConsumerReferenceParity with the
+// reverse check: a doc claiming, under a "Required Environment
 // Variables" heading, that ARMOR itself needs a variable nothing reads at
 // all (docs/connection-guide.md made this claim for ARMOR_ENDPOINT,
 // ARMOR_ACCESS_KEY, ARMOR_SECRET_KEY and ARMOR_REGION, which are only the
 // connecting client's own convention names, read by that guide's own
 // example scripts, not by ARMOR).
-func TestNoPhantomRequiredEnvVars(t *testing.T) {
-	root := repoRoot(t)
-
+func checkNoPhantomRequiredEnvVars(t *testing.T, root string, consumerVars []string) {
+	t.Helper()
 	configVars, err := ConfigEnvVars(filepath.Join(root, "internal", "config"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	consumerVars, err := ConsumerEnvVars(root)
 	if err != nil {
 		t.Fatal(err)
 	}
