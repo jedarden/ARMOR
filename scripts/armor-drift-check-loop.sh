@@ -44,7 +44,7 @@ export GIT_CONFIG_VALUE_0='!f() { test "$1" = get && echo "username=x-token" && 
 while :; do
   rc=2
   rm -rf "$WORK_ROOT/armor.next" "$WORK_ROOT/declarative-config.next"
-  if git clone --single-branch --branch main https://git.ardenone.com/jedarden/ARMOR.git "$WORK_ROOT/armor.next" && git clone --depth 1 --single-branch --branch main https://git.ardenone.com/jedarden/declarative-config.git "$WORK_ROOT/declarative-config.next"; then
+  if git clone -q --depth 1 --single-branch --branch main https://git.ardenone.com/jedarden/ARMOR.git "$WORK_ROOT/armor.next" && git clone -q --depth 1 --single-branch --branch main https://git.ardenone.com/jedarden/declarative-config.git "$WORK_ROOT/declarative-config.next"; then
     rm -rf "$WORK_ROOT/armor" "$WORK_ROOT/declarative-config"
     mv "$WORK_ROOT/armor.next" "$WORK_ROOT/armor"
     mv "$WORK_ROOT/declarative-config.next" "$WORK_ROOT/declarative-config"
