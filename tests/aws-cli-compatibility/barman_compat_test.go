@@ -14,6 +14,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"strconv"
 	"strings"
@@ -92,6 +93,27 @@ func freeTCPPort(t *testing.T) int {
 	return listener.Addr().(*net.TCPAddr).Port
 }
 
+func pgCtlStartArgs(dataDir, logPath string, port int, socketDir string) []string {
+	return []string{
+		"-D", dataDir,
+		"-l", logPath,
+		"-o", fmt.Sprintf("-p %d -k %s", port, socketDir),
+		"-w", "start",
+	}
+}
+
+func TestPgCtlStartArgsRedirectsServerOutput(t *testing.T) {
+	want := []string{
+		"-D", "/tmp/postgres",
+		"-l", "/tmp/postgres.log",
+		"-o", "-p 5432 -k /tmp/socket",
+		"-w", "start",
+	}
+	if got := pgCtlStartArgs("/tmp/postgres", "/tmp/postgres.log", 5432, "/tmp/socket"); !reflect.DeepEqual(got, want) {
+		t.Fatalf("pg_ctl start args = %#v, want %#v", got, want)
+	}
+}
+
 func startCompatPostgres(t *testing.T, binDir string) (dataDir string, port int) {
 	t.Helper()
 	dataDir = filepath.Join(t.TempDir(), "postgres")
@@ -121,13 +143,7 @@ func startCompatPostgres(t *testing.T, binDir string) (dataDir string, port int)
 	// pg_ctl otherwise lets the PostgreSQL server inherit its stdout/stderr.
 	// run captures both streams, so the daemon keeps its copy pipes open after
 	// pg_ctl exits and cmd.Run waits forever for EOF.
-	pgCtlArgs := []string{
-		"-D", dataDir,
-		"-l", filepath.Join(filepath.Dir(dataDir), "postgres.log"),
-		"-o", fmt.Sprintf("-p %d -k %s", port, socketDir),
-		"-w", "start",
-	}
-	mustRun(t, pgCtl, nil, pgCtlArgs...)
+	mustRun(t, pgCtl, nil, pgCtlStartArgs(dataDir, filepath.Join(filepath.Dir(dataDir), "postgres.log"), port, socketDir)...)
 	t.Cleanup(func() {
 		if out, err := run(t, pgCtl, nil, "-D", dataDir, "-m", "immediate", "-w", "stop"); err != nil {
 			t.Logf("stop temporary PostgreSQL: %v\n%s", err, out)
@@ -243,10 +259,7 @@ func TestBarmanCloud_BackupRestoreNonUniformParts(t *testing.T) {
 		t.Fatalf("write restored PostgreSQL authentication configuration: %v", err)
 	}
 	mustRun(t, filepath.Join(binDir, "pg_ctl"), nil,
-		"-D", restoredDir,
-		"-l", filepath.Join(filepath.Dir(restoredDir), "postgres.log"),
-		"-o", fmt.Sprintf("-p %d -k %s", restorePort, restoreSocket),
-		"-w", "start")
+		pgCtlStartArgs(restoredDir, filepath.Join(filepath.Dir(restoredDir), "postgres.log"), restorePort, restoreSocket)...)
 	t.Cleanup(func() {
 		if out, err := run(t, filepath.Join(binDir, "pg_ctl"), nil, "-D", restoredDir, "-m", "immediate", "-w", "stop"); err != nil {
 			t.Logf("stop restored PostgreSQL: %v\n%s", err, out)
