@@ -192,7 +192,11 @@ bucket, not a bucket swap) and the two rename rules:
 6. Arm            deploy the config with ARMOR_PREFIX=<prefix> and restart
                   (§5) — inside the same pause window
 
-7. Verify         §6, before anything resumes and before any deletion
+7. Repair + verify  for each moved completed multipart object, prove the
+                  source and destination ciphertext bytes (or cryptographic
+                  hashes) and user metadata match, then repair its moved
+                  manifest through the armed deployment (§6). Run all §6
+                  checks before anything resumes or is deleted
 
 8. Retire roots   delete the root originals — objects, and both flavors of
                   moved sidecar — only after §6 is green
@@ -255,6 +259,18 @@ side of it it was written on. The integration test
 green run there is evidence the mechanics work; the operator run is
 evidence this bucket's data made it.
 
+Before read validation, repair each moved completed multipart object's
+manifest through the armed deployment with token-gated
+`POST /admin/manifest/repair?key=<logical-key>` (and `bucket=<bucket>` when
+needed). Use the client-visible key, without the prefix. First compare the
+source and destination ciphertext bytes or cryptographic hashes and user
+metadata; a repair declares the destination ciphertext canonical. Confirm the
+response reports `fresh: true` and records `original_completed_at` and
+`repaired_at`. A bucket-side copy gives ciphertext a new `LastModified`, so
+the ADR-016 freshness gate otherwise rejects the original completion time
+even when every byte was copied correctly. Keep writers paused until these
+repairs and the checks below pass.
+
 1. **Every legacy key, byte-for-byte.** Read each pre-cutover key through
    ARMOR and compare against a pre-move SHA-256 taken in §3 — every key,
    not a sample (gate 2 is silent). The restore-verifier, where deployed,
@@ -314,8 +330,14 @@ object written under the prefix is unreachable — the mirror image of gate
      recipe reproduces the legacy names).
   3. Final delta, then unset `ARMOR_PREFIX` and restart — one step, the
      same coupling gate 1 imposes forward.
-  4. Validate (§6 mirrored: every post-cutover key round-trips, listings
-     show one era again), then retire the `<prefix>` copies.
+  4. Through the restarted root deployment, call the token-gated manifest
+     repair endpoint for every copied completed multipart object, including
+     post-cutover writes. Before each repair, prove the root ciphertext copy
+     has the same bytes or cryptographic hash and user metadata as its
+     prefixed source. Confirm `fresh: true`, `original_completed_at`, and
+     `repaired_at` in each response. Then validate (§6 mirrored: every
+     post-cutover key round-trips, listings show one era again) and retire
+     the `<prefix>` copies.
 
 The manifest state does **not** merge on rollback, and that is safe in
 both directions: the root manifest still holds every pre-cutover entry (it

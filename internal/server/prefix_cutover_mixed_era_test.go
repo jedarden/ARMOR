@@ -42,6 +42,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -315,6 +316,46 @@ func (f *mixedEraFixture) copyStored(from, to string) {
 	f.cur.Helper()
 	if err := f.store.Copy(context.Background(), f.bucket, from, f.bucket, to, nil, false); err != nil {
 		f.cur.Fatalf("bucket-side copy %s -> %s: %v", from, to, err)
+	}
+	assertCopiedStoreObjectIdentical(f.cur, f.store, f.bucket, from, to)
+}
+
+// A manifest repair declares the copied ciphertext canonical. Verify the copy
+// before making that declaration, including the metadata the reader uses.
+func assertCopiedStoreObjectIdentical(t *testing.T, store *backend.FSBackend, bucket, from, to string) {
+	t.Helper()
+	source, sourceInfo, err := store.Get(context.Background(), bucket, from)
+	if err != nil {
+		t.Fatalf("read copy source %s: %v", from, err)
+	}
+	defer source.Close()
+	destination, destinationInfo, err := store.Get(context.Background(), bucket, to)
+	if err != nil {
+		t.Fatalf("read copy destination %s: %v", to, err)
+	}
+	defer destination.Close()
+	sourceBytes, err := io.ReadAll(source)
+	if err != nil {
+		t.Fatalf("read copy source bytes %s: %v", from, err)
+	}
+	destinationBytes, err := io.ReadAll(destination)
+	if err != nil {
+		t.Fatalf("read copy destination bytes %s: %v", to, err)
+	}
+	if !bytes.Equal(sourceBytes, destinationBytes) || !maps.Equal(sourceInfo.Metadata, destinationInfo.Metadata) {
+		t.Fatalf("bucket-side copy %s -> %s changed object bytes or metadata", from, to)
+	}
+}
+
+func repairMovedManifest(t *testing.T, srv *Server, bucket, clientKey, storedKey string) {
+	t.Helper()
+	status, err := srv.manifestAdminHandlers().RepairManifest(context.Background(), bucket, clientKey)
+	if err != nil {
+		t.Fatalf("repair moved manifest for %s: %v", clientKey, err)
+	}
+	if status.CiphertextObject != storedKey || !status.FreshnessChecked || !status.Fresh ||
+		status.OriginalCompletedAt == "" || status.RepairedAt == "" || status.CompletedAt != status.CiphertextModified {
+		t.Fatalf("moved manifest repair for %s did not record a fresh canonical copy: %+v", clientKey, status)
 	}
 }
 
@@ -917,6 +958,7 @@ func TestPrefixCutoverMixedEraBucketRegression(t *testing.T) {
 		// reference to the prefixed name. The moved object now serves from
 		// its prefixed copy, byte-for-byte.
 		f.rewriteGeometrySidecarRef(legacyMulti)
+		repairMovedManifest(t, f.armed, f.bucket, legacyMulti, mixedEraPrefix+legacyMulti)
 		f.assertStoredBytes(f.armedAPI, legacyMulti)
 
 		for _, key := range []string{legacySingle, legacyMulti, newSingle, newMulti} {

@@ -274,6 +274,7 @@ func (f *rollbackFixture) copyStored(from, to string) {
 	if err := f.store.Copy(context.Background(), f.bucket, from, f.bucket, to, nil, false); err != nil {
 		f.cur.Fatalf("bucket-side copy %s -> %s: %v", from, to, err)
 	}
+	assertCopiedStoreObjectIdentical(f.cur, f.store, f.bucket, from, to)
 }
 
 // deleteStored retires a copy once the rolled-back namespace validates (§7.4).
@@ -608,6 +609,7 @@ func TestPrefixCutoverRollbackAfterPostCutoverWrites(t *testing.T) {
 		// §4.5: the moved sidecar still names the pre-cutover root copy;
 		// point it at the prefixed one.
 		f.rewriteGeometryRef(rollbackPrefix+rootGeometry, legacyMulti, rollbackPrefix+legacyMulti)
+		repairMovedManifest(t, armed, f.bucket, legacyMulti, rollbackPrefix+legacyMulti)
 		f.copyStored(legacySingle, rollbackPrefix+legacySingle)
 		f.deleteStored(legacySingle)
 		f.deleteStored(legacyMulti)
@@ -689,6 +691,9 @@ func TestPrefixCutoverRollbackAfterPostCutoverWrites(t *testing.T) {
 		// §7.3: unset ARMOR_PREFIX and restart — one step.
 		rb := f.serverAt("", "rb-restored")
 		rbAPI := f.apiFor(rb)
+		for _, key := range []string{legacyMulti, newMulti} {
+			repairMovedManifest(t, rb, f.bucket, key, key)
+		}
 
 		// §7.4 mirrored: every key of both eras round-trips. The
 		// post-cutover keys resolve with NO index entry — reads are
