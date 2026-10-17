@@ -33,45 +33,19 @@ The dashboard is exposed via the admin-api service on port 9001:
 
 ```bash
 # Port-forward to access locally
-kubectl port-forward svc/armor 9001:9001
+kubectl -n armor port-forward svc/armor 9001:9001
 
 # Then open in browser
 open http://localhost:9001/dashboard
 ```
 
-### External Access via Ingress
+### Remote Access
 
-For production deployments, you can expose the dashboard externally using Kubernetes Ingress. Create an Ingress resource that routes to the admin-api port:
-
-```yaml
-apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
-  name: armor-dashboard
-  annotations:
-    # Use your Ingress controller annotations
-    # For NGINX:
-    nginx.ingress.kubernetes.io/rewrite-target: /
-    # For Traefik:
-    traefik.ingress.kubernetes.io/router.entrypoints: websecure
-spec:
-  ingressClassName: nginx
-  rules:
-  - host: armor-dashboard.example.com
-    http:
-      paths:
-      - path: /
-        pathType: Prefix
-        backend:
-          service:
-            name: armor
-            port:
-              number: 9001
-  tls:
-  - hosts:
-    - armor-dashboard.example.com
-    secretName: armor-dashboard-tls
-```
+Use the port-forward above for operator access. If a cluster needs a persistent
+route, define a Traefik `IngressRoute` for the admin service in
+`declarative-config`, following that cluster's access and TLS rules. The iad-ci
+ARMOR manifests currently expose the S3 port through a VPN route; they do not
+publish the dashboard through an ingress route.
 
 ## Dashboard Authentication
 
@@ -79,41 +53,21 @@ The dashboard supports two authentication methods to protect against unauthorize
 
 ### HTTP Basic Authentication
 
-Set username and password via environment variables:
+Set `ARMOR_DASHBOARD_USER` and `ARMOR_DASHBOARD_PASS` in the server environment.
+For a cluster deployment, source them from a Secret/ExternalSecret reference.
 
-```yaml
-env:
-  - name: ARMOR_DASHBOARD_USER
-    value: "admin"
-  - name: ARMOR_DASHBOARD_PASS
-    value: "secure-password-here"
-```
-
-When accessing the dashboard, provide credentials:
-```bash
-# These variables must already be supplied by the process environment or a
-# Secret/ExternalSecret; never put either credential value in this command.
-curl -u "$ARMOR_DASHBOARD_USER:$ARMOR_DASHBOARD_PASS" http://localhost:9001/dashboard
-
-# Browser will prompt for username/password
-```
+When opening `/dashboard` in a browser, enter the configured username and
+password at the Basic Auth prompt. Supply production values through a
+Secret/ExternalSecret reference, never as literal values in a manifest.
 
 ### Bearer Token Authentication
 
-Alternatively, use a bearer token:
+Alternatively, set `ARMOR_DASHBOARD_TOKEN` in the server environment through a
+Secret/ExternalSecret reference.
 
-```yaml
-env:
-  - name: ARMOR_DASHBOARD_TOKEN
-    value: "your-secure-token-here"
-```
-
-When accessing the dashboard, provide the token in the Authorization header:
-```bash
-# The token should be injected into the environment by the deployment's
-# Secret/ExternalSecret, not written into this command.
-curl -H "Authorization: Bearer $ARMOR_DASHBOARD_TOKEN" http://localhost:9001/dashboard
-```
+API clients can send the token in an `Authorization: Bearer` header. Source the
+token from the deployment's Secret/ExternalSecret reference; keep it out of
+command arguments and logs.
 
 ### Security Notes
 
@@ -186,7 +140,7 @@ Click any object to view detailed metadata:
     "block_size": 65536,
     "key_id": "sensitive",
     "iv": "0123456789abcdef0123456789abcdef",
-    "wrapped_dek": "base64encodedwrappedkey",
+    "wrapped_dek": "0123456789abcdef",
     "sha256": "hexdigestofplaintext"
   }
 }
@@ -194,13 +148,10 @@ Click any object to view detailed metadata:
 
 ### 6. JSON Metrics Endpoint
 
-For programmatic access and monitoring integrations:
+For programmatic access and monitoring integrations, request
+`GET /dashboard/metrics` with the dashboard authentication configured above.
 
-```bash
-curl http://localhost:9001/dashboard/metrics
-```
-
-Returns:
+Example response fields:
 ```json
 {
   "requests_total": 15234,
@@ -212,6 +163,7 @@ Returns:
   "range_bytes_saved": 10737418240,
   "cache_hits": 12000,
   "cache_misses": 3234,
+  "cache_hit_rate_pct": 78.77,
   "key_wrap_ops": 150,
   "key_unwrap_ops": 15000,
   "canary_checks": 240,
@@ -220,35 +172,23 @@ Returns:
   "provenance_entries": 150,
   "uptime_seconds": 86400.0,
   "replication_queue_depth": 42,
-  "replication_enqueued_total": {
-    "put": 1234,
-    "put-streaming": 567
-  },
-  "replication_dropped_total": 0
+  "replication_dropped": 0,
+  "replication_errors": 0,
+  "replication_retries": 0
 }
 ```
 
 ## Dashboard Endpoints
 
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/dashboard` | GET | Main dashboard UI (HTML) |
-| `/dashboard?prefix=data/` | GET | Browse with prefix filter |
-| `/dashboard/object?key=path/to/file` | GET | Object details (JSON) |
-| `/dashboard/metrics` | GET | All metrics (JSON) |
-| `/dashboard/api/list?prefix=data/` | GET | List objects (JSON) |
-| `/dashboard/encryption-stats` | GET | Encryption statistics (JSON) |
-| `/dashboard/upload` | POST | Upload a file (`multipart/form-data`, field `file`; optional `key`, `content_type`) — 403 unless `ARMOR_DASHBOARD_CREDENTIAL` names a configured access key |
-| `/dashboard/download?key=path/to/file` | GET | Download an object — 403 unless `ARMOR_DASHBOARD_CREDENTIAL` names a configured access key |
+See the [dashboard routes in the HTTP API reference](http-api-reference.md#dashboard-routes)
+for the current method, authentication, success, and error contract of every
+route, including upload, download, delete, share links, and credential activity.
 
 ### JSON List Endpoint
 
 The `/dashboard/api/list` endpoint returns a JSON response with objects and common prefixes (virtual folders), enabling programmatic bucket browsing.
 
-**Request:**
-```bash
-curl http://localhost:9001/dashboard/api/list?prefix=data/
-```
+**Request:** authenticated `GET /dashboard/api/list?prefix=data/`.
 
 **Response:**
 ```json
@@ -295,17 +235,18 @@ curl http://localhost:9001/dashboard/api/list?prefix=data/
 
 ### Dashboard shows "Failed to list objects"
 
-1. Check B2 connectivity: `kubectl exec deploy/armor -- armor check` (the
+1. Check B2 connectivity: `kubectl -n armor exec deploy/armor -- armor check` (the
    image is `scratch` and has no `curl`), or port-forward and
    `curl -s localhost:9001/healthz` from your machine
-2. Verify credentials: Check B2 credentials in the `armor-secrets` Secret
-3. Check logs: `kubectl logs -f deploy/armor`
+2. Verify the configured B2 credential Secret/ExternalSecret has synced
+3. Check logs: `kubectl -n armor logs -f deploy/armor`
 
-### Can't access dashboard externally
+### Can't access the dashboard
 
-1. Verify Service exists: `kubectl get svc armor`
-2. Check port-forward is running: `kubectl port-forward svc/armor 9001:9001`
-3. For Ingress: Verify Ingress controller is running and DNS is configured
+1. Verify the Service exists: `kubectl -n armor get svc armor`
+2. Check the port-forward is running: `kubectl -n armor port-forward svc/armor 9001:9001`
+3. For a persistent route, inspect its Traefik `IngressRoute`, TLS certificate,
+   and DNS in `declarative-config`
 
 ### Cache hit rate is 0%
 
@@ -314,7 +255,8 @@ This is normal for:
 - Buckets with poor access locality (random object access)
 - After cache clears (TTL expiration)
 
-The cache will warm up as objects are accessed. For frequently-accessed objects (e.g., Parquet footers, hot data), you should see 60-90% hit rates during normal operation.
+The cache warms as objects are accessed. Check `/dashboard/metrics` for the
+measured hit rate; it depends on the workload and cache configuration.
 
 ## Future Enhancements
 
@@ -328,7 +270,8 @@ Potential improvements for the dashboard:
 
 ## Contributing
 
-The dashboard is implemented in Go with no external frontend dependencies. The HTML/CSS/JavaScript is embedded directly in the Go code for simplicity. To modify the UI:
+The dashboard HTML/CSS/JavaScript is embedded in Go. Its Agentation toolbar
+loads through the page's import map. To modify the UI:
 
 1. Edit `internal/dashboard/dashboard.go`
 2. Update the `dashboardHTML` template constant
