@@ -118,7 +118,15 @@ func startCompatPostgres(t *testing.T, binDir string) (dataDir string, port int)
 		t.Fatalf("write PostgreSQL authentication configuration: %v", err)
 	}
 
-	pgCtlArgs := []string{"-D", dataDir, "-o", fmt.Sprintf("-p %d -k %s", port, socketDir), "-w", "start"}
+	// pg_ctl otherwise lets the PostgreSQL server inherit its stdout/stderr.
+	// run captures both streams, so the daemon keeps its copy pipes open after
+	// pg_ctl exits and cmd.Run waits forever for EOF.
+	pgCtlArgs := []string{
+		"-D", dataDir,
+		"-l", filepath.Join(filepath.Dir(dataDir), "postgres.log"),
+		"-o", fmt.Sprintf("-p %d -k %s", port, socketDir),
+		"-w", "start",
+	}
 	mustRun(t, pgCtl, nil, pgCtlArgs...)
 	t.Cleanup(func() {
 		if out, err := run(t, pgCtl, nil, "-D", dataDir, "-m", "immediate", "-w", "stop"); err != nil {
@@ -234,7 +242,11 @@ func TestBarmanCloud_BackupRestoreNonUniformParts(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(restoredDir, "pg_hba.conf"), []byte("local all all trust\nhost all all 127.0.0.1/32 trust\n"), 0o600); err != nil {
 		t.Fatalf("write restored PostgreSQL authentication configuration: %v", err)
 	}
-	mustRun(t, filepath.Join(binDir, "pg_ctl"), nil, "-D", restoredDir, "-o", fmt.Sprintf("-p %d -k %s", restorePort, restoreSocket), "-w", "start")
+	mustRun(t, filepath.Join(binDir, "pg_ctl"), nil,
+		"-D", restoredDir,
+		"-l", filepath.Join(filepath.Dir(restoredDir), "postgres.log"),
+		"-o", fmt.Sprintf("-p %d -k %s", restorePort, restoreSocket),
+		"-w", "start")
 	t.Cleanup(func() {
 		if out, err := run(t, filepath.Join(binDir, "pg_ctl"), nil, "-D", restoredDir, "-m", "immediate", "-w", "stop"); err != nil {
 			t.Logf("stop restored PostgreSQL: %v\n%s", err, out)
