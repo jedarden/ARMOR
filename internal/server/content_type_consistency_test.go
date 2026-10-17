@@ -46,6 +46,7 @@ func TestContentTypeConsistencyAcrossAllRejections(t *testing.T) {
 
 	cfg := &config.Config{
 		Backend:     "filesystem",
+		FSPath:      t.TempDir(),
 		Bucket:      "test-bucket",
 		B2Region:    "us-east-005",
 		Credentials: credentials,
@@ -84,7 +85,7 @@ func TestContentTypeConsistencyAcrossAllRejections(t *testing.T) {
 		{
 			name: "SignatureDoesNotMatch",
 			setupRequest: func() *http.Request {
-				return createInvalidCredTestRequest(t, "GET", "/test-bucket/test-key", "", "TESTACCESSKEY", "REMOVED-NOT-A-SECRET-VALUE", nil)
+				return createInvalidCredTestRequest(t, "GET", "/test-bucket/test-key", "", "TESTACCESSKEY", "wrong-test-signing-key", nil)
 			},
 			expectedCode: "SignatureDoesNotMatch",
 		},
@@ -100,7 +101,7 @@ func TestContentTypeConsistencyAcrossAllRejections(t *testing.T) {
 		{
 			name: "IncompleteSignature",
 			setupRequest: func() *http.Request {
-				req := createMalformedSigRequest(t, "GET", "/test-bucket/test-key", "TESTACCESSKEY", "REMOVED-NOT-A-SECRET-VALUE")
+				req := createMalformedSigRequest(t, "GET", "/test-bucket/test-key", "TESTACCESSKEY", "")
 				return req
 			},
 			expectedCode: "IncompleteSignature",

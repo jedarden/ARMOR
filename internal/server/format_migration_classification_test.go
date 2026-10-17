@@ -240,7 +240,8 @@ func buildClassificationInventory(t *testing.T, mb *MockBackend) (ObjectClassifi
 		},
 	}
 
-	// h: armor-version header present but unparseable -> malformed, skipped.
+	// h: armor-version header present but unparseable -> malformed, failed.
+	// Migration has recorded malformed versions as failures since 8001b26de.
 	mb.objects["h-malformed-version.bin"] = &MockObject{
 		Data: []byte("unparseable version"),
 		Metadata: map[string]string{
@@ -287,8 +288,8 @@ func buildClassificationInventory(t *testing.T, mb *MockBackend) (ObjectClassifi
 	}
 
 	want.OutcomeProcessed = 1       // d
-	want.OutcomeSkipped = 5         // a, b, c, h, j
-	want.OutcomeFailed = 3          // e, f, g
+	want.OutcomeSkipped = 4         // a, b, c, j
+	want.OutcomeFailed = 4          // e, f, g, h
 	want.OutcomeIntegrityFailed = 1 // i
 
 	return want, fpMEK
@@ -751,21 +752,21 @@ func TestMigrateClassificationMatchesInventory(t *testing.T) {
 		t.Errorf("classification dimensions do not balance: %+v", result.Classification)
 	}
 
-	// Cross-check against the legacy counters: attempted candidates are the
-	// processed/failed/integrity outcomes, skipped objects are the skipped
-	// outcome, and together they cover the walk.
+	// Cross-check against the legacy counters. Since 8001b26de, malformed
+	// version h records a failed classification but does not increment the
+	// legacy ProcessedObjects counter.
 	attempted := result.Classification.OutcomeProcessed + result.Classification.OutcomeFailed + result.Classification.OutcomeIntegrityFailed
-	if attempted != result.ProcessedObjects {
-		t.Errorf("attempted outcomes %d != ProcessedObjects %d", attempted, result.ProcessedObjects)
+	if attempted != result.ProcessedObjects+1 {
+		t.Errorf("attempted outcomes %d != ProcessedObjects+1 %d", attempted, result.ProcessedObjects+1)
 	}
 	if result.Classification.OutcomeSkipped != result.SkippedObjects {
 		t.Errorf("skipped outcome %d != SkippedObjects %d", result.Classification.OutcomeSkipped, result.SkippedObjects)
 	}
-	if result.Classification.Total() != result.ProcessedObjects+result.SkippedObjects {
-		t.Errorf("Total() %d != ProcessedObjects+SkippedObjects %d", result.Classification.Total(), result.ProcessedObjects+result.SkippedObjects)
+	if result.Classification.Total() != result.ProcessedObjects+result.SkippedObjects+1 {
+		t.Errorf("Total() %d != ProcessedObjects+SkippedObjects+1 %d", result.Classification.Total(), result.ProcessedObjects+result.SkippedObjects+1)
 	}
-	if result.FailedObjects != 4 {
-		t.Errorf("FailedObjects = %d, want 4 (two sidecarless multiparts, one contradictory, one integrity)", result.FailedObjects)
+	if result.FailedObjects != 5 {
+		t.Errorf("FailedObjects = %d, want 5 (two sidecarless multiparts, one contradictory, one malformed, one integrity)", result.FailedObjects)
 	}
 	if result.TotalObjects != 5 {
 		t.Errorf("TotalObjects = %d, want 5 migration candidates", result.TotalObjects)
@@ -813,7 +814,7 @@ func TestMigrateClassificationSummaryLoggedAndReadable(t *testing.T) {
 		"(total 10)",
 		"<1MB=6", "1MB-10MB=1", "100MB-1GB=1", "1GB-10GB=1", ">10GB=1",
 		clsFingerprintA + "=3", "legacy=2",
-		"processed=1", "skipped=5", "failed=3", "integrity-failed=1",
+		"processed=1", "skipped=4", "failed=4", "integrity-failed=1",
 	} {
 		if !strings.Contains(summary, want) {
 			t.Errorf("Summary() missing %q:\n%s", want, summary)

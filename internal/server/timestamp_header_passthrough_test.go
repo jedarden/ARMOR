@@ -33,6 +33,7 @@ func TestXAmzDateHeaderPassthrough(t *testing.T) {
 
 	cfg := &config.Config{
 		Backend:     "filesystem",
+		FSPath:      t.TempDir(),
 		Bucket:      "test-bucket",
 		B2Region:    "us-east-005",
 		Credentials: credentials,
@@ -236,6 +237,7 @@ func TestXAmzDateHeaderIntegration(t *testing.T) {
 
 	cfg := &config.Config{
 		Backend:     "filesystem",
+		FSPath:      t.TempDir(),
 		Bucket:      "test-bucket",
 		B2Region:    "us-east-005",
 		Credentials: credentials,
@@ -585,6 +587,7 @@ func TestXAmzDateHeaderWithAuthorization(t *testing.T) {
 
 	cfg := &config.Config{
 		Backend:     "filesystem",
+		FSPath:      t.TempDir(),
 		Bucket:      "test-bucket",
 		B2Region:    "us-east-005",
 		Credentials: credentials,

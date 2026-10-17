@@ -9,15 +9,16 @@ import (
 	"github.com/jedarden/armor/internal/config"
 )
 
-// TestPresignDisabled_ShareRoute404s tests that /share/ route returns 404 when presign is disabled
-func TestPresignDisabled_ShareRoute404s(t *testing.T) {
+// TestPresignDisabled_ShareRouteRequiresS3Auth verifies that an unregistered
+// /share/ path falls through to the S3 root handler (197be975).
+func TestPresignDisabled_ShareRouteRequiresS3Auth(t *testing.T) {
 	// Create a minimal config with presign disabled
 	tmpDir := t.TempDir()
 	cfg := &config.Config{
-		Backend:       "filesystem",
-		FSPath:        tmpDir,
-		Bucket:        "test-bucket",
-		MEK:           make([]byte, 32), // dummy MEK
+		Backend:        "filesystem",
+		FSPath:         tmpDir,
+		Bucket:         "test-bucket",
+		MEK:            make([]byte, 32), // dummy MEK
 		PresignEnabled: false,
 	}
 
@@ -27,18 +28,23 @@ func TestPresignDisabled_ShareRoute404s(t *testing.T) {
 		t.Fatalf("Failed to create server: %v", err)
 	}
 
-	// Test that /share/ route is not registered
+	// The disabled share route is not registered, so the S3 auth gate rejects
+	// this unauthenticated request before object routing.
 	req := httptest.NewRequest("GET", "/share/some-token", nil)
 	w := httptest.NewRecorder()
 	server.Handler().ServeHTTP(w, req)
 
-	if w.Code != http.StatusNotFound {
-		t.Errorf("Expected 404 for /share/ when presign disabled, got %d", w.Code)
+	if w.Code != http.StatusForbidden {
+		t.Errorf("Expected 403 for unauthenticated /share/ when presign disabled, got %d", w.Code)
+	}
+	if !strings.Contains(w.Body.String(), "MissingAuthenticationToken") {
+		t.Errorf("Expected S3 authentication error, got: %s", w.Body.String())
 	}
 }
 
-// TestPresignDisabled_AdminPresign404s tests that /admin/presign returns 404 when presign is disabled
-func TestPresignDisabled_AdminPresign404s(t *testing.T) {
+// TestPresignDisabled_AdminPresignForbiddenWithoutAdminToken verifies the
+// fail-closed admin gate added in c4b0f671 takes precedence over route handling.
+func TestPresignDisabled_AdminPresignForbiddenWithoutAdminToken(t *testing.T) {
 	// Create a minimal config with presign disabled
 	tmpDir := t.TempDir()
 	cfg := &config.Config{
@@ -58,7 +64,7 @@ func TestPresignDisabled_AdminPresign404s(t *testing.T) {
 		t.Fatalf("Failed to create server: %v", err)
 	}
 
-	// Test that /admin/presign returns 404
+	// The admin token gate runs before the disabled route can return 404.
 	req := httptest.NewRequest("POST", "/admin/presign", strings.NewReader(`{"key":"test.txt"}`))
 	req.Header.Set("Content-Type", "application/json")
 	// Add basic auth header
@@ -66,11 +72,11 @@ func TestPresignDisabled_AdminPresign404s(t *testing.T) {
 	w := httptest.NewRecorder()
 	server.AdminHandler().ServeHTTP(w, req)
 
-	if w.Code != http.StatusNotFound {
-		t.Errorf("Expected 404 for /admin/presign when presign disabled, got %d", w.Code)
+	if w.Code != http.StatusForbidden {
+		t.Errorf("Expected 403 for /admin/presign without admin token, got %d", w.Code)
 	}
-	if !strings.Contains(w.Body.String(), "Pre-signing is not enabled") {
-		t.Errorf("Expected error message about pre-signing not enabled, got: %s", w.Body.String())
+	if !strings.Contains(w.Body.String(), "admin API disabled: ARMOR_ADMIN_TOKEN not set") {
+		t.Errorf("Expected disabled admin API message, got: %s", w.Body.String())
 	}
 }
 
@@ -78,13 +84,13 @@ func TestPresignDisabled_AdminPresign404s(t *testing.T) {
 func TestPresignEnabled_RoutesRegistered(t *testing.T) {
 	// Create a minimal config with presign enabled
 	tmpDir := t.TempDir()
-	
+
 	// Generate valid presign secret (32 bytes)
 	presignSecret := make([]byte, 32)
 	for i := range presignSecret {
 		presignSecret[i] = byte(i % 256)
 	}
-	
+
 	cfg := &config.Config{
 		Backend:        "filesystem",
 		FSPath:         tmpDir,

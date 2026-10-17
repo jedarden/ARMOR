@@ -25,6 +25,8 @@ func minimalTestEnv() []string {
 		"ARMOR_B2_SECRET_ACCESS_KEY", "testsecret",
 		"ARMOR_BUCKET", "testbucket",
 		"ARMOR_MEK", "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+		"ARMOR_AUTH_ACCESS_KEY", "test-access-key",
+		"ARMOR_AUTH_SECRET_KEY", "test-signing-key",
 	}
 }
 

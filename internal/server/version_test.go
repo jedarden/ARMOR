@@ -18,6 +18,8 @@ import (
 func TestVersionEndpoint(t *testing.T) {
 	cfg := &config.Config{
 		Backend:            "filesystem",
+		FSPath:             t.TempDir(),
+		MEK:                make([]byte, 32),
 		FormatWriteVersion: 2,
 	}
 
@@ -44,9 +46,9 @@ func TestVersionEndpoint(t *testing.T) {
 
 	// Parse JSON response
 	var result struct {
-		Version             string `json:"version"`
-		FormatWriteVersion  int    `json:"format_write_version"`
-		Go                  string `json:"go"`
+		Version            string `json:"version"`
+		FormatWriteVersion int    `json:"format_write_version"`
+		Go                 string `json:"go"`
 	}
 	if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil {
 		t.Fatalf("failed to parse JSON response: %v", err)
@@ -73,6 +75,9 @@ func TestVersionEndpoint(t *testing.T) {
 func TestVersionEndpointOnAdminListener(t *testing.T) {
 	cfg := &config.Config{
 		Backend:            "filesystem",
+		FSPath:             t.TempDir(),
+		MEK:                make([]byte, 32),
+		AdminToken:         "test-admin-token",
 		FormatWriteVersion: 2,
 	}
 
@@ -84,7 +89,9 @@ func TestVersionEndpointOnAdminListener(t *testing.T) {
 	handler := s.AdminHandler()
 
 	// Test admin API listener
+	// c4b0f671 gates admin-listener routes before dispatch.
 	req := httptest.NewRequest(http.MethodGet, "/version", nil)
+	req.Header.Set("Authorization", "Bearer test-admin-token")
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
 
@@ -99,9 +106,9 @@ func TestVersionEndpointOnAdminListener(t *testing.T) {
 
 	// Parse JSON response
 	var result struct {
-		Version             string `json:"version"`
-		FormatWriteVersion  int    `json:"format_write_version"`
-		Go                  string `json:"go"`
+		Version            string `json:"version"`
+		FormatWriteVersion int    `json:"format_write_version"`
+		Go                 string `json:"go"`
 	}
 	if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil {
 		t.Fatalf("failed to parse JSON response: %v", err)
@@ -117,6 +124,8 @@ func TestVersionEndpointOnAdminListener(t *testing.T) {
 func TestVersionEndpointOnlyAcceptsGet(t *testing.T) {
 	cfg := &config.Config{
 		Backend:            "filesystem",
+		FSPath:             t.TempDir(),
+		MEK:                make([]byte, 32),
 		FormatWriteVersion: 2,
 	}
 
@@ -141,6 +150,8 @@ func TestVersionEndpointOnlyAcceptsGet(t *testing.T) {
 func TestServerHeaderOnS3Listener(t *testing.T) {
 	cfg := &config.Config{
 		Backend:            "filesystem",
+		FSPath:             t.TempDir(),
+		MEK:                make([]byte, 32),
 		FormatWriteVersion: 2,
 	}
 
@@ -208,6 +219,8 @@ func TestServerHeaderOnS3Listener(t *testing.T) {
 func TestServerHeaderOnAdminListener(t *testing.T) {
 	cfg := &config.Config{
 		Backend:            "filesystem",
+		FSPath:             t.TempDir(),
+		MEK:                make([]byte, 32),
 		FormatWriteVersion: 2,
 	}
 

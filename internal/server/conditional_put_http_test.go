@@ -61,6 +61,7 @@ func TestConditionalPutExpectContinueRejectsBeforeBodyRead(t *testing.T) {
 	}
 	cfg := &config.Config{
 		Backend:     "filesystem",
+		FSPath:      t.TempDir(),
 		Bucket:      bucket,
 		B2Region:    "us-east-005",
 		Credentials: map[string]*config.Credential{accessKey: {AccessKey: accessKey, SecretKey: secretKey}},

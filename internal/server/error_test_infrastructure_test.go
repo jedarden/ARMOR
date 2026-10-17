@@ -72,6 +72,7 @@ func NewTestServer(t *testing.T) *TestServerFixture {
 
 	cfg := &config.Config{
 		Backend:     "filesystem",
+		FSPath:      t.TempDir(),
 		Bucket:      "test-bucket",
 		B2Region:    "us-east-005",
 		Credentials: credentials,
@@ -104,11 +105,11 @@ type TestCredentialsFixture struct {
 func DefaultTestCredentials() *TestCredentialsFixture {
 	return &TestCredentialsFixture{
 		ValidAccessKey:      "TESTACCESSKEY",
-		ValidSecretKey: "REMOVED-NOT-A-SECRET-VALUE",
+		ValidSecretKey:      "REMOVED-NOT-A-SECRET-VALUE",
 		RestrictedAccessKey: "RESTRICTEDKEY",
 		RestrictedSecretKey: "REMOVED-NOT-A-SECRET-VALUE",
 		InvalidAccessKey:    "INVALIDKEY",
-		InvalidSecretKey: "REMOVED-NOT-A-SECRET-VALUE",
+		InvalidSecretKey:    "REMOVED-NOT-A-SECRET-VALUE",
 	}
 }
 

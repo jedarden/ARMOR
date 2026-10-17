@@ -128,7 +128,7 @@ func TestDeleteObjects_BulkRequestReachesPerKeyACL(t *testing.T) {
 		`<Object><Key>other-app/queue.db/0000/0000000000000001-0000000000000002.ltx</Key></Object>` +
 		`</Delete>`
 
-	resp, result := postDeleteObjects(t, ts, "PREFIXDELETE", "PREFIXDELETESECRET1234567890123456", body)
+	resp, result := postDeleteObjects(t, ts, "PREFIXDELETE", creds["PREFIXDELETE"].SecretKey, body)
 
 	if resp.StatusCode == http.StatusForbidden {
 		t.Fatalf("bulk delete denied before per-key enforcement: the middleware gate checked the empty URL key")
@@ -175,7 +175,7 @@ func TestDeleteObjects_BulkRequestOutsideScopeDeletesNothing(t *testing.T) {
 		`<Object><Key>queue-api/queue.db/0000/0000000000000001-0000000000000002.ltx</Key></Object>` +
 		`</Delete>`
 
-	resp, result := postDeleteObjects(t, ts, "UNRELATED", "UNRELATEDSECRET123456789012345678", body)
+	resp, result := postDeleteObjects(t, ts, "UNRELATED", creds["UNRELATED"].SecretKey, body)
 
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("expected 200 with per-key errors, got %d", resp.StatusCode)

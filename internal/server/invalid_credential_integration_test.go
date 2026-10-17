@@ -54,6 +54,7 @@ func SetupTestServer(t *testing.T) *TestServer {
 	// Create test configuration
 	cfg := &config.Config{
 		Backend:     "filesystem",
+		FSPath:      t.TempDir(),
 		Bucket:      "test-bucket",
 		B2Region:    "us-east-005",
 		Credentials: testCredentials,
@@ -250,7 +251,7 @@ func TestInvalidCredentialsIntegration(t *testing.T) {
 
 	t.Run("Invalid secret key returns 403", func(t *testing.T) {
 		resp := MakeAuthenticatedRequest(t, ts, "GET", "/test-bucket/test-key", nil,
-			"TESTACCESSKEY", "REMOVED-NOT-A-SECRET-VALUE")
+			"TESTACCESSKEY", "wrong-test-signing-key")
 		defer resp.Body.Close()
 
 		if resp.StatusCode != 403 {

@@ -79,8 +79,12 @@ func TestPayloadHashGateMismatchFailsBeforeObjectStored(t *testing.T) {
 	if parsed.Code != "XAmzContentSHA256Mismatch" {
 		t.Fatalf("mismatched PUT: error code = %q, want XAmzContentSHA256Mismatch (body %s)", parsed.Code, rec.Body.String())
 	}
-	if !strings.Contains(parsed.Message, originalDigest) || !strings.Contains(parsed.Message, sha256Hex(tampered)) {
-		t.Errorf("mismatch message should name both digests, got %q", parsed.Message)
+	// The client-safe catalogue (33d6124f) keeps digest details out of the wire response.
+	if !strings.HasPrefix(parsed.Message, "The request could not be completed. Correct the request and retry.") {
+		t.Errorf("unexpected client-safe mismatch message %q", parsed.Message)
+	}
+	if strings.Contains(parsed.Message, originalDigest) || strings.Contains(parsed.Message, sha256Hex(tampered)) {
+		t.Errorf("mismatch message disclosed a digest: %q", parsed.Message)
 	}
 	objectAbsent(h, key)
 
@@ -125,9 +129,13 @@ func TestPayloadHashGateUnknownStreamingModeRejected(t *testing.T) {
 	if parsed.Code != "InvalidArgument" {
 		t.Fatalf("unknown streaming mode: error code = %q, want InvalidArgument (body %s)", parsed.Code, rec.Body.String())
 	}
+	// c30fdad1 routes InvalidArgument through the client-safe catalogue.
+	if !strings.HasPrefix(parsed.Message, "The request contains an invalid argument. Correct the request and retry.") {
+		t.Errorf("unexpected client-safe invalid-argument message %q", parsed.Message)
+	}
 	for _, mode := range []string{"STREAMING-AWS4-HMAC-SHA256-PAYLOAD", "UNSIGNED-PAYLOAD"} {
-		if !strings.Contains(parsed.Message, mode) {
-			t.Errorf("rejection message should name supported mode %s, got %q", mode, parsed.Message)
+		if strings.Contains(parsed.Message, mode) {
+			t.Errorf("rejection message disclosed supported mode %s: %q", mode, parsed.Message)
 		}
 	}
 	objectAbsent(h, key)

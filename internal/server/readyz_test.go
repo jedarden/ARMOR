@@ -296,8 +296,16 @@ func TestReadyzManifestWriter(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Errorf("expected 200 after flush, got %d: %s", rec.Code, rec.Body.String())
 	}
-	if rec.Body.String() != "Ready" {
-		t.Errorf("expected body 'Ready', got: %s", rec.Body.String())
+	// /readyz has returned structured JSON since 839e5a8b.
+	var ready struct {
+		Ready  bool   `json:"ready"`
+		Reason string `json:"reason"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &ready); err != nil {
+		t.Fatalf("decode readyz response: %v", err)
+	}
+	if !ready.Ready || ready.Reason != "Ready - manifest writer recently flushed" {
+		t.Errorf("unexpected readyz response: %+v", ready)
 	}
 
 	// Verify no HeadBucket calls were made
@@ -553,8 +561,15 @@ func TestReadyzCanaryHealthy(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Errorf("expected 200, got %d", rec.Code)
 	}
-	if body := rec.Body.String(); body != "Ready" {
-		t.Errorf("expected body %q, got %q", "Ready", body)
+	var ready struct {
+		Ready  bool   `json:"ready"`
+		Reason string `json:"reason"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &ready); err != nil {
+		t.Fatalf("decode readyz response: %v", err)
+	}
+	if !ready.Ready || ready.Reason != "Ready" {
+		t.Errorf("unexpected readyz response: %+v", ready)
 	}
 	if calls := cb.headBucketCalls.Load(); calls != 0 {
 		t.Errorf("expected 0 HeadBucket calls with healthy canary, got %d", calls)

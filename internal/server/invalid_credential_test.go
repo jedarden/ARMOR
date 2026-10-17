@@ -27,6 +27,7 @@ func TestInvalidCredentialRejection(t *testing.T) {
 
 	cfg := &config.Config{
 		Backend:     "filesystem",
+		FSPath:      t.TempDir(),
 		Bucket:      "test-bucket",
 		B2Region:    "us-east-005",
 		Credentials: credentials,
@@ -72,7 +73,7 @@ func TestInvalidCredentialRejection(t *testing.T) {
 
 	t.Run("Malformed signatures return 403 Forbidden", func(t *testing.T) {
 		// Create a request with a wrong secret key (invalid signature)
-		req := createInvalidCredTestRequest(t, "GET", "/test-bucket/test-key", "", "TESTACCESSKEY", "REMOVED-NOT-A-SECRET-VALUE", nil)
+		req := createInvalidCredTestRequest(t, "GET", "/test-bucket/test-key", "", "TESTACCESSKEY", "wrong-test-signing-key", nil)
 
 		w := httptest.NewRecorder()
 		handler.ServeHTTP(w, req)

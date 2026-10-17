@@ -909,7 +909,7 @@ func encryptTestData(t *testing.T, srv *Server, data []byte, compressed bool) ([
 
 	// Create ARMOR metadata
 	armorMeta := &backend.ARMORMetadata{
-		Version:       1,
+		Version:       crypto.Version2,
 		BlockSize:     blockSize,
 		PlaintextSize: int64(len(data)),
 		ContentType:   "application/octet-stream",

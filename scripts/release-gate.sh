@@ -100,5 +100,8 @@ go test -count=1 ./cmd/armor \
 go test ${race_flag} -count=1 ./internal/server/handlers \
 	-run '^TestMultipartV3HTTPConcurrentShuffledUnalignedRoundTrip$|^TestMultipartV3|^TestV3GetObject|^TestV3FilesystemPutGetRoundTrip$|^TestPutObjectIfNoneMatchCreateOnlySmallAndStreaming$|^TestPutObjectRejectsUnsupportedIfNoneMatchValue$|^TestPutObjectDoesNotEmulateConditionalWrite$'
 
+# Exercise the server and HTTP harness so red package tests block a release.
+go test ${race_flag} -count=1 -short ./internal/server ./internal/server/srvtest
+
 # Compile the credentialed B2 integration suite without contacting a backend.
 go test -count=1 -tags=integration ./tests/integration/... -run '^$'

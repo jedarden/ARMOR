@@ -33,6 +33,7 @@ func TestHeaderIntegrityWithSpecialCharacters(t *testing.T) {
 
 	cfg := &config.Config{
 		Backend:     "filesystem",
+		FSPath:      t.TempDir(),
 		Bucket:      "test-bucket",
 		B2Region:    "us-east-005",
 		Credentials: credentials,
@@ -255,6 +256,7 @@ func TestHeaderTruncationDetection(t *testing.T) {
 
 	cfg := &config.Config{
 		Backend:     "filesystem",
+		FSPath:      t.TempDir(),
 		Bucket:      "test-bucket",
 		B2Region:    "us-east-005",
 		Credentials: credentials,
@@ -411,6 +413,7 @@ func TestHeaderDuplicationDetection(t *testing.T) {
 
 	cfg := &config.Config{
 		Backend:     "filesystem",
+		FSPath:      t.TempDir(),
 		Bucket:      "test-bucket",
 		B2Region:    "us-east-005",
 		Credentials: credentials,
@@ -552,6 +555,7 @@ func TestHeaderIntegrityWithMalformedValues(t *testing.T) {
 
 	cfg := &config.Config{
 		Backend:     "filesystem",
+		FSPath:      t.TempDir(),
 		Bucket:      "test-bucket",
 		B2Region:    "us-east-005",
 		Credentials: credentials,
@@ -696,6 +700,7 @@ func TestHeaderIntegrityWithEncodingVariations(t *testing.T) {
 
 	cfg := &config.Config{
 		Backend:     "filesystem",
+		FSPath:      t.TempDir(),
 		Bucket:      "test-bucket",
 		B2Region:    "us-east-005",
 		Credentials: credentials,
