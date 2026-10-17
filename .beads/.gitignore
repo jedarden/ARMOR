@@ -12,3 +12,10 @@
 
 # Journals
 *.journal
+
+# Runtime directories (bead doctor runtime_dir_ignore_coverage)
+traces/
+diagnostics/
+.br_recovery/
+.bf_history/
+recovery/
