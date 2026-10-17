@@ -19,13 +19,15 @@ cd ARMOR
 ```
 
 Select an image tag that has been published. The [release-status
-register](docs/release-status.md) records `0.1.1975` as the latest published
-tag on its 2026-10-15 status date; check the releases before selecting a newer
-one. The checkout's [`VERSION`](VERSION) and Compose default can be ahead of
-published images. For the commands below, set the tag once:
+register](docs/release-status.md) is the evidence boundary: on its
+2026-10-16 status date the newest tags with published images are 0.1.1993
+and 0.1.1994, and the register records what each publication does and does
+not prove. The checkout's [`VERSION`](VERSION) and Compose default can be
+ahead of published images, so confirm there before trusting them. For the
+commands below, set the tag once:
 
 ```bash
-export ARMOR_VERSION=0.1.1975
+export ARMOR_VERSION=0.1.1994
 docker pull ghcr.io/jedarden/armor:"$ARMOR_VERSION"
 ```
 
