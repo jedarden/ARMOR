@@ -473,7 +473,12 @@ func writeUserMetadataHeaders(w http.ResponseWriter, metadata map[string]string)
 // loading the entire file into memory.
 func (h *Handlers) PutObject(w http.ResponseWriter, r *http.Request, bucket, key string) {
 	ctx := r.Context()
-	createOnly, validCondition := putObjectCreateOnly(r)
+	// explicitCondition records the client's own If-None-Match: * intent,
+	// separate from the create-only decision below: an append-only credential
+	// has create-only forced on every write, and ADR-017 translates its
+	// conflicts differently depending on whether the client asked for the
+	// conditional check.
+	explicitCondition, validCondition := putObjectCreateOnly(r)
 	if !validCondition {
 		h.writeError(w, r, "InvalidArgument", "Conditional uploads support only If-None-Match: *", http.StatusBadRequest)
 		return
@@ -484,11 +489,11 @@ func (h *Handlers) PutObject(w http.ResponseWriter, r *http.Request, bucket, key
 		h.writeError(w, r, "AccessDenied", "Access Denied", http.StatusForbidden)
 		return
 	}
-	createOnly = createOnly || appendOnly
+	createOnly := explicitCondition || appendOnly
 	if createOnly && h.conditionalObjectExists(ctx, bucket, key) {
 		h.recordConditionalPut("early_412")
 		if appendOnly {
-			h.writeAppendOnlyPutError(w, r, backend.ErrPreconditionFailed)
+			h.writeAppendOnlyPutError(w, r, backend.ErrPreconditionFailed, explicitCondition)
 		} else {
 			h.writePutObjectError(w, r, backend.ErrPreconditionFailed)
 		}
@@ -505,7 +510,7 @@ func (h *Handlers) PutObject(w http.ResponseWriter, r *http.Request, bucket, key
 	useStreaming := !h.config.Compress && !h.config.CompressRules.HasRules() && (contentLength < 0 || contentLength > streamingThreshold)
 
 	if useStreaming {
-		h.putObjectStreaming(ctx, w, r, bucket, key, createOnly, appendOnly)
+		h.putObjectStreaming(ctx, w, r, bucket, key, createOnly, appendOnly, explicitCondition)
 		return
 	}
 
@@ -714,7 +719,7 @@ func (h *Handlers) PutObject(w http.ResponseWriter, r *http.Request, bucket, key
 	backendPutStart := time.Now()
 	if err := h.storePutObject(ctx, bucket, prefixedKey, bytes.NewReader(envelope), int64(len(envelope)), meta, createOnly); err != nil {
 		if appendOnly {
-			h.writeAppendOnlyPutError(w, r, err)
+			h.writeAppendOnlyPutError(w, r, err, explicitCondition)
 		} else {
 			h.writePutObjectError(w, r, err)
 		}
@@ -823,7 +828,11 @@ func (h *Handlers) PutObject(w http.ResponseWriter, r *http.Request, bucket, key
 // 2. Create envelope header with the computed SHA-256
 // 3. Stream from temp file through encryption to B2 via io.Pipe
 // 4. Clean up temp file
-func (h *Handlers) putObjectStreaming(ctx context.Context, w http.ResponseWriter, r *http.Request, bucket, key string, createOnly, appendOnly bool) {
+//
+// explicitCondition is the client's own If-None-Match: * intent (ADR-017):
+// it only shapes conflict translation for append-only credentials, never the
+// create-only decision, which createOnly already carries.
+func (h *Handlers) putObjectStreaming(ctx context.Context, w http.ResponseWriter, r *http.Request, bucket, key string, createOnly, appendOnly, explicitCondition bool) {
 	// Phase 1: Stream to temp file and compute SHA-256
 	tmpFile, err := os.CreateTemp("", "armor-upload-*.tmp")
 	if err != nil {
@@ -1042,7 +1051,7 @@ func (h *Handlers) putObjectStreaming(ctx context.Context, w http.ResponseWriter
 			return
 		}
 		if appendOnly {
-			h.writeAppendOnlyPutError(w, r, err)
+			h.writeAppendOnlyPutError(w, r, err, explicitCondition)
 		} else {
 			h.writePutObjectError(w, r, err)
 		}

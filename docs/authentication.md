@@ -75,11 +75,18 @@ ARMOR_AUTH_CROSSBUCKET_ACL="bucket-primary:*:get+put+delete+list,bucket-audit:lo
 ```
 
 **Append-only PUT semantics:** an explicit action-scoped ACL that grants `put`
-but not `delete` is create-only. A PUT of a new key succeeds, while a PUT to an
-existing key is rejected with `403 AccessDenied`; DELETE is also rejected. The
-backend enforces the create-only write atomically. Credentials with no action
-segment retain full legacy access, and a credential granted both `put` and
-`delete` may overwrite existing objects.
+but not `delete` is create-only. A PUT of a new key succeeds; DELETE is always
+rejected. A PUT to an existing key splits by the request's own condition
+(ADR-017): a conflict on an explicit `If-None-Match: *` — the standard
+create-then-retry idiom — returns `412 PreconditionFailed`, so a retrying
+client can distinguish the conflict from an authorization fault and compare
+the stored object with its local bytes before treating a stale retry as
+resolved, while an unconditional overwrite attempt is rejected with
+`403 AccessDenied` because the credential never asked for a conditional check
+and has no overwrite right to exercise. The backend enforces the create-only
+write atomically in both cases. Credentials with no action segment retain full
+legacy access, and a credential granted both `put` and `delete` may overwrite
+existing objects.
 
 **Empty ACL:** a credential with no `ACL` has full access to `ARMOR_BUCKET`.
 

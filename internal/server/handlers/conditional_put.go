@@ -94,9 +94,23 @@ func (h *Handlers) writePutObjectError(w http.ResponseWriter, r *http.Request, e
 // the authorization response exposed to append-only clients. A conditional
 // write requested explicitly by a full-access client remains a normal S3
 // precondition failure and is handled by writePutObjectError.
-func (h *Handlers) writeAppendOnlyPutError(w http.ResponseWriter, r *http.Request, err error) {
+//
+// A conflict on an append-only credential splits by the client's own request
+// (ADR-017): when the PUT carried an explicit If-None-Match: * the client
+// asked for exactly this conditional evaluation, so the conflict is the
+// standard S3 412 PreconditionFailed a full-access credential receives for
+// the identical request shape. An unconditional PUT never asked for a
+// conditional check — the server forced create-only semantics to protect the
+// credential's no-overwrite guarantee — so it stays 403 AccessDenied. The
+// backend write path is PutIfAbsent in both cases; only the translation
+// differs.
+func (h *Handlers) writeAppendOnlyPutError(w http.ResponseWriter, r *http.Request, err error, explicitCondition bool) {
 	switch {
 	case errors.Is(err, backend.ErrPreconditionFailed):
+		if explicitCondition {
+			h.writeError(w, r, "PreconditionFailed", "At least one of the preconditions you specified did not hold", http.StatusPreconditionFailed)
+			return
+		}
 		h.writeError(w, r, "AccessDenied", "Access Denied", http.StatusForbidden)
 	case errors.Is(err, backend.ErrConditionalPutUnsupported):
 		h.writeError(w, r, "NotImplemented", "The storage backend does not support atomic append-only writes", http.StatusNotImplemented)

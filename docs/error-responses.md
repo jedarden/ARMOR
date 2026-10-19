@@ -178,7 +178,7 @@ going stale silently.
 | `InvalidCredential` | Invalid credential format | Malformed Credential field |
 | `MissingDateHeader` | Missing X-Amz-Date header | Required header absent |
 | `InvalidDateFormat` | Invalid date format in X-Amz-Date header | Date not in ISO8601 basic format |
-| `AccessDenied` | Access Denied | ACL-based authorization rejection, access to the `.armor/` reserved namespace, or an append-only credential hitting a conflicting write |
+| `AccessDenied` | Access Denied | ACL-based authorization rejection, access to the `.armor/` reserved namespace, or an append-only credential's unconditional write to an existing key — its explicit `If-None-Match: *` conflict is a 412 `PreconditionFailed` instead (ADR-017) |
 
 **Headers:** `Content-Type: application/xml` plus CORS headers (see above)
 
@@ -221,7 +221,7 @@ Access-Control-Allow-Headers: Authorization, Content-Type, Range, Content-Length
 
 | Error Code | Log Detail | When Returned |
 |------------|---------|---------------|
-| `PreconditionFailed` | Precondition failed | If-Match or If-Unmodified-Since condition not met, or a conditional PUT's `PutIfAbsent` loses the create-only race |
+| `PreconditionFailed` | Precondition failed | If-Match or If-Unmodified-Since condition not met, a conditional PUT's `PutIfAbsent` losing the create-only race, or an append-only credential's own explicit `If-None-Match: *` PUT hitting an existing key (ADR-017) |
 
 **Headers:** `Content-Type: application/xml` (no CORS headers)
 

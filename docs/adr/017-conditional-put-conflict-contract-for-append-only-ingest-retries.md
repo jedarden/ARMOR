@@ -1,6 +1,11 @@
 # ADR-017: Conditional-PUT Conflict Contract for Append-Only WARP Ingest Retries
 
-**Status:** Accepted (implementation pending)
+**Status:** Accepted (implemented 2026-10-19; both conflict sites — the early
+manifest/HEAD gate and the backend `PutIfAbsent` collision, on the small and
+streaming paths — translate an explicit `If-None-Match: *` conflict to
+412 and an unconditional one to 403, pinned by
+`TestAppendOnlyConditionalPutConflictReturnsPreconditionFailed` and
+`TestAppendOnlyConditionalPutConflictAtBackendGate`)
 **Date:** 2026-10-19
 
 ## Context
