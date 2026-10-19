@@ -60,7 +60,7 @@ This index organizes all durable documentation by audience. Every file under `do
 | [ADR-014](adr/014-restore-verifier-discovery-reliability.md) | Restore-verifier discovery reliability | Accepted |
 | [ADR-015](adr/015-out-of-order-multipart-uniform-part-size.md) | Out-of-order multipart via uniform-part-size contract | Implemented |
 | [ADR-016](adr/016-multipart-metadata-finalization.md) | B2-Safe Multipart Metadata Finalization Protocol | Accepted (2026-08-31) |
-| [ADR-017](adr/017-conditional-put-conflict-contract-for-append-only-ingest-retries.md) | Conditional-PUT conflict contract for append-only WARP ingest retries | Proposed |
+| [ADR-017](adr/017-conditional-put-conflict-contract-for-append-only-ingest-retries.md) | Conditional-PUT conflict contract for append-only WARP ingest retries | Accepted (implementation pending) |
 
 ### Format Specifications
 
