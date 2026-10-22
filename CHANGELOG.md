@@ -20,6 +20,27 @@ Entries before 0.1.1958 were written by hand on the Forgejo releases and are
 reproduced here; entries from 0.1.1958 on were reconstructed from git history
 on 2026-09-18 (bead armor-43ec803f).
 
+## 0.1.1996 (2026-10-22)
+
+- fix(docker): ship docs/ in the image build context (armor-81ab7826)
+- fix(handlers): 412 for append-only explicit conditional PUT conflicts (armor-46009fe3)
+- docs(adr): clarify conditional retry verification and atomicity (armor-d7c45f46)
+- docs(adr): record conditional-PUT conflict contract for append-only WARP ingest retries
+- fix(drift): shallow-clone quiet checker sources (armor-53ac7ad7)
+- test(docsindex): include phantom vars in consumer parity (armor-53ac7ad7)
+- docs(dashboard): align access and API examples (armor-53ac7ad7)
+- test(server): stop reusing a mutated entry pointer under concurrent writes (armor-81acd635)
+- docs(drift+multipart+env): resolve contradictory operator docs (armor-53ac7ad7)
+- test(cutover): repair moved multipart manifests (armor-34c41122)
+- test(server): restore clean server and release gates (armor-34c41122)
+- docs(readme): match install tag claims to the release-status register (armor-977bc620)
+- test(compat): guard pg_ctl pipe redirection (armor-4a3a05ba)
+- wip(armor-4a3a05ba): prevent barman pg_ctl pipe hang
+- docs(rollout): record rs-manager verifier validation (armor-769e3d53)
+- wip(armor-769e3d53): record publication and partial live rollout evidence
+- wip(armor-769e3d53): record 0.1.1993 fleet roll in release status and plan banner
+- docs(release): record 0.1.1994 publication boundary (armor-5f0b4d23)
+
 ## 0.1.1995 (2026-10-19)
 
 - fix(drift): shallow-clone quiet checker sources (armor-53ac7ad7)
