@@ -12,9 +12,14 @@
 # See bead bf-3u9pv0 and the historical 0.1.467 ghost-tag incident.
 #
 # The runtime images are `FROM scratch` containing only compiled Go binaries.
-# There are NO //go:embed directives in the tree, so the build needs exactly
-# the Go source (go.mod/go.sum + cmd/ internal/ tests/) and nothing else.
-# Excluding every non-source path below is therefore safe.
+# There are NO //go:embed directives in the tree, so the runtime images need
+# only compiled Go binaries. The build context is not purely Go source,
+# though: the image-scope release gate the Dockerfile runs
+# (ARMOR_GATE_SCOPE=image ./scripts/release-gate.sh) executes
+# ./internal/server's doc-parity tests, which read docs/ from the build
+# context — so docs/ ships too (see the docs section below). The
+# scripts/image-contract-gate.sh gate fails the tree if this file ever
+# excludes docs/ again.
 # =============================================================================
 
 # VCS + bead/agent tooling — 824 MB of traces/db/backups, the dominant cost.
@@ -33,8 +38,12 @@ restore-verifier
 *.test
 target/
 
-# Docs / notes / scratch / planning — not in the runtime image.
-docs/
+# Docs ship: the image-scope release gate runs ./internal/server's
+# doc-parity tests, which read docs/http-api-reference.md from the build
+# context. Excluding docs/ here fails every image build with a bare
+# "no such file or directory" inside go test — 0.1.1995 published no image
+# because of exactly that drift (armor-81ab7826). Notes / scratch / planning
+# stay out; they are not in the runtime image and no gate leg reads them.
 notes/
 scratch/
 *.md

@@ -205,9 +205,13 @@ make help                            # the rest of the targets
   `armor-fleet-runtime`) stay present under those names with their
   entrypoints — an untargeted build publishes the last stage as
   `ronaldraygun/armor`, and images 0.1.1833–0.1.1870 shipped
-  `/restore-verifier` there after a multi-stage reorder. It runs in the
-  definition of done, the release gate (hence inside the Docker build
-  itself) and `make docker`, with its own pytest suite
+  `/restore-verifier` there after a multi-stage reorder. The same gate pins
+  one build-context contract: `.dockerignore` must not exclude `docs/` —
+  the image-scope release gate's server leg reads
+  `docs/http-api-reference.md` from the build context, and 0.1.1995
+  published no image after that exclusion crept in (armor-81ab7826). It
+  runs in the definition of done, the release gate (hence inside the
+  Docker build itself) and `make docker`, with its own pytest suite
   (`tests/test_image_contract_gate.py`).
 - Never commit build output (`bin/`, `*.test`) or caches; `.gitignore` covers
   them.

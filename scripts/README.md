@@ -27,7 +27,11 @@ shell-form entrypoint cannot execute on `FROM scratch`) and no CMD — and
 the companion images' `--target` stages (`restore-verifier-runtime`,
 `armor-fleet-runtime`) must stay present under those names with their own
 entrypoints. `Dockerfile.test` is held to the same default-image rule. The
-final stage's name is deliberately not pinned: renaming it changes nothing
+gate also pins one build-context contract: `.dockerignore` must not exclude
+`docs/`, because the image-scope release gate's server leg reads
+`docs/http-api-reference.md` from the build context (armor-81ab7826:
+0.1.1995 published no image after that exclusion crept in). The final
+stage's name is deliberately not pinned: renaming it changes nothing
 an untargeted build publishes. Exit 1 on any contract violation, 2 on a
 structural break (missing Dockerfile, no stages). Wired into the
 definition of done, the release gate — so the Dockerfile builder stage

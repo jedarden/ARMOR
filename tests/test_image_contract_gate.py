@@ -29,7 +29,8 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = REPO_ROOT / "scripts" / "image-contract-gate.sh"
 
 
-def make_repo(tmp_path, dockerfile=None, dockerfile_test=None):
+def make_repo(tmp_path, dockerfile=None, dockerfile_test=None,
+              dockerignore=None):
     """Build a minimal repo tree the gate can run against and return its root.
 
     The gate resolves the repo from its own location, so the script is copied
@@ -42,6 +43,8 @@ def make_repo(tmp_path, dockerfile=None, dockerfile_test=None):
         (root / "Dockerfile").write_text(dockerfile)
     if dockerfile_test is not None:
         (root / "Dockerfile.test").write_text(dockerfile_test)
+    if dockerignore is not None:
+        (root / ".dockerignore").write_text(dockerignore)
     return root
 
 
@@ -276,6 +279,47 @@ def test_test_dockerfile_default_image_fails(tmp_path):
     proc = run_gate(root)
     assert proc.returncode == 1
     assert "Dockerfile.test: final stage" in proc.stderr
+
+
+def test_dockerignore_excluding_docs_fails(tmp_path):
+    """THE 0.1.1995 incident (armor-81ab7826): .dockerignore dropped docs/
+    from the build context, so the image-scope release gate's server leg
+    died inside go test on the missing docs/http-api-reference.md and no
+    image was published. Both plain shapes are the violation."""
+    for i, shape in enumerate(("docs/", "docs")):
+        root = make_repo(
+            tmp_path / f"shape{i}", dockerfile=GOOD_DOCKERFILE,
+            dockerfile_test=GOOD_DOCKERFILE_TEST,
+            dockerignore=f".beads/\nnotes/\n{shape}\n",
+        )
+        proc = run_gate(root)
+        assert proc.returncode == 1, (shape, proc.stderr)
+        assert ".dockerignore excludes docs/" in proc.stderr
+
+
+def test_dockerignore_comment_mentioning_docs_passes(tmp_path):
+    """Comment lines are not exclusions — the committed .dockerignore
+    explains why docs/ ships, in comments, and must keep passing."""
+    root = make_repo(
+        tmp_path, dockerfile=GOOD_DOCKERFILE,
+        dockerfile_test=GOOD_DOCKERFILE_TEST,
+        dockerignore="# docs/ ships for the image-scope release gate\n"
+                     "# (armor-81ab7826). .beads/ stays out.\n.beads/\n",
+    )
+    proc = run_gate(root)
+    assert proc.returncode == 0, proc.stderr
+
+
+def test_dockerignore_negation_and_unrelated_pass(tmp_path):
+    """A "!docs/..." negation re-includes; unrelated excludes are none of
+    this gate's business."""
+    root = make_repo(
+        tmp_path, dockerfile=GOOD_DOCKERFILE,
+        dockerfile_test=GOOD_DOCKERFILE_TEST,
+        dockerignore="secrets/\n!docs/keep.md\nnotes/\n",
+    )
+    proc = run_gate(root)
+    assert proc.returncode == 0, proc.stderr
 
 
 # ---------------------------------------------------------------------------

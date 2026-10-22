@@ -28,6 +28,15 @@
 # giving the server a CMD, is a contract change: make it and update this
 # gate (and its suite) in the same change.
 #
+# The gate also pins one build-context contract (armor-81ab7826): the
+# image-scope release gate the Dockerfile runs executes ./internal/server's
+# doc-parity tests, which read docs/http-api-reference.md FROM THE BUILD
+# CONTEXT, so .dockerignore must not exclude docs/. 0.1.1995 published no
+# image because that exclusion crept in and every kaniko build died inside
+# go test with a bare "no such file or directory". Only the plain exclusion
+# shapes ("docs", "docs/") are flagged here; any other shape is caught
+# in-image by the release gate's own context preflight.
+#
 # Wired into scripts/definition-of-done.sh, scripts/release-gate.sh (so the
 # Dockerfile builder stage refuses to produce an image whose own contract
 # is broken) and `make docker`. POSIX sh + awk: it runs inside
@@ -160,11 +169,26 @@ check_file() {
 	fi
 }
 
+# check_dockerignore — the build context must ship docs/ (see the header).
+# Comment lines are stripped first, so a comment mentioning docs/ is not a
+# violation; a "!docs/..." negation re-includes and is not an exclusion.
+check_dockerignore() {
+	if [ ! -f .dockerignore ]; then
+		return 0
+	fi
+	doc_excludes="$(grep -v '^[[:space:]]*#' .dockerignore | grep -Ex '[[:space:]]*/?docs/?[[:space:]]*' || true)"
+	if [ -n "$doc_excludes" ]; then
+		echo "FAIL: .dockerignore excludes docs/ — the image-scope release gate's server leg reads docs/http-api-reference.md from the build context (armor-81ab7826: 0.1.1995 published no image because of this drift)" >&2
+		violations=1
+	fi
+}
+
 check_file Dockerfile 1
 check_file Dockerfile.test 0
+check_dockerignore
 
 if [ "$violations" -ne 0 ]; then
-	echo "FAIL: Dockerfile image contract broken — the default (untargeted) image must stay the armor server and the companion --target stages addressable (scripts/image-contract-gate.sh; images 0.1.1833-0.1.1870 shipped /restore-verifier as ronaldraygun/armor)" >&2
+	echo "FAIL: image build contract broken — see the specific violations above: the default (untargeted) image must stay the armor server, the companion --target stages must stay addressable, and the build context must ship docs/ (scripts/image-contract-gate.sh; images 0.1.1833-0.1.1870 shipped /restore-verifier as ronaldraygun/armor, and 0.1.1995 built from a context missing docs/)" >&2
 	exit 1
 fi
-echo "Image contract: default image of Dockerfile and Dockerfile.test is the armor server (ENTRYPOINT [\"/armor\"], no CMD); --target restore-verifier-runtime and --target armor-fleet-runtime addressable"
+echo "Image contract: default image of Dockerfile and Dockerfile.test is the armor server (ENTRYPOINT [\"/armor\"], no CMD); --target restore-verifier-runtime and --target armor-fleet-runtime addressable; build context ships docs/"

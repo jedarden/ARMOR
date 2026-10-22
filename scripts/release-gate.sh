@@ -12,7 +12,8 @@ if [ "${ARMOR_RELEASE_RACE:-0}" = "1" ]; then
 fi
 
 # Repository-level legs (script gates, docs parity, publisher contract). The
-# Docker build context (.dockerignore) ships only the Go source and this
+# Docker build context (.dockerignore) ships the Go source, docs/ — the
+# server leg's doc-parity tests read docs/http-api-reference.md — and this
 # script, so the Dockerfile sets ARMOR_GATE_SCOPE=image and runs the Go legs
 # below alone; CI's go-test step and the definition of done run the full gate
 # on the same tree, so the image is never built from a tree that skipped them.
@@ -101,6 +102,16 @@ go test ${race_flag} -count=1 ./internal/server/handlers \
 	-run '^TestMultipartV3HTTPConcurrentShuffledUnalignedRoundTrip$|^TestMultipartV3|^TestV3GetObject|^TestV3FilesystemPutGetRoundTrip$|^TestPutObjectIfNoneMatchCreateOnlySmallAndStreaming$|^TestPutObjectRejectsUnsupportedIfNoneMatchValue$|^TestPutObjectDoesNotEmulateConditionalWrite$'
 
 # Exercise the server and HTTP harness so red package tests block a release.
+# Those tests include the doc-parity pair, which read
+# ../../docs/http-api-reference.md: docs/ must ship in the build context.
+# 0.1.1995 published no image because .dockerignore excluded docs/ and this
+# leg died with a bare "no such file or directory" (armor-81ab7826) — name
+# the real cause here, and let scripts/image-contract-gate.sh catch the same
+# drift on the repository tree before anything is built.
+if [ ! -f docs/http-api-reference.md ]; then
+	echo "FAIL: docs/http-api-reference.md missing from the build context; the server leg's doc-parity tests read docs/ (.dockerignore drift?)" >&2
+	exit 1
+fi
 go test ${race_flag} -count=1 -short ./internal/server ./internal/server/srvtest
 
 # Compile the credentialed B2 integration suite without contacting a backend.
