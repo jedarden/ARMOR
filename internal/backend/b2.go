@@ -128,6 +128,24 @@ type rangedBlockResult struct {
 
 // NewB2Backend creates a new B2 backend.
 func NewB2Backend(ctx context.Context, cfg B2Config) (*B2Backend, error) {
+	readConcurrency := cfg.ReadConcurrency
+	if readConcurrency <= 0 {
+		readConcurrency = defaultReadConcurrency
+	}
+
+	fetchSize := cfg.ReadFetchSize
+	if fetchSize <= 0 {
+		fetchSize = defaultReadBlockSize
+	}
+	readTimeout := cfg.ReadRequestTimeout
+	if readTimeout <= 0 {
+		readTimeout = defaultReadTimeout
+	}
+	backendLimit := cfg.ReadBackendLimit
+	if backendLimit <= 0 {
+		backendLimit = defaultReadBackendLimit
+	}
+
 	awsCfg, err := config.LoadDefaultConfig(ctx,
 		config.WithRegion(cfg.Region),
 		config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(
@@ -148,32 +166,23 @@ func NewB2Backend(ctx context.Context, cfg B2Config) (*B2Backend, error) {
 		// CompleteMultipartUpload that supplies only ETags with InvalidPart.
 		o.RequestChecksumCalculation = aws.RequestChecksumCalculationWhenRequired
 		o.ResponseChecksumValidation = aws.ResponseChecksumValidationWhenRequired
+		// Idle-pool sizing sized to this backend's own request budget; see
+		// transport.go for the measurement rationale.
+		o.HTTPClient = newS3HTTPClient(readConcurrency, backendLimit)
 	})
 
-	readConcurrency := cfg.ReadConcurrency
-	if readConcurrency <= 0 {
-		readConcurrency = defaultReadConcurrency
-	}
-
-	fetchSize := cfg.ReadFetchSize
-	if fetchSize <= 0 {
-		fetchSize = defaultReadBlockSize
-	}
-	readTimeout := cfg.ReadRequestTimeout
-	if readTimeout <= 0 {
-		readTimeout = defaultReadTimeout
-	}
-	backendLimit := cfg.ReadBackendLimit
-	if backendLimit <= 0 {
-		backendLimit = defaultReadBackendLimit
-	}
-
 	return &B2Backend{
-		s3Client:        s3Client,
-		region:          cfg.Region,
-		endpoint:        cfg.Endpoint,
-		cfDomain:        cfg.CFDomain,
-		httpClient:      &http.Client{Timeout: 30 * time.Minute},
+		s3Client: s3Client,
+		region:   cfg.Region,
+		endpoint: cfg.Endpoint,
+		cfDomain: cfg.CFDomain,
+		httpClient: &http.Client{
+			// Same pool sizing as the SDK client; the 30m ceiling is unchanged
+			// and in practice shadowed by the per-request read deadline that
+			// every caller of the CF client applies (fetchRange).
+			Transport: newReadHTTPTransport(readConcurrency, backendLimit),
+			Timeout:   30 * time.Minute,
+		},
 		readBlockSize:   fetchSize,
 		readConcurrency: readConcurrency,
 		readTimeout:     readTimeout,
