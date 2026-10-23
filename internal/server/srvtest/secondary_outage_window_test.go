@@ -172,11 +172,20 @@ func TestSecondaryOutageWindowAckAndFullDrain(t *testing.T) {
 // pending tasks behind it must be visible as armor_replication_lag_seconds >=
 // 1 while the serial worker works through the delay, then return to 0 with
 // depth once the queue fully drains.
+//
+// The worker is pinned deterministically: a HoldPuts gate blocks task 1's Put
+// at entry until every client write and enqueue below has landed, so the
+// depth observation is a steady state. The original sleep-only version
+// required all three enqueues to land inside task 1's single putDelay window,
+// which flaked under CI load when the writes alone outlasted it
+// (armor-build-lq8ds go-test leg, 2026-10-22).
 func TestSlowSecondaryWindowAckAndFullDrain(t *testing.T) {
 	h := New(t)
 
 	const putDelay = 1100 * time.Millisecond
 	h.Secondary.SetPutDelay(putDelay)
+	hold := make(chan struct{})
+	h.Secondary.HoldPuts(hold)
 
 	// Two PUTs and one multipart upload: three replication tasks, enough to
 	// observe depth backup AND the lag gauge between consecutive completions.
@@ -209,16 +218,26 @@ func TestSlowSecondaryWindowAckAndFullDrain(t *testing.T) {
 
 	h.WaitUntilEnqueued(int64(len(stored)), WaitTimeout)
 
-	// Depth rises while the worker is pinned in task 1's slow Put.
-	pollFor(t, WaitTimeout, "queue depth to rise to N-1 behind the slow secondary write", func() bool {
+	// The serial worker must now be pinned inside the held head-of-line Put;
+	// the gate makes that a steady state rather than a timing window.
+	pollFor(t, WaitTimeout, "head-of-line replication Put to reach the held secondary", func() bool {
+		return h.Secondary.PutCalls() >= 1
+	})
+
+	// Depth rises behind the pinned head while the gate holds task 1.
+	pollFor(t, WaitTimeout, "queue depth to rise to N-1 behind the held secondary write", func() bool {
 		return h.QueueMetrics.QueueDepth.Load() >= int64(len(stored)-1)
 	})
 
-	// Lag gauge mid-drain: when task 1 completes (~putDelay in), tasks 2-3
-	// are still pending with enqueue timestamps from the start of the window,
-	// so armor_replication_lag_seconds must read >= 1s while task 2's slow
-	// Put is still running. The window between the two completions is one
-	// full putDelay wide, so this poll is deterministic.
+	// Release the gate: task 1 finishes at its captured putDelay, and task 2
+	// enters the same slow path behind it.
+	close(hold)
+
+	// Lag gauge mid-drain: task 1 completes one putDelay after the gate
+	// release with tasks 2-3 still pending, enqueued before the release, so
+	// armor_replication_lag_seconds must read >= 1s while task 2's slow Put
+	// is still running. The window between the task 1 and task 2 completions
+	// is one full putDelay wide, so this poll is deterministic.
 	pollFor(t, 3*putDelay, "replication lag gauge to expose the backed-up window", func() bool {
 		return h.QueueMetrics.LagSeconds.Load() >= 1
 	})

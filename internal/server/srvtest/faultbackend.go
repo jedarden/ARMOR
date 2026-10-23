@@ -32,6 +32,7 @@ type FaultBackend struct {
 	mu       sync.Mutex
 	putErr   error
 	putDelay time.Duration
+	holdPuts chan struct{}
 
 	putCalls atomic.Int64
 }
@@ -57,6 +58,17 @@ func (f *FaultBackend) SetPutDelay(d time.Duration) {
 	f.putDelay = d
 }
 
+// HoldPuts makes every subsequent Put block at entry until hold is closed.
+// While held, client writes still ack immediately — it is the replication
+// worker that blocks — giving tests a deterministic head-of-line pin that
+// does not depend on host pacing. A delay set while held is captured by the
+// next task to enter Put, not the held one.
+func (f *FaultBackend) HoldPuts(hold chan struct{}) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.holdPuts = hold
+}
+
 // PutCalls reports how many Put calls reached the wrapper, including faulted
 // ones — useful to prove the replication write path was actually exercised.
 func (f *FaultBackend) PutCalls() int64 {
@@ -69,9 +81,17 @@ func (f *FaultBackend) Put(ctx context.Context, bucket, key string, body io.Read
 	f.mu.Lock()
 	putErr := f.putErr
 	delay := f.putDelay
+	hold := f.holdPuts
 	f.mu.Unlock()
 
 	f.putCalls.Add(1)
+	if hold != nil {
+		select {
+		case <-hold:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
 	if delay > 0 {
 		time.Sleep(delay)
 	}
