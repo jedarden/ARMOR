@@ -143,6 +143,14 @@ type Metrics struct {
 	BackendRequestsTotal   *labelledCounter
 	BackendRequestDuration *labelledCounter
 
+	// Backend read retries (armor-f1791426). One increment per retry sequence
+	// that attempted at least one retry, keyed reason\x00outcome: reason is
+	// the transient-failure class ("http_5xx", "http_429", "connection_reset",
+	// "truncated_body", "network"); outcome is "success" (a later attempt
+	// succeeded), "exhausted" (the attempt bound was reached) or "cancelled"
+	// (the caller stopped during backoff).
+	BackendRetriesTotal *labelledCounter
+
 	// Request duration histogram (fixed buckets)
 	requestDurationBuckets    []int64
 	requestDurationSum        *expvar.Map // operation -> sum of durations
@@ -304,6 +312,7 @@ func NewMetrics() *Metrics {
 	// Backend metrics
 	m.BackendRequestsTotal = newLabelledCounter()
 	m.BackendRequestDuration = newLabelledCounter()
+	m.BackendRetriesTotal = newLabelledCounter()
 
 	// Request duration histogram (fixed buckets in milliseconds)
 	m.requestDurationBuckets = []int64{5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000}
@@ -562,6 +571,15 @@ func (m *Metrics) IncCacheMisses() {
 // IncEncryptionOps increments the encryption operations counter.
 func (m *Metrics) IncEncryptionOps(opType string) {
 	m.EncryptionOpsTotal.Add(opType, 1)
+}
+
+// IncBackendRetry increments the backend read-retry counter (armor-f1791426).
+// reason is the transient-failure class ("http_5xx", "http_429",
+// "connection_reset", "truncated_body", "network"); outcome is "success" (a
+// later attempt succeeded), "exhausted" (the attempt bound was reached) or
+// "cancelled" (the caller stopped during backoff).
+func (m *Metrics) IncBackendRetry(reason, outcome string) {
+	m.BackendRetriesTotal.Add(reason + "\x00" + outcome, 1)
 }
 
 // IncDecryptionOps increments the decryption operations counter.
@@ -1028,6 +1046,17 @@ func (m *Metrics) PrometheusFormat() string {
 	sb.WriteString("# TYPE armor_backend_request_duration_total counter\n")
 	m.BackendRequestDuration.Do(func(kv expvar.KeyValue) {
 		fmt.Fprintf(&sb, "armor_backend_request_duration_total{key=%q} %s\n", kv.Key, kv.Value.String())
+	})
+
+	// Backend read retries (armor-f1791426): transient-failure class and how
+	// the retry sequence ended. A rising exhausted outcome marks reads the
+	// policy could not save — the signal for persistent Cloudflare/B2
+	// degradation rather than one-off blips.
+	sb.WriteString("# HELP armor_backend_retries_total Backend read retries by transient-failure class and outcome\n")
+	sb.WriteString("# TYPE armor_backend_retries_total counter\n")
+	m.BackendRetriesTotal.Do(func(kv expvar.KeyValue) {
+		reason, outcome, _ := strings.Cut(kv.Key, "\x00")
+		fmt.Fprintf(&sb, "armor_backend_retries_total{reason=%q,outcome=%q} %s\n", reason, outcome, kv.Value.String())
 	})
 
 	// Restore verifier metrics

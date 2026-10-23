@@ -9,12 +9,15 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math/rand/v2"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -23,6 +26,9 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/aws/smithy-go"
+	awshttp "github.com/aws/smithy-go/transport/http"
+
+	"github.com/jedarden/armor/internal/metrics"
 )
 
 // IsNoSuchUpload reports whether an error ultimately came from the S3
@@ -45,6 +51,12 @@ type B2Backend struct {
 	readConcurrency int
 	readTimeout     time.Duration // per-request deadline; zero uses the default
 	readBudget      chan struct{} // backend-wide cap on simultaneous ranged requests; nil = unlimited
+
+	readRetryAttempts   int              // total tries per idempotent ranged GET/HEAD
+	readRetryBackoff    time.Duration    // initial retry sleep; doubles with jitter
+	readRetryMaxBackoff time.Duration    // cap on one retry sleep
+	metrics             *metrics.Metrics // nil disables armor_backend_retries_total
+
 	cfStaleFallback bool
 	cfVersionPinned bool
 	keyPrefix       string
@@ -65,6 +77,15 @@ const (
 	defaultReadConcurrency  = 16
 	defaultReadTimeout      = 2 * time.Minute
 	defaultReadBackendLimit = 64
+
+	// Read-retry defaults (armor-f1791426): transient Cloudflare/B2 failures —
+	// 5xx (CF 520-527 included), 429, connection resets, responses truncated
+	// before the promised length — retry with bounded jittered backoff inside
+	// the per-request deadline instead of failing a whole pipelined read over
+	// one block.
+	defaultReadRetryAttempts   = 3
+	defaultReadRetryBackoff    = 100 * time.Millisecond
+	defaultReadRetryMaxBackoff = 2 * time.Second
 )
 
 // B2Config contains configuration for the B2 backend.
@@ -88,6 +109,25 @@ type B2Config struct {
 	// ReadBackendLimit caps simultaneous ranged requests across all readers of
 	// this backend. Zero uses the default.
 	ReadBackendLimit int
+
+	// ReadRetryAttempts is the total number of tries for one idempotent ranged
+	// GET or HEAD when the backend answers with a transient failure. Only
+	// pre-delivery fetches retry: a block whose bytes have reached the client
+	// is never re-fetched. Zero uses the default.
+	ReadRetryAttempts int
+
+	// ReadRetryBackoff is the initial sleep between read-retry attempts; it
+	// doubles each attempt with full jitter up to ReadRetryMaxBackoff. The
+	// whole sequence of a ranged GET stays inside ReadRequestTimeout. Zero
+	// uses the default.
+	ReadRetryBackoff time.Duration
+
+	// ReadRetryMaxBackoff caps one read-retry backoff sleep. Zero uses the
+	// default.
+	ReadRetryMaxBackoff time.Duration
+
+	// Metrics receives backend read-retry counters; nil disables recording.
+	Metrics *metrics.Metrics
 
 	// CFStaleFallback re-fetches a ranged read directly from B2, by version ID,
 	// when Cloudflare answers with a version other than the one the request's
@@ -145,6 +185,18 @@ func NewB2Backend(ctx context.Context, cfg B2Config) (*B2Backend, error) {
 	if backendLimit <= 0 {
 		backendLimit = defaultReadBackendLimit
 	}
+	retryAttempts := cfg.ReadRetryAttempts
+	if retryAttempts <= 0 {
+		retryAttempts = defaultReadRetryAttempts
+	}
+	retryBackoff := cfg.ReadRetryBackoff
+	if retryBackoff < 0 {
+		retryBackoff = defaultReadRetryBackoff
+	}
+	retryMaxBackoff := cfg.ReadRetryMaxBackoff
+	if retryMaxBackoff < 0 {
+		retryMaxBackoff = defaultReadRetryMaxBackoff
+	}
 
 	awsCfg, err := config.LoadDefaultConfig(ctx,
 		config.WithRegion(cfg.Region),
@@ -187,10 +239,15 @@ func NewB2Backend(ctx context.Context, cfg B2Config) (*B2Backend, error) {
 		readConcurrency: readConcurrency,
 		readTimeout:     readTimeout,
 		readBudget:      make(chan struct{}, backendLimit),
-		cfStaleFallback: cfg.CFStaleFallback,
-		cfVersionPinned: cfg.CFVersionPinned,
-		keyPrefix:       cfg.KeyPrefix,
-		conditionalKeys: make(map[string]*conditionalKeyLock),
+
+		readRetryAttempts:   retryAttempts,
+		readRetryBackoff:    retryBackoff,
+		readRetryMaxBackoff: retryMaxBackoff,
+		metrics:             cfg.Metrics,
+		cfStaleFallback:     cfg.CFStaleFallback,
+		cfVersionPinned:     cfg.CFVersionPinned,
+		keyPrefix:           cfg.KeyPrefix,
+		conditionalKeys:     make(map[string]*conditionalKeyLock),
 	}, nil
 }
 
@@ -449,9 +506,24 @@ func (b *B2Backend) fetchRange(ctx context.Context, bucket, key string, offset, 
 	if timeout <= 0 {
 		timeout = defaultReadTimeout
 	}
+	// One deadline spans every retry attempt of this fetch (armor-f1791426):
+	// the retry policy may spend the budget on more attempts but can never
+	// exceed it. Retrying here is delivery-safe — the block is fully buffered
+	// before any byte of it reaches the caller, and a failure discards the
+	// partial buffer rather than delivering it.
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	return b.fetchRangeOnce(ctx, bucket, key, offset, length)
+	var data []byte
+	var headers map[string]string
+	err := b.doWithRetry(ctx, func() error {
+		var fetchErr error
+		data, headers, fetchErr = b.fetchRangeOnce(ctx, bucket, key, offset, length)
+		return fetchErr
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+	return data, headers, nil
 }
 
 func (b *B2Backend) fetchRangeOnce(ctx context.Context, bucket, key string, offset, length int64) ([]byte, map[string]string, error) {
@@ -536,7 +608,7 @@ func (b *B2Backend) fetchRangeOnce(ctx context.Context, bucket, key string, offs
 	}
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusPartialContent {
-		return nil, nil, fmt.Errorf("cloudflare returned status %d", resp.StatusCode)
+		return nil, nil, &httpStatusError{status: resp.StatusCode}
 	}
 	if resp.StatusCode == http.StatusOK && offset > 0 {
 		return nil, nil, fmt.Errorf("cloudflare ignored Range header (status 200 for bytes %d-%d)", offset, offset+length-1)
@@ -601,7 +673,7 @@ func readRangeBody(body io.Reader, expectedLength int64) ([]byte, error) {
 		return nil, fmt.Errorf("read %d bytes: %w", expectedLength, err)
 	}
 	if int64(len(data)) != expectedLength {
-		return nil, fmt.Errorf("received %d bytes, want %d", len(data), expectedLength)
+		return nil, &shortReadError{got: len(data), want: expectedLength}
 	}
 	return data, nil
 }
@@ -721,12 +793,20 @@ func minInt64(a, b int64) int64 {
 
 // Head retrieves object metadata without the body.
 func (b *B2Backend) Head(ctx context.Context, bucket, key string) (*ObjectInfo, error) {
-	resp, err := b.s3Client.HeadObject(ctx, &s3.HeadObjectInput{
-		Bucket: aws.String(bucket),
-		Key:    aws.String(key),
+	var resp *s3.HeadObjectOutput
+	err := b.doWithRetry(ctx, func() error {
+		r, herr := b.s3Client.HeadObject(ctx, &s3.HeadObjectInput{
+			Bucket: aws.String(bucket),
+			Key:    aws.String(key),
+		})
+		if herr != nil {
+			return fmt.Errorf("HeadObject failed: %w", herr)
+		}
+		resp = r
+		return nil
 	})
 	if err != nil {
-		return nil, fmt.Errorf("HeadObject failed: %w", err)
+		return nil, err
 	}
 
 	info := &ObjectInfo{
@@ -756,13 +836,21 @@ func (b *B2Backend) Head(ctx context.Context, bucket, key string) (*ObjectInfo, 
 // HeadVersion retrieves object metadata for a specific version.
 // Returns ARMOR metadata (plaintext size) for the specific version.
 func (b *B2Backend) HeadVersion(ctx context.Context, bucket, key, versionID string) (*ObjectInfo, error) {
-	resp, err := b.s3Client.HeadObject(ctx, &s3.HeadObjectInput{
-		Bucket:    aws.String(bucket),
-		Key:       aws.String(key),
-		VersionId: aws.String(versionID),
+	var resp *s3.HeadObjectOutput
+	err := b.doWithRetry(ctx, func() error {
+		r, herr := b.s3Client.HeadObject(ctx, &s3.HeadObjectInput{
+			Bucket:    aws.String(bucket),
+			Key:       aws.String(key),
+			VersionId: aws.String(versionID),
+		})
+		if herr != nil {
+			return fmt.Errorf("HeadObject failed: %w", herr)
+		}
+		resp = r
+		return nil
 	})
 	if err != nil {
-		return nil, fmt.Errorf("HeadObject failed: %w", err)
+		return nil, err
 	}
 
 	info := &ObjectInfo{
@@ -1020,18 +1108,186 @@ func (b *B2Backend) S3Client() *s3.Client {
 	return b.s3Client
 }
 
-// IsRetryableError checks if an error is retryable.
-func IsRetryableError(err error) bool {
-	if err == nil {
-		return false
+// httpStatusError carries the HTTP status of a Cloudflare/B2 response that
+// failed a read, so retry classification never has to string-match a status
+// out of error text.
+type httpStatusError struct {
+	status int
+}
+
+func (e *httpStatusError) Error() string {
+	return fmt.Sprintf("cloudflare returned status %d", e.status)
+}
+
+// shortReadError reports a response body that ended before the length the
+// response promised — a truncated edge or origin response.
+type shortReadError struct {
+	got  int
+	want int64
+}
+
+func (e *shortReadError) Error() string {
+	return fmt.Sprintf("received %d bytes, want %d", e.got, e.want)
+}
+
+// Transient-failure classes recorded on armor_backend_retries_total.
+const (
+	retryReasonHTTP5xx         = "http_5xx"
+	retryReasonHTTP429         = "http_429"
+	retryReasonConnectionReset = "connection_reset"
+	retryReasonTruncatedBody   = "truncated_body"
+	retryReasonNetwork         = "network"
+)
+
+// Outcomes recorded on armor_backend_retries_total.
+const (
+	retryOutcomeSuccess   = "success"
+	retryOutcomeExhausted = "exhausted"
+	retryOutcomeCancelled = "cancelled"
+)
+
+// retryClass reports the transient-failure class of a backend read error, or
+// "" when the error is not worth retrying. Classification is typed — HTTP
+// statuses arrive in httpStatusError values or SDK ResponseError wraps,
+// truncations in shortReadError or as an unexpected EOF, resets and timeouts
+// via errors.Is/errors.As — never by substring.
+func retryClass(err error) string {
+	if err == nil || errors.Is(err, context.Canceled) {
+		return ""
 	}
-	// Check for common retryable conditions
-	errStr := err.Error()
-	return strings.Contains(errStr, "5xx") ||
-		strings.Contains(errStr, "503") ||
-		strings.Contains(errStr, "502") ||
-		strings.Contains(errStr, "timeout") ||
-		strings.Contains(errStr, "connection reset")
+	statusClass := func(code int) string {
+		switch {
+		case code == http.StatusTooManyRequests:
+			return retryReasonHTTP429
+		case code >= 500:
+			return retryReasonHTTP5xx
+		}
+		return ""
+	}
+	var statusErr *httpStatusError
+	if errors.As(err, &statusErr) {
+		return statusClass(statusErr.status)
+	}
+	var respErr *awshttp.ResponseError
+	if errors.As(err, &respErr) {
+		return statusClass(respErr.HTTPStatusCode())
+	}
+	var shortErr *shortReadError
+	if errors.As(err, &shortErr) {
+		return retryReasonTruncatedBody
+	}
+	if errors.Is(err, io.ErrUnexpectedEOF) {
+		return retryReasonTruncatedBody
+	}
+	if errors.Is(err, syscall.ECONNRESET) || errors.Is(err, syscall.ECONNABORTED) {
+		return retryReasonConnectionReset
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) {
+		return retryReasonNetwork
+	}
+	return ""
+}
+
+// IsRetryableError reports whether a backend read error is transient and worth
+// retrying. See retryClass for the accepted classes.
+func IsRetryableError(err error) bool {
+	return retryClass(err) != ""
+}
+
+// RetryPolicy bounds a retry sequence: total tries, the initial backoff sleep,
+// and the cap on one sleep. It is shared by per-fetch backend retries and the
+// manifest startup load (armor-f1791426).
+type RetryPolicy struct {
+	Attempts   int           // total tries including the first
+	Backoff    time.Duration // initial sleep between attempts
+	MaxBackoff time.Duration // upper bound on one sleep
+}
+
+// RetryOutcome describes how a DoWithRetry call ended when at least one retry
+// was attempted; with no retry, Reason and Outcome stay "".
+type RetryOutcome struct {
+	Retries int    // retry decisions taken (attempts after the first)
+	Reason  string // transient-failure class of the last retried failure
+	Outcome string // success, exhausted, or cancelled
+}
+
+// DoWithRetry runs fn up to p.Attempts times, retrying errors accepted by
+// IsRetryableError with jittered exponential backoff, and returns the last
+// error. Sleeps watch ctx, so cancellation during backoff returns promptly
+// with the failure that triggered the retry. Only idempotent work whose
+// partial results are discarded on failure belongs here — a retried call must
+// never be visible twice downstream.
+func DoWithRetry(ctx context.Context, p RetryPolicy, fn func() error) (RetryOutcome, error) {
+	attempts := p.Attempts
+	if attempts < 1 {
+		attempts = 1
+	}
+	var outcome RetryOutcome
+	var err error
+	for attempt := 1; ; attempt++ {
+		err = fn()
+		if err == nil {
+			if outcome.Retries > 0 {
+				outcome.Outcome = retryOutcomeSuccess
+			}
+			return outcome, nil
+		}
+		class := retryClass(err)
+		// A dead context (deadline reached or caller gone) ended the request
+		// that just failed; retrying inside it cannot succeed.
+		if attempt >= attempts || class == "" || ctx.Err() != nil {
+			if outcome.Retries > 0 {
+				outcome.Outcome = retryOutcomeExhausted
+			}
+			return outcome, err
+		}
+		outcome.Retries++
+		outcome.Reason = class
+		if sleepErr := SleepBackoff(ctx, attempt, p.Backoff, p.MaxBackoff); sleepErr != nil {
+			outcome.Outcome = retryOutcomeCancelled
+			return outcome, err
+		}
+	}
+}
+
+// SleepBackoff sleeps the attempt-th backoff interval — base scaled by
+// 2^(attempt-1), capped at maxBackoff, jittered uniformly over [0, interval) —
+// and returns ctx.Err() if the context ends first. A non-positive base sleeps
+// zero.
+func SleepBackoff(ctx context.Context, attempt int, base, maxBackoff time.Duration) error {
+	d := base
+	for i := 1; i < attempt && (maxBackoff <= 0 || d < maxBackoff); i++ {
+		d *= 2
+	}
+	if maxBackoff > 0 && d > maxBackoff {
+		d = maxBackoff
+	}
+	if d <= 0 {
+		return ctx.Err()
+	}
+	timer := time.NewTimer(time.Duration(rand.Int64N(int64(d))))
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
+// doWithRetry runs fn under the backend's read-retry configuration, recording
+// one armor_backend_retries_total increment when any retry was attempted.
+func (b *B2Backend) doWithRetry(ctx context.Context, fn func() error) error {
+	outcome, err := DoWithRetry(ctx, RetryPolicy{
+		Attempts:   b.readRetryAttempts,
+		Backoff:    b.readRetryBackoff,
+		MaxBackoff: b.readRetryMaxBackoff,
+	}, fn)
+	if outcome.Retries > 0 && b.metrics != nil {
+		b.metrics.IncBackendRetry(outcome.Reason, outcome.Outcome)
+	}
+	return err
 }
 
 // ListBuckets lists all buckets.

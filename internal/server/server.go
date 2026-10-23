@@ -85,6 +85,12 @@ type Server struct {
 	// authFileWatcher provides hot-reload of ARMOR_AUTH_FILE credentials
 	authFileWatcher *config.AuthFileWatcher
 
+	// manifestDegradedReason records why the startup manifest load fell back
+	// to an empty index after retries; "" when the index loaded or the
+	// manifest is disabled. Set once during New, before the listener binds,
+	// and surfaced by /readyz (armor-f1791426).
+	manifestDegradedReason string
+
 	// Metrics and request tracking
 	metrics        *metrics.Metrics
 	requestTracker *metrics.RequestTracker
@@ -132,9 +138,15 @@ func New(cfg *config.Config) (*Server, error) {
 			ReadFetchSize:      cfg.ReadFetchSize,
 			ReadRequestTimeout: cfg.ReadRequestTimeout,
 			ReadBackendLimit:   cfg.ReadBackendLimit,
-			CFStaleFallback:    cfg.CFStaleFallback,
-			CFVersionPinned:    cfg.CFVersionPinned,
-			KeyPrefix:          cfg.Prefix,
+
+			ReadRetryAttempts:   cfg.ReadRetryAttempts,
+			ReadRetryBackoff:    cfg.ReadRetryBackoff,
+			ReadRetryMaxBackoff: cfg.ReadRetryMaxBackoff,
+			Metrics:             metrics.DefaultMetrics,
+
+			CFStaleFallback: cfg.CFStaleFallback,
+			CFVersionPinned: cfg.CFVersionPinned,
+			KeyPrefix:       cfg.Prefix,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("failed to create B2 backend: %w", err)
@@ -273,6 +285,9 @@ func New(cfg *config.Config) (*Server, error) {
 	// The manifest is a performance optimisation — errors are logged as warnings
 	// and do not prevent startup.
 	var manifestIdx *manifest.Index
+	// Set when the startup load fails even after retries and the pod falls
+	// back to an empty index (armor-f1791426); surfaced by /readyz.
+	var manifestLoadDegraded string
 	if cfg.ManifestEnabled {
 		manifestIdx = manifest.New()
 		// ListRaw bypasses the .armor/ filter so manifest keys are discoverable.
@@ -325,12 +340,29 @@ func New(cfg *config.Config) (*Server, error) {
 			loadCtx, cancelLoad = context.WithCancel(context.Background())
 		}
 		defer cancelLoad()
-		if loadErr := manifest.Load(loadCtx, manifestIdx, cfg.ManifestPrefix, cfg.WriterID, lister, fetcher); loadErr != nil {
+		// Retry the whole load under the same bounded read-retry policy as
+		// backend fetches (armor-f1791426): a transient Cloudflare 52x during
+		// startup previously landed the pod straight in the empty-index
+		// fallback, where it stays until restart. Each attempt loads into a
+		// fresh index so a failed attempt cannot half-fill the merged one.
+		if _, loadErr := backend.DoWithRetry(loadCtx, backend.RetryPolicy{
+			Attempts:   cfg.ReadRetryAttempts,
+			Backoff:    cfg.ReadRetryBackoff,
+			MaxBackoff: cfg.ReadRetryMaxBackoff,
+		}, func() error {
+			fresh := manifest.New()
+			if err := manifest.Load(loadCtx, fresh, cfg.ManifestPrefix, cfg.WriterID, lister, fetcher); err != nil {
+				return err
+			}
+			manifestIdx = fresh
+			return nil
+		}); loadErr != nil {
 			logger.WithFields(map[string]interface{}{
 				"error":    loadErr.Error(),
 				"duration": time.Since(loadStart).String(),
 			}).Warn("manifest startup load failed — continuing with empty manifest index")
 			manifestIdx = manifest.New() // reset to empty on error
+			manifestLoadDegraded = loadErr.Error()
 		} else {
 			logger.WithFields(map[string]interface{}{
 				"entries":  manifestIdx.Len(),
@@ -460,27 +492,28 @@ func New(cfg *config.Config) (*Server, error) {
 	}
 
 	return &Server{
-		config:            cfg,
-		backend:           primaryBackend,
-		secondaryBackend:  secondaryBackend,
-		cache:             cache,
-		footerCache:       footerCache,
-		listCache:         listCache,
-		keyManager:        keyMgr,
-		canary:            canaryMonitor,
-		canaryDisabled:    cfg.CanaryDisabled,
-		provenance:        provenanceMgr,
-		presigner:         presigner,
-		b2keys:            b2keysClient,
-		dashboard:         dash,
-		manifest:          manifestIdx,
-		manifestWriter:    manifestWriter,
-		manifestCompactor: manifestCompactor,
-		replicationQueue:  replicationQueue,
-		authFileWatcher:   watcher,
-		metrics:           metrics.DefaultMetrics,
-		requestTracker:    metrics.DefaultRequestTracker,
-		logger:            logger,
+		config:                 cfg,
+		backend:                primaryBackend,
+		secondaryBackend:       secondaryBackend,
+		cache:                  cache,
+		footerCache:            footerCache,
+		listCache:              listCache,
+		keyManager:             keyMgr,
+		canary:                 canaryMonitor,
+		canaryDisabled:         cfg.CanaryDisabled,
+		provenance:             provenanceMgr,
+		presigner:              presigner,
+		b2keys:                 b2keysClient,
+		dashboard:              dash,
+		manifest:               manifestIdx,
+		manifestWriter:         manifestWriter,
+		manifestCompactor:      manifestCompactor,
+		replicationQueue:       replicationQueue,
+		authFileWatcher:        watcher,
+		metrics:                metrics.DefaultMetrics,
+		manifestDegradedReason: manifestLoadDegraded,
+		requestTracker:         metrics.DefaultRequestTracker,
+		logger:                 logger,
 	}, nil
 }
 
@@ -790,29 +823,46 @@ func (s *Server) healthz(w http.ResponseWriter, r *http.Request) {
 //   - canary_age_s (int): seconds since last canary check (0 if canary disabled/not running)
 //   - multipart_canary_healthy (bool): true if multipart canary is healthy (false if canary disabled/not running)
 //   - manifest_flushed_s (int): seconds since last manifest flush (0 if no manifest writer)
+//   - manifest_degraded (bool): true when the startup manifest load fell back
+//     to an empty index after retries (armor-f1791426); diagnostic only
 //   - reason (string): human-readable status explanation
+//
+// readyzResponse is the /readyz body.
+type readyzResponse struct {
+	Ready                  bool   `json:"ready"`
+	CanaryAgeS             int    `json:"canary_age_s"`
+	MultipartCanaryHealthy bool   `json:"multipart_canary_healthy"`
+	ManifestFlushedS       int    `json:"manifest_flushed_s"`
+	ManifestDegraded       bool   `json:"manifest_degraded"`
+	Reason                 string `json:"reason"`
+}
+
+// noteManifestDegraded sets the degraded flag and appends the startup
+// fallback notice to the reason when this pod's manifest load fell back to an
+// empty index after retries (armor-f1791426). Degradation is diagnostic: it
+// does not change readiness by itself.
+func (s *Server) noteManifestDegraded(resp readyzResponse) readyzResponse {
+	if s.manifestDegradedReason != "" {
+		resp.ManifestDegraded = true
+		resp.Reason += "; manifest startup load failed after retries — serving with an empty index"
+	}
+	return resp
+}
+
 func (s *Server) readyz(w http.ResponseWriter, r *http.Request) {
 	// Set JSON content type
 	w.Header().Set("Content-Type", "application/json")
 
-	type readyzResponse struct {
-		Ready                  bool   `json:"ready"`
-		CanaryAgeS             int    `json:"canary_age_s"`
-		MultipartCanaryHealthy bool   `json:"multipart_canary_healthy"`
-		ManifestFlushedS       int    `json:"manifest_flushed_s"`
-		Reason                 string `json:"reason"`
-	}
-
 	// When canary is explicitly disabled, skip all backend checks.
 	if s.canaryDisabled {
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(readyzResponse{
+		json.NewEncoder(w).Encode(s.noteManifestDegraded(readyzResponse{
 			Ready:                  true,
 			CanaryAgeS:             0,
 			MultipartCanaryHealthy: false,
 			ManifestFlushedS:       0,
 			Reason:                 "Ready - canary disabled",
-		})
+		}))
 		return
 	}
 
@@ -828,23 +878,23 @@ func (s *Server) readyz(w http.ResponseWriter, r *http.Request) {
 				reason = "Not ready - canary check stale"
 			}
 			w.WriteHeader(http.StatusServiceUnavailable)
-			json.NewEncoder(w).Encode(readyzResponse{
+			json.NewEncoder(w).Encode(s.noteManifestDegraded(readyzResponse{
 				Ready:                  false,
 				CanaryAgeS:             canaryAge,
 				MultipartCanaryHealthy: multipartHealthy,
 				ManifestFlushedS:       0,
 				Reason:                 reason,
-			})
+			}))
 			return
 		}
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(readyzResponse{
+		json.NewEncoder(w).Encode(s.noteManifestDegraded(readyzResponse{
 			Ready:                  true,
 			CanaryAgeS:             canaryAge,
 			MultipartCanaryHealthy: multipartHealthy,
 			ManifestFlushedS:       0,
 			Reason:                 "Ready",
-		})
+		}))
 		return
 	}
 
@@ -860,46 +910,46 @@ func (s *Server) readyz(w http.ResponseWriter, r *http.Request) {
 
 		if !lastFlush.IsZero() && time.Since(lastFlush) < flushThreshold {
 			w.WriteHeader(http.StatusOK)
-			json.NewEncoder(w).Encode(readyzResponse{
+			json.NewEncoder(w).Encode(s.noteManifestDegraded(readyzResponse{
 				Ready:                  true,
 				CanaryAgeS:             0,
 				MultipartCanaryHealthy: false,
 				ManifestFlushedS:       manifestFlushedS,
 				Reason:                 "Ready - manifest writer recently flushed",
-			})
+			}))
 			return
 		}
 		// No recent flush — report unhealthy
 		w.WriteHeader(http.StatusServiceUnavailable)
 		if lastFlush.IsZero() {
-			json.NewEncoder(w).Encode(readyzResponse{
+			json.NewEncoder(w).Encode(s.noteManifestDegraded(readyzResponse{
 				Ready:                  false,
 				CanaryAgeS:             0,
 				MultipartCanaryHealthy: false,
 				ManifestFlushedS:       0,
 				Reason:                 "Not ready - manifest writer has never flushed",
-			})
+			}))
 		} else {
-			json.NewEncoder(w).Encode(readyzResponse{
+			json.NewEncoder(w).Encode(s.noteManifestDegraded(readyzResponse{
 				Ready:                  false,
 				CanaryAgeS:             0,
 				MultipartCanaryHealthy: false,
 				ManifestFlushedS:       manifestFlushedS,
 				Reason:                 fmt.Sprintf("Not ready - manifest writer last flush %v ago (threshold %v)", time.Since(lastFlush).Round(time.Second), flushThreshold),
-			})
+			}))
 		}
 		return
 	}
 
 	// Neither canary nor manifest writer available — report unhealthy.
 	w.WriteHeader(http.StatusServiceUnavailable)
-	json.NewEncoder(w).Encode(readyzResponse{
+	json.NewEncoder(w).Encode(s.noteManifestDegraded(readyzResponse{
 		Ready:                  false,
 		CanaryAgeS:             0,
 		MultipartCanaryHealthy: false,
 		ManifestFlushedS:       0,
 		Reason:                 "Not ready - no health signal available",
-	})
+	}))
 }
 
 // verifyKey verifies the MEK is correct.

@@ -578,6 +578,25 @@ armor_backend_request_duration_total{key="get_object_duration_50"} 1
 armor_backend_request_duration_total{key="put_object_duration_100"} 1
 ```
 
+### `armor_backend_retries_total`
+
+**Type:** Counter  
+**Description:** Backend read retries for idempotent ranged GETs and HEADs (one increment per retry sequence that attempted at least one retry). Transient failures — 5xx (Cloudflare 520–527 included), 429, connection resets, and responses truncated before the promised length — retry with bounded jittered backoff inside `ARMOR_READ_REQUEST_TIMEOUT` (`ARMOR_READ_RETRY_ATTEMPTS`, `ARMOR_READ_RETRY_BACKOFF`, `ARMOR_READ_RETRY_MAX_BACKOFF`); a block is never re-fetched once any of its bytes reached the client  
+**Labels:** `reason` — Transient-failure class that triggered the retry: `http_5xx`, `http_429`, `connection_reset`, `truncated_body`, `network`  
+`outcome` — How the retry sequence ended: `success` (a later attempt succeeded), `exhausted` (the attempt bound or deadline was reached and the original error surfaced), `cancelled` (the caller gave up during backoff)
+
+**Example Output:**
+```
+# HELP armor_backend_retries_total Backend read retries by transient-failure class and outcome
+# TYPE armor_backend_retries_total counter
+armor_backend_retries_total{reason="http_5xx",outcome="success"} 41
+armor_backend_retries_total{reason="http_5xx",outcome="exhausted"} 2
+armor_backend_retries_total{reason="http_429",outcome="success"} 3
+armor_backend_retries_total{reason="connection_reset",outcome="cancelled"} 1
+```
+
+A nonzero `outcome="exhausted"` series is the persistent-degradation signal: it counts reads that retries could not save (one transient 5xx no longer fails a whole 1000-fetch pipelined GET, but a hard outage still does). `outcome="success"` at a steady rate is the normal Cloudflare blip baseline.
+
 ## Restore Verifier Metrics
 
 ### `armor_restore_verifier_checks_total`

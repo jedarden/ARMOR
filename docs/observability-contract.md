@@ -70,6 +70,23 @@ in `armor_errors_total`. Other backend network failures retain their separate
 `InternalError` mapping. See [error-responses.md](error-responses.md) for the
 response contract and [metrics.md](metrics.md) for the counters.
 
+## Backend read retries
+
+Backend ranged GETs and HEADs retry transient failures — 5xx (Cloudflare
+520–527 included), 429, connection resets, and responses truncated before the
+promised length — with bounded jittered backoff inside the per-request read
+deadline (`ARMOR_READ_RETRY_ATTEMPTS`/`_BACKOFF`/`_MAX_BACKOFF`). A block is
+never re-fetched once any of its bytes reached the client, and the manifest
+startup load retried under the same policy before falling back to an empty
+index. `armor_backend_retries_total{reason,outcome}` records each retry
+sequence: `reason` is the failure class (`http_5xx`, `http_429`,
+`connection_reset`, `truncated_body`, `network`); `outcome` is `success` (a
+later attempt saved the read), `exhausted` (the bound was reached and the
+original error surfaced), or `cancelled` (the caller stopped during backoff).
+A steady `success` rate is the expected Cloudflare-blip baseline;
+`outcome="exhausted"` is the persistent-degradation signal. See
+[metrics.md](metrics.md) for the series detail.
+
 ## Canary status API — `GET /armor/canary`
 
 Returns HTTP 200 with the canary `Result` JSON (an unauthenticated GET; other

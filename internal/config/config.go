@@ -116,6 +116,15 @@ type Config struct {
 	ReadRequestTimeout time.Duration // Deadline per backend ranged request (default 2m)
 	ReadBackendLimit   int           // Simultaneous ranged requests across all readers (default 64)
 
+	// Read-retry policy for idempotent backend ranged GETs and HEADs
+	// (armor-f1791426). Attempts is the total number of tries on transient
+	// failures (5xx, 429, connection resets, truncated responses); the sleep
+	// between tries doubles from Backoff with jitter up to MaxBackoff, and a
+	// ranged GET's whole retry sequence stays inside ReadRequestTimeout.
+	ReadRetryAttempts   int
+	ReadRetryBackoff    time.Duration
+	ReadRetryMaxBackoff time.Duration
+
 	// CFStaleFallback re-reads a range directly from B2 when Cloudflare served a
 	// version other than the one the request's HEAD saw (default true).
 	CFStaleFallback bool
@@ -365,6 +374,32 @@ func Load() (*Config, error) {
 	cfg.ReadBackendLimit = getEnvInt("ARMOR_READ_BACKEND_LIMIT", 64)
 	if cfg.ReadBackendLimit < 1 {
 		errs = append(errs, fmt.Errorf("ARMOR_READ_BACKEND_LIMIT must be at least 1"))
+	}
+
+	// Read-retry policy (armor-f1791426). Retries stay inside the per-request
+	// read deadline, so attempts beyond the first mainly help when the
+	// transient failure answers fast (Cloudflare 52x does).
+	cfg.ReadRetryAttempts = getEnvInt("ARMOR_READ_RETRY_ATTEMPTS", 3)
+	if cfg.ReadRetryAttempts < 1 || cfg.ReadRetryAttempts > 10 {
+		errs = append(errs, fmt.Errorf("ARMOR_READ_RETRY_ATTEMPTS must be between 1 and 10"))
+	}
+	cfg.ReadRetryBackoff = 100 * time.Millisecond
+	if v := os.Getenv("ARMOR_READ_RETRY_BACKOFF"); v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil || d < 0 {
+			errs = append(errs, fmt.Errorf("ARMOR_READ_RETRY_BACKOFF must be a non-negative duration like 250ms"))
+		} else {
+			cfg.ReadRetryBackoff = d
+		}
+	}
+	cfg.ReadRetryMaxBackoff = 2 * time.Second
+	if v := os.Getenv("ARMOR_READ_RETRY_MAX_BACKOFF"); v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil || d < 0 {
+			errs = append(errs, fmt.Errorf("ARMOR_READ_RETRY_MAX_BACKOFF must be a non-negative duration like 2s"))
+		} else {
+			cfg.ReadRetryMaxBackoff = d
+		}
 	}
 
 	cfStaleFallbackStr := os.Getenv("ARMOR_CF_STALE_FALLBACK")
