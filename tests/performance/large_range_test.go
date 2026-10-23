@@ -2,6 +2,7 @@ package performance
 
 import (
 	"bytes"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -66,9 +67,58 @@ func TestLargeObjectRangeReadBaseline(t *testing.T) {
 		t.Fatalf("put %s: %v", key, err)
 	}
 
-	results := make([]largeRangeResult, 0, len(largeRangeSpecs(objectSize)))
+	results := make([]largeRangeResult, 0, len(largeRangeSpecs(objectSize))+4)
 	for _, spec := range largeRangeSpecs(objectSize) {
 		result, err := measureLargeRange(env, key, body, spec, samples, "single-put")
+		if err != nil {
+			t.Fatalf("measure %s: %v", spec.Name, err)
+		}
+		results = append(results, result)
+		if !result.Verified {
+			t.Errorf("range %s failed verification: %s", spec.Name, result.VerifyNote)
+		}
+	}
+
+	// Parquet-footer leg (armor-c3199f1c): the synthetic body's tail never
+	// passes backend.IsParquetFile, so the rows above cannot engage the
+	// decrypted-footer cache. This object carries a well-formed Parquet
+	// tail — footerLen metadata bytes, the uint32 LE footer length, and the
+	// PAR1 magic — so a read covering the whole footer stores it and every
+	// measured sample must be served from it. A random tail is not enough:
+	// its length field parses as an absurd footer length and
+	// backend.GetParquetFooterRange rejects the object, and a read larger
+	// than the cached footer falls back to block fetches by design.
+	parquetBody := make([]byte, len(body))
+	copy(parquetBody, body)
+	const parquetFooterLen = 64_000
+	binary.LittleEndian.PutUint32(parquetBody[len(parquetBody)-8:], parquetFooterLen)
+	copy(parquetBody[len(parquetBody)-4:], "PAR1")
+	parquetKey := fmt.Sprintf("%slarge-range-parquet-%d", BenchPrefix, objectSize)
+	if _, err := env.PutObject(parquetKey, parquetBody); err != nil {
+		t.Fatalf("put %s: %v", parquetKey, err)
+	}
+	footerSlice := int64(parquetFooterLen + 8)
+	parquetFooterSpec := largeRangeSpec{
+		Name:          "parquet-footer-fetch",
+		Header:        fmt.Sprintf("bytes=-%d", footerSlice),
+		Start:         objectSize - footerSlice,
+		ResponseBytes: footerSlice,
+		WantFooterHit: true,
+	}
+	// The 8-byte footer-length peek models the second half of a columnar
+	// engine's footer probe. It must be measured AFTER the footer-fetch row:
+	// an 8-byte cold read cannot store the footer (the handler needs the
+	// full footer to cache it), while a warm peek lies entirely inside the
+	// cached footer and must hit.
+	parquetPeekSpec := largeRangeSpec{
+		Name:          "parquet-footer-peek-8B",
+		Header:        "bytes=-8",
+		Start:         objectSize - 8,
+		ResponseBytes: 8,
+		WantFooterHit: true,
+	}
+	for _, spec := range []largeRangeSpec{parquetFooterSpec, parquetPeekSpec} {
+		result, err := measureLargeRange(env, parquetKey, parquetBody, spec, samples, "single-put")
 		if err != nil {
 			t.Fatalf("measure %s: %v", spec.Name, err)
 		}
@@ -108,6 +158,33 @@ func TestLargeObjectRangeReadBaseline(t *testing.T) {
 				t.Errorf("multipart range %s failed verification: %s", spec.Name, result.VerifyNote)
 			}
 		}
+
+		// The same footer leg against the v3 multipart layout, whose range
+		// dispatch integrates the same decrypted-footer fast path. The final
+		// part ends in the well-formed Parquet tail, so the committed
+		// multipart plaintext does too.
+		multipartParquetKey := fmt.Sprintf("%slarge-range-multipart-parquet-%d", BenchPrefix, objectSize)
+		parquetParts := make([][]byte, 0, (len(parquetBody)+partSize-1)/partSize)
+		for offset := 0; offset < len(parquetBody); offset += partSize {
+			end := offset + partSize
+			if end > len(parquetBody) {
+				end = len(parquetBody)
+			}
+			parquetParts = append(parquetParts, parquetBody[offset:end])
+		}
+		if _, err := env.MultipartPut(multipartParquetKey, parquetParts); err != nil {
+			t.Fatalf("multipart put %s: %v", multipartParquetKey, err)
+		}
+		for _, spec := range []largeRangeSpec{parquetFooterSpec, parquetPeekSpec} {
+			result, err := measureLargeRange(env, multipartParquetKey, parquetBody, spec, samples, "multipart")
+			if err != nil {
+				t.Fatalf("measure multipart %s: %v", spec.Name, err)
+			}
+			results = append(results, result)
+			if !result.Verified {
+				t.Errorf("multipart range %s failed verification: %s", spec.Name, result.VerifyNote)
+			}
+		}
 	}
 
 	report := largeRangeReport{
@@ -126,6 +203,7 @@ func TestLargeObjectRangeReadBaseline(t *testing.T) {
 			"each range is warmed once before measurement; latency and backend bytes are warm-metadata samples",
 			"backend bytes are the bytes requested from the instrumented backend by Get/GetRange, including envelope metadata and ciphertext/HMAC ranges",
 			"local loopback and filesystem results are a service-shape baseline, not B2, Cloudflare, or production throughput evidence",
+			"parquet-footer rows are written with a well-formed Parquet tail (64,000-byte footer, uint32 LE length, PAR1 magic); their warm samples must come from the decrypted-footer cache — the row fails otherwise — and cold_backend_fetches/cold_backend_bytes in the JSON record the uncached first read every row's warm samples avoid",
 		},
 	}
 
@@ -144,6 +222,10 @@ type largeRangeSpec struct {
 	Header        string
 	Start         int64
 	ResponseBytes int64
+	// WantFooterHit marks scenarios whose measured samples must be served
+	// from the decrypted Parquet-footer cache (X-Armor-Footer-Cache: HIT);
+	// a sample that falls back to block fetches fails the row.
+	WantFooterHit bool
 }
 
 // largeRangeSpecs models the common access shapes that matter for large
@@ -200,6 +282,9 @@ type largeRangeResult struct {
 	BackendBytes               int64   `json:"backend_bytes"`
 	BackendBytesPerSample      float64 `json:"backend_bytes_per_sample"`
 	BackendToResponseByteRatio float64 `json:"backend_to_response_byte_ratio"`
+	FooterCacheHits            int64   `json:"footer_cache_hits"`
+	ColdBackendFetches         int64   `json:"cold_backend_fetches"`
+	ColdBackendBytes           int64   `json:"cold_backend_bytes"`
 	Verified                   bool    `json:"verified"`
 	VerifyNote                 string  `json:"verify_note,omitempty"`
 }
@@ -220,7 +305,10 @@ type largeRangeReport struct {
 
 func measureLargeRange(env *LocalEnv, key string, body []byte, spec largeRangeSpec, samples int, writePath string) (largeRangeResult, error) {
 	// Warm metadata before taking the counters so backend bytes measure the
-	// range workload rather than the one-time object-header lookup.
+	// range workload rather than the one-time object-header lookup. The
+	// snapshot pair around the warm call also records the cold (uncached)
+	// read cost that the measured warm samples avoid.
+	coldCounts, coldBytes := env.Backend.Snapshot()
 	warm, err := env.GetRange(key, spec.Header, true)
 	if err != nil {
 		return largeRangeResult{}, fmt.Errorf("warmup: %w", err)
@@ -229,11 +317,18 @@ func measureLargeRange(env *LocalEnv, key string, body []byte, spec largeRangeSp
 	if !bytes.Equal(warm.Received, expected) {
 		return largeRangeResult{}, fmt.Errorf("warmup payload mismatch: got %d bytes, want %d", len(warm.Received), len(expected))
 	}
+	warmCounts, warmBytes := env.Backend.Snapshot()
+	coldFetches := (warmCounts[opGet] - coldCounts[opGet]) + (warmCounts[opGetRange] - coldCounts[opGetRange])
+	coldFetchedBytes := (warmBytes[opGet] - coldBytes[opGet]) + (warmBytes[opGetRange] - coldBytes[opGetRange])
 
 	baseCounts, baseBytes := env.Backend.Snapshot()
 	latencies := make([]float64, 0, samples)
 	verified := true
 	verifyNote := "every sample byte-compared with the exact plaintext slice"
+	if spec.WantFooterHit {
+		verifyNote = "every sample byte-compared with the exact plaintext slice and carried X-Armor-Footer-Cache: HIT"
+	}
+	var footerHits int64
 	for i := 0; i < samples; i++ {
 		sample, err := env.GetRange(key, spec.Header, true)
 		if err != nil {
@@ -242,6 +337,16 @@ func measureLargeRange(env *LocalEnv, key string, body []byte, spec largeRangeSp
 		if !bytes.Equal(sample.Received, expected) {
 			verified = false
 			verifyNote = fmt.Sprintf("sample %d did not match the exact plaintext slice", i+1)
+		}
+		if sample.FooterCacheHit {
+			footerHits++
+			if !spec.WantFooterHit {
+				verified = false
+				verifyNote = fmt.Sprintf("sample %d was served from the footer cache although this scenario measures the block path", i+1)
+			}
+		} else if spec.WantFooterHit {
+			verified = false
+			verifyNote = fmt.Sprintf("sample %d missed the footer cache (no X-Armor-Footer-Cache: HIT header)", i+1)
 		}
 		latencies = append(latencies, fms(sample.Duration))
 	}
@@ -264,6 +369,9 @@ func measureLargeRange(env *LocalEnv, key string, body []byte, spec largeRangeSp
 		BackendBytes:               backendBytes,
 		BackendBytesPerSample:      float64(backendBytes) / float64(samples),
 		BackendToResponseByteRatio: float64(backendBytes) / float64(spec.ResponseBytes*int64(samples)),
+		FooterCacheHits:            footerHits,
+		ColdBackendFetches:         coldFetches,
+		ColdBackendBytes:           coldFetchedBytes,
 		Verified:                   verified,
 		VerifyNote:                 verifyNote,
 	}, nil

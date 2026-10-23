@@ -290,6 +290,10 @@ type GetSample struct {
 	Received  []byte // populated only when capture is requested
 	SHA256    string // hash of the payload actually received
 	TotalReqs int    // client-side HTTP requests consumed (redirects etc. always 1 here)
+	// FooterCacheHit reports the service's X-Armor-Footer-Cache response
+	// header: the tail range was served from the decrypted Parquet-footer
+	// cache instead of block fetches.
+	FooterCacheHit bool
 }
 
 // GetObject performs one full GET through the service, capturing TTFB,
@@ -330,7 +334,7 @@ func (e *LocalEnv) getWithRange(key, rangeHeader string, capture bool) (GetSampl
 		return GetSample{}, fmt.Errorf("range get %s (%s): status %d", key, rangeHeader, resp.StatusCode)
 	}
 
-	sample := GetSample{}
+	sample := GetSample{FooterCacheHit: resp.Header.Get("X-Armor-Footer-Cache") == "HIT"}
 	h := sha256.New()
 	buf := make([]byte, 512*1024)
 	first := true
