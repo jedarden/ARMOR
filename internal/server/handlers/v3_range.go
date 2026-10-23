@@ -2,9 +2,6 @@
 package handlers
 
 import (
-	"crypto/hmac"
-	"crypto/sha256"
-	"encoding/binary"
 	"fmt"
 	"io"
 	"net/http"
@@ -16,8 +13,12 @@ import (
 )
 
 // handleV3RangeRequest handles range requests for v3 objects.
-// It fetches the trailer block table, decrypts only the needed blocks,
-// and returns the requested range.
+// It fetches the trailer block table, maps the requested plaintext range to
+// blocks once, and fetches the whole needed ciphertext span with a single
+// ranged request: single-PUT blocks are contiguous in the stored object, so
+// the backend's bounded pipelined reader parallelizes the origin round trips
+// instead of the handler paying one synchronous round trip per 64KiB block
+// (armor-5694713b; same shape as the multipart runs in armor-817d9d92).
 func (h *Handlers) handleV3RangeRequest(w http.ResponseWriter, r *http.Request, bucket, key, prefixedKey string, decryptor *crypto.Decryptor, armorMeta *backend.ARMORMetadata, plaintextSize, ciphertextSize int64, lastModified time.Time, start, end int64) {
 	ctx := r.Context()
 	blockSize := armorMeta.BlockSize
@@ -36,61 +37,59 @@ func (h *Handlers) handleV3RangeRequest(w http.ResponseWriter, r *http.Request, 
 	if endBlock >= blockCount {
 		endBlock = blockCount - 1
 	}
+	if startBlock >= blockTable.EntryCount() {
+		h.writeError(w, r, "InternalError", fmt.Sprintf("v3 range start block %d beyond block table (%d entries)", startBlock, blockTable.EntryCount()), 500)
+		return
+	}
+	if endBlock >= blockTable.EntryCount() {
+		endBlock = blockTable.EntryCount() - 1
+	}
 
-	// Build the plaintext by decrypting each needed block and slicing
+	// The needed blocks are contiguous in the stored object: one bounded
+	// 64-bit span covers them. The table's offsets are summed once at decode
+	// time, so no per-block O(n) resumming (and no uint32 wrap above 4GiB).
+	spanStart, spanEnd, ok := blockTable.CiphertextSpan(startBlock, endBlock)
+	if !ok {
+		h.writeError(w, r, "InternalError", fmt.Sprintf("v3 range blocks %d-%d outside block table (%d entries)", startBlock, endBlock, blockTable.EntryCount()), 500)
+		return
+	}
+	spanStart += crypto.HeaderSize
+	spanEnd += crypto.HeaderSize
+	if spanEnd > ciphertextSize {
+		h.writeError(w, r, "InternalError", fmt.Sprintf("v3 block table spans past ciphertext end: %d > %d", spanEnd, ciphertextSize), 500)
+		return
+	}
+
+	// Fetch the whole span; the backend pipelines the origin ranged reads
+	// within its own bounded window.
+	spanBody, err := h.backend.GetRange(ctx, bucket, prefixedKey, spanStart, spanEnd-spanStart)
+	if err != nil {
+		h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to fetch v3 blocks %d-%d: %v", startBlock, endBlock, err), 500)
+		return
+	}
+	defer spanBody.Close()
+
+	// Build the plaintext by slicing each block's ciphertext off the span and
+	// decrypting it. DecryptBlockV3 authenticates each original ARMOR block
+	// exactly once before any plaintext is released; the handler performs no
+	// separate HMAC pass.
 	var plaintextBuilder []byte
 	for blockIndex := startBlock; blockIndex <= endBlock; blockIndex++ {
-		if blockIndex >= blockTable.EntryCount() {
-			break
-		}
-
 		entry := blockTable.Entries[blockIndex]
 		isCompressed := entry.IsCompressed()
 		ciphertextLen := entry.RawLength()
 
-		// Calculate offset for this block using prefix sums
-		var blockOffset uint32
-		for i := 0; i < blockIndex; i++ {
-			blockOffset += blockTable.Entries[i].RawLength()
-		}
-		blockOffsetInFile := crypto.HeaderSize + int64(blockOffset)
-
-		// Fetch this specific block
-		encryptedBody, err := h.backend.GetRange(ctx, bucket, prefixedKey, blockOffsetInFile, int64(ciphertextLen))
-		if err != nil {
-			h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to fetch v3 block %d: %v", blockIndex, err), 500)
+		blockCiphertext := make([]byte, ciphertextLen)
+		if _, err := io.ReadFull(spanBody, blockCiphertext); err != nil {
+			h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to read v3 block %d from fetched span: %v", blockIndex, err), 500)
 			return
 		}
 
-		encryptedBuf, err := io.ReadAll(encryptedBody)
-		encryptedBody.Close()
+		// Decrypt block using v3 counter construction (verifies the block's
+		// HMAC first)
+		decrypted, err := crypto.DecryptBlockV3(decryptor.DEK(), armorMeta.IV, 0, uint32(blockIndex), blockCiphertext, entry.HMAC[:], blockSize)
 		if err != nil {
-			h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to read v3 block %d: %v", blockIndex, err), 500)
-			return
-		}
-
-		// Verify HMAC using v3 format
-		hmacKey := decryptor.HMACKey()
-		expectedHMAC := entry.HMAC[:]
-		mac := hmac.New(sha256.New, hmacKey)
-		partBytes := make([]byte, 2)
-		binary.BigEndian.PutUint16(partBytes, 0) // part=0 for single-PUT
-		mac.Write(partBytes)
-		blockBytes := make([]byte, 4)
-		binary.BigEndian.PutUint32(blockBytes, uint32(blockIndex))
-		mac.Write(blockBytes)
-		mac.Write(encryptedBuf)
-		computed := mac.Sum(nil)
-
-		if !hmac.Equal(computed, expectedHMAC) {
-			h.writeError(w, r, "InternalError", fmt.Sprintf("v3 block %d: HMAC verification failed", blockIndex), 500)
-			return
-		}
-
-		// Decrypt block using v3 counter construction
-		decrypted, err := crypto.DecryptBlockV3(decryptor.DEK(), armorMeta.IV, 0, uint32(blockIndex), encryptedBuf, expectedHMAC, blockSize)
-		if err != nil {
-			h.writeError(w, r, "InternalError", fmt.Sprintf("v3 block %d decryption failed: %v", blockIndex, err), 500)
+			h.writeError(w, r, "InternalError", fmt.Sprintf("v3 block %d authentication/decryption failed: %v", blockIndex, err), 500)
 			return
 		}
 
@@ -113,9 +112,17 @@ func (h *Handlers) handleV3RangeRequest(w http.ResponseWriter, r *http.Request, 
 	var plaintext []byte
 	if startBlock == endBlock {
 		// Range is within a single block
+		if int64(len(plaintextBuilder)) <= endOffsetInBlock {
+			h.writeError(w, r, "InternalError", fmt.Sprintf("v3 block %d decrypted short: %d bytes", startBlock, len(plaintextBuilder)), 500)
+			return
+		}
 		plaintext = plaintextBuilder[startOffsetInBlock : endOffsetInBlock+1]
 	} else {
 		// Range spans multiple blocks
+		if int64(len(plaintextBuilder)) <= startOffsetInBlock {
+			h.writeError(w, r, "InternalError", fmt.Sprintf("v3 blocks %d-%d decrypted short: %d bytes", startBlock, endBlock, len(plaintextBuilder)), 500)
+			return
+		}
 		plaintext = plaintextBuilder[startOffsetInBlock:]
 		expectedLen := end - start + 1
 		if int64(len(plaintext)) > expectedLen {

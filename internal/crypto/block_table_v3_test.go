@@ -302,15 +302,17 @@ func TestBlockTable_PrefixSums(t *testing.T) {
 		}
 	}
 
-	// Test GetPrefixSums
+	// Test GetPrefixSums: cumulative 64-bit offsets, plus the total as the
+	// final element
 	sums := table.GetPrefixSums()
-	if len(sums) != 4 {
-		t.Errorf("PrefixSums length mismatch: got %d, want 4", len(sums))
+	if len(sums) != 5 {
+		t.Errorf("PrefixSums length mismatch: got %d, want 5", len(sums))
 	}
 
-	for i, length := range lengths {
-		if sums[i] != length {
-			t.Errorf("PrefixSum[%d] mismatch: got %d, want %d", i, sums[i], length)
+	wantSums := []int64{0, 65536, 65536 + 32768, 65536 + 32768 + 49152, 65536 + 32768 + 49152 + 16384}
+	for i, want := range wantSums {
+		if sums[i] != want {
+			t.Errorf("PrefixSum[%d] mismatch: got %d, want %d", i, sums[i], want)
 		}
 	}
 
@@ -376,6 +378,60 @@ func TestBlockTable_TotalCiphertextLength(t *testing.T) {
 	expected := uint32(65536 + 32768 + 16384)
 	if table.TotalCiphertextLength() != expected {
 		t.Errorf("TotalCiphertextLength mismatch: got %d, want %d", table.TotalCiphertextLength(), expected)
+	}
+}
+
+// TestBlockTableOffsetsBeyondUint32 pins the 64-bit offset behavior for
+// objects whose concatenated ciphertext exceeds 4GiB (armor-5694713b): a
+// uint32 accumulator silently wraps there and addresses the wrong bytes.
+// The table is synthetic — 4097 entries of 1MiB — so no ciphertext is
+// allocated.
+func TestBlockTableOffsetsBeyondUint32(t *testing.T) {
+	blockSize := 1 << 20
+	mib := int64(1 << 20)
+	entryCount := 4097 // 4097MiB of ciphertext: 1MiB past the uint32 ceiling
+
+	table := NewBlockTable(blockSize, entryCount)
+	var hmac [32]byte
+	for i := 0; i < entryCount; i++ {
+		if err := table.AddEntry(NewBlockTableEntry(hmac, uint32(mib), false)); err != nil {
+			t.Fatalf("AddEntry(%d): %v", i, err)
+		}
+	}
+
+	total := int64(entryCount) * mib
+	if got := table.TotalCiphertextLength64(); got != total {
+		t.Errorf("TotalCiphertextLength64 = %d, want %d", got, total)
+	}
+	if got := table.TotalCiphertextLength(); got != ^uint32(0) {
+		t.Errorf("TotalCiphertextLength should saturate at MaxUint32 for %d-byte ciphertext, got %d", total, got)
+	}
+
+	// BlockOffset is a uint32 view; offsets past 4GiB are reported as
+	// not-representable, never wrapped
+	if offset, ok := table.BlockOffset(uint32(entryCount - 1)); ok {
+		t.Errorf("BlockOffset past 4GiB should be !ok, got offset=%d ok=true", offset)
+	}
+	if offset, ok := table.BlockOffset(2048); !ok || offset != uint32(2048)*uint32(mib) {
+		t.Errorf("BlockOffset(2048) = %d, %v; want %d, true", offset, ok, uint32(2048)*uint32(mib))
+	}
+
+	// CiphertextSpan must address the span past the 2^32 boundary exactly
+	start, end, ok := table.CiphertextSpan(4096, 4096)
+	if !ok || start != 4096*mib || end != 4097*mib {
+		t.Errorf("CiphertextSpan(4096,4096) = %d, %d, %v; want %d, %d, true", start, end, ok, 4096*mib, 4097*mib)
+	}
+	start, end, ok = table.CiphertextSpan(4094, 4096)
+	if !ok || start != 4094*mib || end != 4097*mib {
+		t.Errorf("CiphertextSpan(4094,4096) = %d, %d, %v; want %d, %d, true", start, end, ok, 4094*mib, 4097*mib)
+	}
+	if _, _, ok := table.CiphertextSpan(0, entryCount); ok {
+		t.Error("CiphertextSpan with end index out of range should be !ok")
+	}
+
+	// BlockRange likewise refuses to hand back a wrapped offset
+	if _, _, ok := table.BlockRange(uint32(entryCount - 1)); ok {
+		t.Error("BlockRange past 4GiB should be !ok")
 	}
 }
 

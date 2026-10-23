@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"math"
 )
 
 var (
@@ -116,17 +117,22 @@ func NewBlockTableEntry(hmac [32]byte, ciphertextLength uint32, compressed bool)
 // BlockTable represents the entire block table for an encrypted object.
 // It stores entries for all blocks and provides offset mapping.
 type BlockTable struct {
-	Entries    []*BlockTableEntry
-	BlockSize  int // Block size in bytes
-	prefixSums []uint32 // Cached cumulative ciphertext lengths
+	Entries   []*BlockTableEntry
+	BlockSize int // Block size in bytes
+	// offsets[i] is the cumulative ciphertext byte offset of block i within
+	// the ciphertext section (offsets[0] == 0). Summed in 64-bit: the
+	// concatenated ciphertext of a large object exceeds 4GiB, which silently
+	// wraps a uint32 accumulator and addresses the wrong bytes.
+	offsets []int64
 }
 
 // NewBlockTable creates a new block table.
 func NewBlockTable(blockSize int, expectedEntries int) *BlockTable {
 	return &BlockTable{
-		Entries:    make([]*BlockTableEntry, 0, expectedEntries),
-		BlockSize:  blockSize,
-		prefixSums: make([]uint32, 0, expectedEntries),
+		Entries:   make([]*BlockTableEntry, 0, expectedEntries),
+		BlockSize: blockSize,
+		// offsets[0] is always 0: the offset before the first block.
+		offsets: make([]int64, 1, expectedEntries+1),
 	}
 }
 
@@ -137,7 +143,7 @@ func (t *BlockTable) AddEntry(entry *BlockTableEntry) error {
 	}
 
 	t.Entries = append(t.Entries, entry)
-	t.prefixSums = append(t.prefixSums, entry.RawLength())
+	t.offsets = appendOffset(t.offsets, entry.RawLength())
 	return nil
 }
 
@@ -192,54 +198,84 @@ func DecodeBlockTable(data []byte, blockSize int, expectedBlockCount uint32) (*B
 		}
 
 		table.Entries = append(table.Entries, entry)
-		table.prefixSums = append(table.prefixSums, entry.RawLength())
+		table.offsets = appendOffset(table.offsets, entry.RawLength())
 	}
 
 	return table, nil
 }
 
-// GetPrefixSums returns the cumulative ciphertext lengths for all blocks.
-// The i-th element is the byte offset of block i within the ciphertext section.
-func (t *BlockTable) GetPrefixSums() []uint32 {
+// appendOffset appends the cumulative offset that follows a block of the
+// given raw length. The last element is always the total ciphertext length.
+func appendOffset(offsets []int64, rawLength uint32) []int64 {
+	var prev int64
+	if n := len(offsets); n > 0 {
+		prev = offsets[n-1]
+	}
+	return append(offsets, prev+int64(rawLength))
+}
+
+// GetPrefixSums returns the cumulative ciphertext offsets of every block,
+// plus the total ciphertext length as the final element: element i is the
+// byte offset of block i within the ciphertext section, and element
+// len(result)-1 is one past the last block's last byte. Summed in 64-bit:
+// offsets above 4GiB silently wrap a uint32 accumulator.
+func (t *BlockTable) GetPrefixSums() []int64 {
 	// Return a copy to prevent external modification
-	sums := make([]uint32, len(t.prefixSums))
-	copy(sums, t.prefixSums)
+	sums := make([]int64, len(t.offsets))
+	copy(sums, t.offsets)
 	return sums
 }
 
+// CiphertextSpan returns the half-open ciphertext byte span [start, end)
+// covering blocks startBlock..endBlock inclusive. ok is false when either
+// index is out of range.
+func (t *BlockTable) CiphertextSpan(startBlock, endBlock int) (start, end int64, ok bool) {
+	if startBlock < 0 || endBlock < startBlock || endBlock >= len(t.Entries) {
+		return 0, 0, false
+	}
+	return t.offsets[startBlock], t.offsets[endBlock+1], true
+}
+
 // BlockOffset returns the ciphertext byte offset for a given block index.
-// Returns (offset, true) on success; (0, false) if blockIndex is out of range.
+// Returns (offset, true) on success; (0, false) if blockIndex is out of range
+// or the offset is not representable in uint32 (ciphertext section above
+// 4GiB — use CiphertextSpan for those objects instead of guessing).
 func (t *BlockTable) BlockOffset(blockIndex uint32) (uint32, bool) {
-	if int(blockIndex) >= len(t.prefixSums) {
+	if int(blockIndex) >= len(t.Entries) {
 		return 0, false
 	}
 
-	if blockIndex == 0 {
-		return 0, true
+	offset := t.offsets[blockIndex]
+	if offset > math.MaxUint32 {
+		return 0, false
 	}
-
-	// Sum all lengths before this block
-	var sum uint32
-	for i := 0; i < int(blockIndex); i++ {
-		sum += t.prefixSums[i]
-	}
-	return sum, true
+	return uint32(offset), true
 }
 
 // TotalCiphertextLength returns the total length of all ciphertext blocks.
+// It saturates at math.MaxUint32 rather than silently wrapping; use
+// TotalCiphertextLength64 for objects whose ciphertext section can exceed
+// 4GiB.
 func (t *BlockTable) TotalCiphertextLength() uint32 {
-	if len(t.prefixSums) == 0 {
+	total := t.TotalCiphertextLength64()
+	if total > math.MaxUint32 {
+		return math.MaxUint32
+	}
+	return uint32(total)
+}
+
+// TotalCiphertextLength64 returns the total length of all ciphertext blocks
+// in 64 bits.
+func (t *BlockTable) TotalCiphertextLength64() int64 {
+	if len(t.offsets) == 0 {
 		return 0
 	}
-	var sum uint32
-	for _, length := range t.prefixSums {
-		sum += length
-	}
-	return sum
+	return t.offsets[len(t.offsets)-1]
 }
 
 // BlockRange returns the (offset, length) for a given block within the ciphertext section.
-// Returns (offset, length, true) on success; (0, 0, false) if blockIndex is out of range.
+// Returns (offset, length, true) on success; (0, 0, false) if blockIndex is out of range
+// or the offset is not representable in uint32 (see BlockOffset).
 func (t *BlockTable) BlockRange(blockIndex uint32) (uint32, uint32, bool) {
 	if int(blockIndex) >= len(t.Entries) {
 		return 0, 0, false

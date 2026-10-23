@@ -617,7 +617,7 @@ func decryptLocalV3Envelope(f *os.File, src *inputSource, dek []byte, header *cr
 	}
 
 	// Calculate encrypted data size from block table
-	ciphertextSize := blockTable.TotalCiphertextLength()
+	ciphertextSize := blockTable.TotalCiphertextLength64()
 
 	// Read encrypted data (comes right after header)
 	if _, err := f.Seek(int64(crypto.HeaderSize), io.SeekStart); err != nil {
@@ -907,7 +907,7 @@ func decryptV3MultipartPerPart(encryptedData []byte, sidecar *backend.HMACTableS
 			return nil, fmt.Errorf("part %d: %w", part.N, err)
 		}
 
-		partLen := int(table.TotalCiphertextLength())
+		partLen := int(table.TotalCiphertextLength64())
 		if offset+partLen > len(encryptedData) {
 			return nil, fmt.Errorf("part %d ciphertext (%d bytes at offset %d) exceeds stored ciphertext of %d bytes",
 				part.N, partLen, offset, len(encryptedData))
@@ -1214,11 +1214,11 @@ func readB2V3EnvelopeCiphertext(ctx context.Context, b2Backend backend.Backend, 
 	}
 
 	// Calculate encrypted data size from block table
-	ciphertextSize := blockTable.TotalCiphertextLength()
+	ciphertextSize := blockTable.TotalCiphertextLength64()
 
 	// Read encrypted data (comes right after header)
 	encryptedData = make([]byte, ciphertextSize)
-	dataReader, err := b2Backend.GetRange(ctx, src.Bucket, src.Path, int64(crypto.HeaderSize), int64(ciphertextSize))
+	dataReader, err := b2Backend.GetRange(ctx, src.Bucket, src.Path, int64(crypto.HeaderSize), ciphertextSize)
 	if err != nil {
 		return nil, nil, nil, nil, nil, fmt.Errorf("read encrypted data from B2: %w", err)
 	}
