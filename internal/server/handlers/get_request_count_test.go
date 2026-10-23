@@ -307,7 +307,8 @@ func TestSmallObjectFullGETRequestCountSinglePUTV2(t *testing.T) {
 	want := []backendCall{
 		{Method: "GET", Key: bucket + "/" + key + ".armor-manifest", Hit: false},
 		{Method: "HEAD", Key: bucket + "/" + key, Hit: true},
-		{Method: "GET_RANGE", Key: bucket + "/" + key, Offset: 0, Length: crypto.HeaderSize, Hit: true},
+		// Single header read: GetObject reads the envelope header once and the
+		// full-object stream reuses it (armor-c3199f1c; was two header reads).
 		{Method: "GET_RANGE", Key: bucket + "/" + key, Offset: 0, Length: crypto.HeaderSize, Hit: true},
 		{Method: "GET_RANGE", Key: bucket + "/" + key, Offset: hmacOffset, Length: hmacSize, Hit: true},
 		{Method: "GET_RANGE", Key: bucket + "/" + key, Offset: 0, Length: crypto.HeaderSize + int64(len(plaintext)), Hit: true},
@@ -337,7 +338,8 @@ func TestSmallObjectFullGETRequestCountSinglePUTV1(t *testing.T) {
 	want := []backendCall{
 		{Method: "GET", Key: bucket + "/" + key + ".armor-manifest", Hit: false},
 		{Method: "HEAD", Key: bucket + "/" + key, Hit: true},
-		{Method: "GET_RANGE", Key: bucket + "/" + key, Offset: 0, Length: crypto.HeaderSize, Hit: true},
+		// Single header read: GetObject reads the envelope header once and the
+		// full-object stream reuses it (armor-c3199f1c; was two header reads).
 		{Method: "GET_RANGE", Key: bucket + "/" + key, Offset: 0, Length: crypto.HeaderSize, Hit: true},
 		{Method: "GET_RANGE", Key: bucket + "/" + key, Offset: hmacOffset, Length: hmacSize, Hit: true},
 		{Method: "GET_RANGE", Key: bucket + "/" + key, Offset: 0, Length: crypto.HeaderSize + int64(len(plaintext)), Hit: true},
@@ -347,9 +349,10 @@ func TestSmallObjectFullGETRequestCountSinglePUTV1(t *testing.T) {
 
 // TestSmallObjectFullGETRequestCountSinglePUTV3 pins the backend request
 // count for a full GET of a small single-PUT v3-envelope object: the
-// readManifest miss, the legacy-path Head, the envelope header read GetObject
-// performs, the header re-read handleFullObjectStream performs, the v3
-// trailer block table fetch, and the data stream read.
+// readManifest miss, the legacy-path Head, one envelope header read (GetObject
+// reads it once and the full-object stream reuses it — armor-c3199f1c removed
+// the header re-read), the v3 trailer block table fetch, and the data stream
+// read.
 func TestSmallObjectFullGETRequestCountSinglePUTV3(t *testing.T) {
 	const bucket = "test-bucket"
 	const key = "small-v3.bin"
@@ -365,14 +368,13 @@ func TestSmallObjectFullGETRequestCountSinglePUTV3(t *testing.T) {
 	}
 
 	calls := cb.recordedCalls()
-	if len(calls) != 6 {
-		t.Fatalf("single-PUT v3: %d backend calls recorded, baseline is 6 (manifest miss, head, header, header re-read, trailer block table, data): %s",
+	if len(calls) != 5 {
+		t.Fatalf("single-PUT v3: %d backend calls recorded, baseline is 5 (manifest miss, head, header, trailer block table, data): %s",
 			len(calls), formatCalls(calls))
 	}
 	prefix := []backendCall{
 		{Method: "GET", Key: bucket + "/" + key + ".armor-manifest", Hit: false},
 		{Method: "HEAD", Key: bucket + "/" + key, Hit: true},
-		{Method: "GET_RANGE", Key: bucket + "/" + key, Offset: 0, Length: crypto.HeaderSize, Hit: true},
 		{Method: "GET_RANGE", Key: bucket + "/" + key, Offset: 0, Length: crypto.HeaderSize, Hit: true},
 	}
 	for i := range prefix {
@@ -385,21 +387,23 @@ func TestSmallObjectFullGETRequestCountSinglePUTV3(t *testing.T) {
 	// Trailer block table read: sized to the block count, starting after the
 	// data blocks (its exact offset depends on ciphertext block lengths).
 	blockCount := crypto.ComputeBlockCount(int64(len(plaintext)), 65536)
-	trailer := calls[4]
+	trailer := calls[3]
 	if trailer.Method != "GET_RANGE" || trailer.Length != int64(blockCount)*crypto.BlockTableEntrySize || trailer.Offset <= crypto.HeaderSize {
-		t.Fatalf("single-PUT v3: call 5 should be the trailer block table read (%d entries), got %+v", blockCount, trailer)
+		t.Fatalf("single-PUT v3: call 4 should be the trailer block table read (%d entries), got %+v", blockCount, trailer)
 	}
 	// Data read: a fresh range from offset 0 covering header + ciphertext.
-	data := calls[5]
+	data := calls[4]
 	if data.Method != "GET_RANGE" || data.Offset != 0 || data.Length <= crypto.HeaderSize {
-		t.Fatalf("single-PUT v3: call 6 should be the data stream read, got %+v", data)
+		t.Fatalf("single-PUT v3: call 5 should be the data stream read, got %+v", data)
 	}
 }
 
 // TestSmallObjectFullGETRequestCountMultipartV3 pins the backend request
-// count for a full GET of a v3 multipart object: the manifest hit, the
-// ADR-016 freshness head, the metadata head for the ciphertext size, the HMAC
-// sidecar load, and one range read per part. Multipart objects cannot be
+// count for a full GET of a v3 multipart object: the manifest hit, one
+// ciphertext HEAD (armor-c3199f1c: the ADR-016 freshness head and the
+// ciphertext-size head were the same round trip and are now a single
+// authoritative HEAD), the HMAC sidecar load, and one range read per part.
+// Multipart objects cannot be
 // small by construction (ADR-015 requires a uniform part size of at least
 // 5 MiB), so this uses the smallest legal two-part shape; what is pinned is
 // the fixed per-GET overhead of 4 calls plus one range per part.
@@ -426,28 +430,25 @@ func TestSmallObjectFullGETRequestCountMultipartV3(t *testing.T) {
 	}
 
 	calls := cb.recordedCalls()
-	// 4 fixed calls (manifest hit, freshness head, metadata head, sidecar)
+	// 3 fixed calls (manifest hit, combined freshness/size HEAD, sidecar)
 	// plus one GET_RANGE per part.
-	const wantCount = 4 + 2
+	const wantCount = 3 + 2
 	if len(calls) != wantCount {
-		t.Fatalf("v3 multipart: %d backend calls recorded, baseline is %d (manifest hit, freshness head, metadata head, sidecar, one range per part): %s",
+		t.Fatalf("v3 multipart: %d backend calls recorded, baseline is %d (manifest hit, combined freshness/size head, sidecar, one range per part): %s",
 			len(calls), wantCount, formatCalls(calls))
 	}
 	if calls[0].Method != "GET" || calls[0].Key != bucket+"/"+key+".armor-manifest" || !calls[0].Hit {
 		t.Fatalf("v3 multipart: call 1 should be the manifest hit, got %+v", calls[0])
 	}
 	if calls[1].Method != "HEAD" || !calls[1].Hit {
-		t.Fatalf("v3 multipart: call 2 should be the ciphertext freshness head, got %+v", calls[1])
+		t.Fatalf("v3 multipart: call 2 should be the combined ciphertext freshness/size head, got %+v", calls[1])
 	}
-	if calls[2].Method != "HEAD" || !calls[2].Hit {
-		t.Fatalf("v3 multipart: call 3 should be the ciphertext metadata head, got %+v", calls[2])
+	if calls[2].Method != "GET_DIRECT" || !calls[2].Hit {
+		t.Fatalf("v3 multipart: call 3 should be the HMAC sidecar load, got %+v", calls[2])
 	}
-	if calls[3].Method != "GET_DIRECT" || !calls[3].Hit {
-		t.Fatalf("v3 multipart: call 4 should be the HMAC sidecar load, got %+v", calls[3])
-	}
-	for i, c := range calls[4:] {
+	for i, c := range calls[3:] {
 		if c.Method != "GET_RANGE" || c.Offset < 0 || c.Length <= 0 {
-			t.Fatalf("v3 multipart: call %d should be a part range read, got %+v", i+5, c)
+			t.Fatalf("v3 multipart: call %d should be a part range read, got %+v", i+4, c)
 		}
 	}
 }

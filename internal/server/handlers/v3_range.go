@@ -13,19 +13,31 @@ import (
 )
 
 // handleV3RangeRequest handles range requests for v3 objects.
-// It fetches the trailer block table, maps the requested plaintext range to
-// blocks once, and fetches the whole needed ciphertext span with a single
-// ranged request: single-PUT blocks are contiguous in the stored object, so
-// the backend's bounded pipelined reader parallelizes the origin round trips
+// It fetches the trailer block table (through the generation-keyed decoded
+// table cache, armor-c3199f1c), maps the requested plaintext range to blocks
+// once, and fetches the whole needed ciphertext span with a single ranged
+// request: single-PUT blocks are contiguous in the stored object, so the
+// backend's bounded pipelined reader parallelizes the origin round trips
 // instead of the handler paying one synchronous round trip per 64KiB block
 // (armor-5694713b; same shape as the multipart runs in armor-817d9d92).
-func (h *Handlers) handleV3RangeRequest(w http.ResponseWriter, r *http.Request, bucket, key, prefixedKey string, decryptor *crypto.Decryptor, armorMeta *backend.ARMORMetadata, plaintextSize, ciphertextSize int64, lastModified time.Time, start, end int64) {
+// storedGen is the verified stored-object generation this request's
+// authoritative HEAD produced; the table cache is keyed on it so an overwrite
+// or re-encryption can never be served a foreign table.
+func (h *Handlers) handleV3RangeRequest(w http.ResponseWriter, r *http.Request, bucket, key, prefixedKey string, decryptor *crypto.Decryptor, armorMeta *backend.ARMORMetadata, plaintextSize, ciphertextSize int64, lastModified time.Time, start, end int64, storedGen v3TableKeyParts) {
 	ctx := r.Context()
+
+	// Parquet footer fast path (armor-c3199f1c): serve tail ranges from the
+	// decrypted-footer cache, the same way the generic range path does. A hit
+	// needs no block table and no backend round trip at all.
+	if h.serveFooterCacheHit(w, r, bucket, key, armorMeta, plaintextSize, start, end) {
+		return
+	}
+
 	blockSize := armorMeta.BlockSize
 	blockCount := int(crypto.ComputeBlockCount(plaintextSize, blockSize))
 
-	// Fetch the trailer block table
-	blockTable, err := h.readV3BlockTable(ctx, bucket, prefixedKey, ciphertextSize, blockCount)
+	// Fetch the trailer block table (cached by stored generation)
+	blockTable, err := h.loadV3BlockTable(ctx, bucket, prefixedKey, storedGen, ciphertextSize, blockCount)
 	if err != nil {
 		h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to read v3 block table for range: %v", err), 500)
 		return
@@ -129,6 +141,10 @@ func (h *Handlers) handleV3RangeRequest(w http.ResponseWriter, r *http.Request, 
 			plaintext = plaintext[:expectedLen]
 		}
 	}
+
+	// Cache the Parquet footer when this read covered the tail, the same way
+	// the generic range path does (armor-c3199f1c).
+	h.storeFooterCacheIfTail(bucket, key, armorMeta, plaintext, plaintextSize, end)
 
 	// Set response headers
 	w.Header().Set("Content-Length", strconv.FormatInt(int64(len(plaintext)), 10))

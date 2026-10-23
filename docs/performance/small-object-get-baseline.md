@@ -28,18 +28,23 @@ removes one updates the pin **and this table in the same bead**.
 
 | Write version | Object shape | Backend calls | Sequence |
 |---|---|---|---|
-| v1 | single-PUT | **6** | manifest GET (404 miss) → HEAD → header GetRange → header re-read GetRange → HMAC-table GetRange → data GetRange |
-| v2 | single-PUT | **6** | same as v1 (v1/v2 share the inline-HMAC read path) |
-| v3 | single-PUT | **6** | manifest GET (404 miss) → HEAD → header GetRange → header re-read GetRange → trailer block-table GetRange → data GetRange |
-| v3 | multipart | **4 + 1/part** | manifest GET (hit) → freshness HEAD → metadata HEAD → HMAC sidecar GetDirect → one GetRange per part |
+| v1 | single-PUT | **5** | manifest GET (404 miss) → HEAD → header GetRange → HMAC-table GetRange → data GetRange |
+| v2 | single-PUT | **5** | same as v1 (v1/v2 share the inline-HMAC read path) |
+| v3 | single-PUT | **5** | manifest GET (404 miss) → HEAD → header GetRange → trailer block-table GetRange → data GetRange |
+| v3 | multipart | **3 + 1/part** | manifest GET (hit) → combined freshness/size HEAD → HMAC sidecar GetDirect → one GetRange per part |
+
+The table reflects armor-c3199f1c (2026-10-23): GetObject reads the envelope
+header once and passes it to the downstream helpers (previously the header was
+read twice on every single-PUT GET), and the multipart path's ADR-016 freshness
+check and ciphertext-size lookup share one authoritative HEAD (previously two
+HEADs of the same object). Range reads additionally reuse the v3 trailer block
+table across requests through a stored-generation-keyed cache — not visible in
+a first-GET pin; repeated same-version ranges skip the trailer fetch entirely.
 
 Notes for anyone lowering these:
 
 - Call 1 is the `readManifest` GET, which **misses for every non-multipart
   object** — a pure wasted round trip on the single-PUT path.
-- Calls 3–4 are two reads of the same header bytes (GetObject reads the
-  envelope header, then `handleFullObjectStream` re-reads it); one of them is
-  a merge candidate.
 - The HEAD exists to distinguish the legacy (v1/v2/inline-HMAC) path from
   the v3 path before either is committed.
 - Multipart cannot be "small" (ADR-015 requires uniform parts ≥ 5 MiB), so

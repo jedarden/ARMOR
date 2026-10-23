@@ -112,6 +112,10 @@ type Handlers struct {
 
 	// multipartSidecarCache caches v3 multipart sidecar data
 	multipartSidecarCache *backend.MultipartSidecarCache
+
+	// v3Tables caches decoded v3 trailer block tables, keyed by stored-object
+	// generation, with in-flight load coalescing and entry/byte bounds.
+	v3Tables *v3BlockTableCache
 }
 
 const (
@@ -207,6 +211,7 @@ func New(cfg *config.Config, be backend.Backend, cache *backend.MetadataCache, f
 		provenance:            nil,
 		manifest:              nil,
 		multipartSidecarCache: backend.NewMultipartSidecarCache(cfg.CacheMaxEntries, cfg.CacheTTL),
+		v3Tables:              newV3BlockTableCache(cfg.CacheMaxEntries, cfg.CacheTTL, 0),
 	}
 }
 
@@ -727,6 +732,14 @@ func (h *Handlers) PutObject(w http.ResponseWriter, r *http.Request, bucket, key
 	}
 	backendPutDuration := time.Since(backendPutStart)
 
+	// The overwrite retired the cached generation (if any). Backend.Put does
+	// not return the new stored ETag, so there is nothing sound to cache here;
+	// the next HEAD or GET repopulates it. Tests may build Handlers without a
+	// metadata cache, so the retirement is nil-safe.
+	if h.cache != nil {
+		h.cache.Delete(bucket, key)
+	}
+
 	// PUT latency instrumentation (armor-69dd394b): when the request takes the
 	// provenance-recording path below, collect the provenance lock-wait/write
 	// split and publish it — with the backend PUT duration — to the request
@@ -1059,6 +1072,14 @@ func (h *Handlers) putObjectStreaming(ctx context.Context, w http.ResponseWriter
 	}
 	backendPutDuration := time.Since(backendPutStart)
 
+	// The overwrite retired the cached generation (if any). Backend.Put does
+	// not return the new stored ETag, so there is nothing sound to cache here;
+	// the next HEAD or GET repopulates it. Tests may build Handlers without a
+	// metadata cache, so the retirement is nil-safe.
+	if h.cache != nil {
+		h.cache.Delete(bucket, key)
+	}
+
 	// Close temp file
 	tmpFile.Close()
 
@@ -1188,6 +1209,10 @@ func (h *Handlers) GetObject(w http.ResponseWriter, r *http.Request, bucket, key
 	// ADR-016: Try manifest first for multipart objects
 	var info *backend.ObjectInfo
 	var err error
+	// ciphertextInfo holds the authoritative stored-ciphertext HEAD on the
+	// manifest path; on the legacy path info itself is the stored HEAD.
+	var ciphertextInfo *backend.ObjectInfo
+	var headErr error
 	manifestBody, manifestMeta, manifestErr := h.readManifest(ctx, bucket, key)
 	if manifestErr != nil && !backend.IsNotFound(manifestErr) {
 		// The manifest read failed for a reason other than "no manifest was
@@ -1214,30 +1239,31 @@ func (h *Handlers) GetObject(w http.ResponseWriter, r *http.Request, bucket, key
 			return
 		}
 
-		// Verify ciphertext freshness if we have a completion timestamp
-		if completedAt := manifestMeta[metaCompletedAt]; completedAt != "" {
-			if verifyErr := h.verifyCiphertextFreshness(ctx, bucket, manifestBody.CiphertextObject, completedAt); verifyErr != nil {
+		// One authoritative ciphertext HEAD serves both the ADR-016 freshness
+		// gate and the stored size/LastModified below (armor-c3199f1c).
+		// Previously the freshness check and the size check each headed the
+		// same ciphertext object. The check is still performed on every
+		// request — nothing is cached or skipped here.
+		ciphertextInfo, headErr = h.headCiphertextForFreshness(ctx, bucket, manifestBody.CiphertextObject, manifestMeta[metaCompletedAt])
+		if headErr != nil {
+			var freshErr *ciphertextFreshnessError
+			if errors.As(headErr, &freshErr) {
 				// Retryable by design: an in-progress ADR-016 overwrite
 				// resolves itself once the new manifest lands. When it never
 				// resolves, the operator repairs or quarantines via the admin
 				// endpoints named in the message — the ones operators grep
 				// for during exactly this outage.
-				h.writeError(w, r, "InternalError", fmt.Sprintf("manifest verification failed; operator repair or quarantine is required: %v", verifyErr), 500)
-				return
+				h.writeError(w, r, "InternalError", fmt.Sprintf("manifest verification failed; operator repair or quarantine is required: %v", freshErr.err), 500)
+			} else {
+				h.writeBackendError(w, r, "InternalError", fmt.Sprintf("Failed to head ciphertext object: %v", headErr), 500, headErr)
 			}
+			return
 		}
 
 		// Parse ARMOR metadata from manifest
 		armorMeta, ok := backend.ParseARMORMetadata(manifestMeta)
 		if !ok {
 			h.writeError(w, r, "InternalError", "Failed to parse ARMOR metadata from manifest", 500)
-			return
-		}
-
-		// Get ciphertext object info for size check
-		ciphertextInfo, ciphertextErr := h.backend.Head(ctx, bucket, manifestBody.CiphertextObject)
-		if ciphertextErr != nil {
-			h.writeBackendError(w, r, "InternalError", fmt.Sprintf("Failed to head ciphertext object: %v", ciphertextErr), 500, ciphertextErr)
 			return
 		}
 
@@ -1361,7 +1387,12 @@ func (h *Handlers) GetObject(w http.ResponseWriter, r *http.Request, bucket, key
 	// Determine the version and create decryptor
 	// For single-PUT objects: read envelope header to get version
 	// For multipart objects: trust the metadata version (no envelope header exists)
+	// envelopeHeader is the request-local decoded header read here once; the
+	// downstream full/range helpers reuse it instead of re-reading the same 64
+	// bytes from the backend (armor-c3199f1c). It is nil for multipart objects,
+	// which have no envelope header.
 	var decryptor *crypto.Decryptor
+	var envelopeHeader *crypto.EnvelopeHeader
 	if isMultipart {
 		// Multipart objects have no envelope header - trust metadata version
 		decryptor, err = crypto.NewDecryptorWithVersion(dek, armorMeta.IV, armorMeta.BlockSize, uint8(armorMeta.Version))
@@ -1390,6 +1421,7 @@ func (h *Handlers) GetObject(w http.ResponseWriter, r *http.Request, bucket, key
 			h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to decode header: %v", err), 500)
 			return
 		}
+		envelopeHeader = header
 
 		// Create decryptor with the version from the envelope header
 		decryptor, err = crypto.NewDecryptorWithVersion(dek, header.IV[:], header.BlockSize(), header.Version)
@@ -1452,6 +1484,17 @@ func (h *Handlers) GetObject(w http.ResponseWriter, r *http.Request, bucket, key
 		}
 	}
 
+	// Stored-object generation for generation-keyed read caches (v3 block
+	// tables): the manifest path's authoritative ciphertext HEAD, or on the
+	// legacy path the object HEAD itself. Derived fresh per request — never
+	// from a previous request's view — so an overwrite, re-encryption, or
+	// migration misses the cache instead of serving a mismatched table.
+	storedGenSource := info
+	if ciphertextInfo != nil {
+		storedGenSource = ciphertextInfo
+	}
+	storedGen := generationFromInfo(storedGenSource)
+
 	// Check for range request
 	rangeHeader := r.Header.Get("Range")
 	if rangeHeader != "" {
@@ -1473,7 +1516,7 @@ func (h *Handlers) GetObject(w http.ResponseWriter, r *http.Request, bucket, key
 			}
 			h.handleV3MultipartRangeRequest(w, r, bucket, key, prefixedKey, decryptor, armorMeta, plaintextSize, info.LastModified, start, end)
 		} else {
-			h.handleRangeRequest(w, r, bucket, key, decryptor, armorMeta, plaintextSize, info.LastModified, isMultipart)
+			h.handleRangeRequest(w, r, bucket, key, decryptor, armorMeta, plaintextSize, info.LastModified, isMultipart, envelopeHeader, storedGen)
 		}
 		return
 	}
@@ -1483,14 +1526,18 @@ func (h *Handlers) GetObject(w http.ResponseWriter, r *http.Request, bucket, key
 		prefixedKey := h.applyPrefix(key)
 		h.handleV3MultipartGet(w, r, bucket, key, prefixedKey, decryptor, armorMeta, plaintextSize, info.LastModified)
 	} else {
-		h.handleFullObjectStream(w, r, bucket, key, decryptor, armorMeta, plaintextSize, info.LastModified, isMultipart, multipartPartSize, isNonUniform, cumulativePartSizes)
+		h.handleFullObjectStream(w, r, bucket, key, decryptor, armorMeta, plaintextSize, info.LastModified, isMultipart, multipartPartSize, isNonUniform, cumulativePartSizes, envelopeHeader, storedGen)
 	}
 }
 
 // handleFullObjectStream handles full object downloads with pipelined stream decryption.
 // This uses io.Pipe to decrypt blocks as they stream from Cloudflare, reducing
 // time-to-first-byte and memory usage compared to buffering the entire envelope.
-func (h *Handlers) handleFullObjectStream(w http.ResponseWriter, r *http.Request, bucket, key string, decryptor *crypto.Decryptor, armorMeta *backend.ARMORMetadata, plaintextSize int64, lastModified time.Time, isMultipart bool, multipartPartSize int64, isNonUniform bool, cumulativePartSizes map[int]int64) {
+// header is the request-local envelope header GetObject already read for
+// single-PUT objects (nil for multipart objects, which have none); the stream
+// path reuses it instead of re-reading the same 64 bytes from the backend.
+// storedGen is the verified stored-object generation for cache keying.
+func (h *Handlers) handleFullObjectStream(w http.ResponseWriter, r *http.Request, bucket, key string, decryptor *crypto.Decryptor, armorMeta *backend.ARMORMetadata, plaintextSize int64, lastModified time.Time, isMultipart bool, multipartPartSize int64, isNonUniform bool, cumulativePartSizes map[int]int64, header *crypto.EnvelopeHeader, storedGen v3TableKeyParts) {
 	ctx := r.Context()
 
 	// Apply prefix for backend operations
@@ -1502,7 +1549,6 @@ func (h *Handlers) handleFullObjectStream(w http.ResponseWriter, r *http.Request
 	var hmacTable []byte
 	var dataBody io.ReadCloser
 	var streamSize int64
-	var header *crypto.EnvelopeHeader
 
 	if isMultipart {
 		// Multipart object: HMAC table is in sidecar, no embedded header
@@ -1530,24 +1576,13 @@ func (h *Handlers) handleFullObjectStream(w http.ResponseWriter, r *http.Request
 		// Single-PUT object: dispatch on version for HMAC/block table format
 		// v1/v2: inline HMAC table at HeaderSize + plaintextSize
 		// v3: trailer block table at ciphertext_length - 36*blockCount
+		//
+		// The envelope header was already read and decoded once in GetObject
+		// (request-local reuse, armor-c3199f1c); no second header read here.
 
-		// Read header to determine version
-		headerBuf := make([]byte, crypto.HeaderSize)
-		headerReader, err := h.backend.GetRange(ctx, bucket, prefixedKey, 0, crypto.HeaderSize)
-		if err != nil {
-			h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to read header: %v", err), 500)
-			return
-		}
-		if _, err := io.ReadFull(headerReader, headerBuf); err != nil {
-			headerReader.Close()
-			h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to read header bytes: %v", err), 500)
-			return
-		}
-		headerReader.Close()
-
-		header, err = crypto.DecodeHeader(headerBuf)
-		if err != nil {
-			h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to decode header: %v", err), 500)
+		if header == nil {
+			// Defensive: the single-PUT dispatch always provides the header.
+			h.writeError(w, r, "InternalError", "missing envelope header for single-PUT stream", 500)
 			return
 		}
 
@@ -1558,7 +1593,7 @@ func (h *Handlers) handleFullObjectStream(w http.ResponseWriter, r *http.Request
 				return
 			}
 
-			blockTable, err := h.readV3BlockTable(ctx, bucket, prefixedKey, armorMeta.CiphertextSize, blockCount)
+			blockTable, err := h.loadV3BlockTable(ctx, bucket, prefixedKey, storedGen, armorMeta.CiphertextSize, blockCount)
 			if err != nil {
 				h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to read v3 block table: %v", err), 500)
 				return
@@ -1610,17 +1645,13 @@ func (h *Handlers) handleFullObjectStream(w http.ResponseWriter, r *http.Request
 			}
 			defer dataBody.Close()
 
-			// 3. Read and discard the 64-byte header (single-PUT only)
-			headerBuf := make([]byte, crypto.HeaderSize)
-			if _, err := io.ReadFull(dataBody, headerBuf); err != nil {
+			// 3. Read and discard the 64-byte header (single-PUT only).
+			// The header itself was already decoded from GetObject's
+			// request-local read (armor-c3199f1c); the stream re-decode is
+			// gone, only the discard remains.
+			discard := make([]byte, crypto.HeaderSize)
+			if _, err := io.ReadFull(dataBody, discard); err != nil {
 				h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to read header: %v", err), 500)
-				return
-			}
-
-			// Parse header to get plaintext SHA for verification
-			header, err = crypto.DecodeHeader(headerBuf)
-			if err != nil {
-				h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to decode header: %v", err), 500)
 				return
 			}
 		}
@@ -2082,7 +2113,12 @@ func (z *zstdReadCloser) Close() error {
 }
 
 // handleRangeRequest handles range read requests.
-func (h *Handlers) handleRangeRequest(w http.ResponseWriter, r *http.Request, bucket, key string, decryptor *crypto.Decryptor, armorMeta *backend.ARMORMetadata, plaintextSize int64, lastModified time.Time, isMultipart bool) {
+// handleRangeRequest handles v1/v2 range requests and dispatches v3
+// single-PUT ranges to handleV3RangeRequest. header is the request-local
+// envelope header GetObject already read (nil for multipart objects);
+// storedGen is the verified stored-object generation for cache keying
+// (armor-c3199f1c).
+func (h *Handlers) handleRangeRequest(w http.ResponseWriter, r *http.Request, bucket, key string, decryptor *crypto.Decryptor, armorMeta *backend.ARMORMetadata, plaintextSize int64, lastModified time.Time, isMultipart bool, header *crypto.EnvelopeHeader, storedGen v3TableKeyParts) {
 	ctx := r.Context()
 
 	// Apply prefix for backend operations
@@ -2174,24 +2210,12 @@ func (h *Handlers) handleRangeRequest(w http.ResponseWriter, r *http.Request, bu
 			return
 		}
 	} else {
-		// Single-PUT object: check version for HMAC/block table format
-		// Read header to determine version
-		headerBuf := make([]byte, crypto.HeaderSize)
-		headerReader, err := h.backend.GetRange(ctx, bucket, prefixedKey, 0, crypto.HeaderSize)
-		if err != nil {
-			h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to read header: %v", err), 500)
-			return
-		}
-		if _, err := io.ReadFull(headerReader, headerBuf); err != nil {
-			headerReader.Close()
-			h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to read header bytes: %v", err), 500)
-			return
-		}
-		headerReader.Close()
-
-		header, err := crypto.DecodeHeader(headerBuf)
-		if err != nil {
-			h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to decode header: %v", err), 500)
+		// Single-PUT object: check version for HMAC/block table format.
+		// The envelope header was already read and decoded once in GetObject
+		// (request-local reuse, armor-c3199f1c); no second header read here.
+		if header == nil {
+			// Defensive: the single-PUT dispatch always provides the header.
+			h.writeError(w, r, "InternalError", "missing envelope header for single-PUT range", 500)
 			return
 		}
 
@@ -2201,7 +2225,7 @@ func (h *Handlers) handleRangeRequest(w http.ResponseWriter, r *http.Request, bu
 				h.writeError(w, r, "InternalError", "v3 object missing ciphertext size for range request", 500)
 				return
 			}
-			h.handleV3RangeRequest(w, r, bucket, key, prefixedKey, decryptor, armorMeta, plaintextSize, armorMeta.CiphertextSize, lastModified, start, end)
+			h.handleV3RangeRequest(w, r, bucket, key, prefixedKey, decryptor, armorMeta, plaintextSize, armorMeta.CiphertextSize, lastModified, start, end, storedGen)
 			return
 		}
 
@@ -3952,29 +3976,59 @@ func (h *Handlers) readManifest(ctx context.Context, bucket, key string) (*backe
 // (This assumes ARMOR and the backend clock stay roughly aligned; the ADR-016
 // overwrite window is seconds wide, so sub-second skew does not flip the
 // comparison.)
-func (h *Handlers) verifyCiphertextFreshness(ctx context.Context, bucket, ciphertextRef string, completedAt string) error {
+// ciphertextFreshnessError marks a failed ADR-016 freshness verdict so the
+// combined head-and-verify path can keep the freshness and head-failure error
+// classes distinct.
+type ciphertextFreshnessError struct{ err error }
+
+func (e *ciphertextFreshnessError) Error() string { return e.err.Error() }
+func (e *ciphertextFreshnessError) Unwrap() error { return e.err }
+
+// headCiphertextForFreshness performs the one authoritative ciphertext HEAD a
+// read needs: it verifies ADR-016 ciphertext freshness when completedAt is
+// parseable and returns the stored ObjectInfo for the caller's size and
+// generation needs (armor-c3199f1c). Freshness is evaluated on every call —
+// nothing about the verdict is cached.
+func (h *Handlers) headCiphertextForFreshness(ctx context.Context, bucket, ciphertextRef, completedAt string) (*backend.ObjectInfo, error) {
 	// Parse completion timestamp
 	createdAt, err := time.Parse(time.RFC3339, completedAt)
 	if err != nil {
-		// If we can't parse the timestamp, skip verification
-		return nil
+		// If we can't parse the timestamp, skip verification; the HEAD is
+		// still required for the stored size below.
+		createdAt = time.Time{}
 	}
 
 	// Get ciphertext object info
 	info, err := h.backend.Head(ctx, bucket, ciphertextRef)
 	if err != nil {
-		return fmt.Errorf("failed to head ciphertext object: %w", err)
+		return nil, fmt.Errorf("failed to head ciphertext object: %w", err)
 	}
 
-	// Truncate to seconds since B2 timestamps have second precision
-	ciphertextTime := info.LastModified.UTC().Truncate(time.Second)
-	manifestTime := createdAt.Truncate(time.Second)
+	if !createdAt.IsZero() {
+		// Truncate to seconds since B2 timestamps have second precision
+		ciphertextTime := info.LastModified.UTC().Truncate(time.Second)
+		manifestTime := createdAt.Truncate(time.Second)
 
-	if ciphertextTime.After(manifestTime) {
-		return fmt.Errorf("ciphertext object was overwritten after manifest completion (ciphertext %v, manifest completed %v)", ciphertextTime, manifestTime)
+		if ciphertextTime.After(manifestTime) {
+			return info, &ciphertextFreshnessError{fmt.Errorf("ciphertext object was overwritten after manifest completion (ciphertext %v, manifest completed %v)", ciphertextTime, manifestTime)}
+		}
 	}
 
-	return nil
+	return info, nil
+}
+
+// verifyCiphertextFreshness checks that the ciphertext object referenced by the
+// manifest is still the one the manifest was written for (not overwritten by a
+// newer same-key upload). Callers that also need the stored size or the
+// generation of the ciphertext object should call headCiphertextForFreshness
+// directly and keep the single HEAD.
+func (h *Handlers) verifyCiphertextFreshness(ctx context.Context, bucket, ciphertextRef string, completedAt string) error {
+	_, err := h.headCiphertextForFreshness(ctx, bucket, ciphertextRef, completedAt)
+	var freshErr *ciphertextFreshnessError
+	if errors.As(err, &freshErr) {
+		return freshErr.err
+	}
+	return err
 }
 
 // CompleteMultipartUpload handles S3 CompleteMultipartUpload.
@@ -4463,6 +4517,13 @@ func (h *Handlers) CompleteMultipartUpload(w http.ResponseWriter, r *http.Reques
 	}
 	if h.manifest != nil {
 		h.manifest.RecordPut(bucket, key, totalPlaintextSize, plaintextSHAHex, state.IV, state.WrappedDEK, state.MEKFingerprint, state.BlockSize, state.ContentType, etag, chainEntry, totalCiphertextSize)
+	}
+
+	// Completion installed a new stored generation at this key; retire any
+	// cached entry for the previous one (see the PUT paths above). Nil-safe
+	// for the same reason as the PUT paths.
+	if h.cache != nil {
+		h.cache.Delete(bucket, key)
 	}
 
 	// Record provenance (fallback when manifest is disabled)
@@ -5324,41 +5385,16 @@ func isPlaceholderHMAC(hmac []byte) bool {
 	return true
 }
 
-// readV3BlockTable fetches the trailer block table for a v3 object.
-// The trailer block table is located at ciphertext_length - 36*blockCount.
-// Returns a decoded BlockTable.
-func (h *Handlers) readV3BlockTable(ctx context.Context, bucket, key string, ciphertextSize int64, blockCount int) (*crypto.BlockTable, error) {
-	// Calculate trailer offset and size
-	// Trailer is at the end: [header][blocks][trailer table]
-	// Trailer size = blockCount * BlockTableEntrySize (36 bytes per entry)
-	trailerSize := int64(blockCount) * crypto.BlockTableEntrySize
-	trailerOffset := ciphertextSize - trailerSize
-
-	if trailerOffset < 0 {
-		return nil, fmt.Errorf("invalid v3 trailer offset: ciphertextSize %d, trailerSize %d", ciphertextSize, trailerSize)
+// v3BlockTableTrailerWindow returns the trailer offset and size for a v3
+// object's block table: the table is the last 36*blockCount bytes of the
+// stored ciphertext.
+func v3BlockTableTrailerWindow(ciphertextSize int64, blockCount int) (offset, size int64, err error) {
+	size = int64(blockCount) * crypto.BlockTableEntrySize
+	offset = ciphertextSize - size
+	if offset < 0 {
+		return 0, 0, fmt.Errorf("invalid v3 trailer offset: ciphertextSize %d, trailerSize %d", ciphertextSize, size)
 	}
-
-	// Fetch the trailer block table
-	trailerBody, err := h.backend.GetRange(ctx, bucket, key, trailerOffset, trailerSize)
-	if err != nil {
-		return nil, fmt.Errorf("failed to fetch v3 trailer block table: %w", err)
-	}
-	defer trailerBody.Close()
-
-	trailerData, err := io.ReadAll(trailerBody)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read v3 trailer block table: %w", err)
-	}
-
-	// Decode the block table
-	// We need the block size for validation - use default for now (will be validated against entry data)
-	blockSize := 65536 // Default block size, validated per-entry
-	table, err := crypto.DecodeBlockTable(trailerData, blockSize, uint32(blockCount))
-	if err != nil {
-		return nil, fmt.Errorf("failed to decode v3 block table: %w", err)
-	}
-
-	return table, nil
+	return offset, size, nil
 }
 
 // encodeV3BlockTableForTransport encodes a BlockTable for transport to the decryption goroutine.

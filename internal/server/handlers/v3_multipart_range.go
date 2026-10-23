@@ -17,6 +17,14 @@ import (
 // and returns the requested plaintext range.
 func (h *Handlers) handleV3MultipartRangeRequest(w http.ResponseWriter, r *http.Request, bucket, key, prefixedKey string, decryptor *crypto.Decryptor, armorMeta *backend.ARMORMetadata, plaintextSize int64, lastModified time.Time, rangeStart, rangeEnd int64) {
 	ctx := r.Context()
+
+	// Parquet footer fast path (armor-c3199f1c): serve tail ranges from the
+	// decrypted-footer cache, the same way the generic range path does. A hit
+	// needs no sidecar and no backend round trip at all.
+	if h.serveFooterCacheHit(w, r, bucket, key, armorMeta, plaintextSize, rangeStart, rangeEnd) {
+		return
+	}
+
 	blockSize := armorMeta.BlockSize
 
 	// Load the v3 sidecar (with caching)
@@ -116,6 +124,10 @@ func (h *Handlers) handleV3MultipartRangeRequest(w http.ResponseWriter, r *http.
 		resultEnd = int64(len(plaintextBuilder))
 	}
 	result := plaintextBuilder[resultStart:resultEnd]
+
+	// Cache the Parquet footer when this read covered the tail, the same way
+	// the generic range path does (armor-c3199f1c).
+	h.storeFooterCacheIfTail(bucket, key, armorMeta, result, plaintextSize, rangeEnd)
 
 	// Set response headers
 	w.Header().Set("Content-Length", strconv.FormatInt(int64(len(result)), 10))

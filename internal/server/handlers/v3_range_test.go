@@ -141,7 +141,8 @@ func runV3SinglePUTRange(t *testing.T, obj *v3SinglePUTObject, beb backend.Backe
 
 	r := httptest.NewRequest("GET", "/bucket/key", nil)
 	w := httptest.NewRecorder()
-	h.handleV3RangeRequest(w, r, "bucket", "key", "prefixed/key", decryptor, armorMeta, int64(len(obj.plaintext)), int64(len(obj.stored)), time.Now(), start, end)
+	h.handleV3RangeRequest(w, r, "bucket", "key", "prefixed/key", decryptor, armorMeta, int64(len(obj.plaintext)), int64(len(obj.stored)), time.Now(), start, end,
+		v3TableKeyParts{ETag: armorMeta.ETag, StoredSize: int64(len(obj.stored))})
 	return w
 }
 
