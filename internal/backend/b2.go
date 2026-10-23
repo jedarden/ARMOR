@@ -458,6 +458,13 @@ func (b *B2Backend) fetchRangeOnce(ctx context.Context, bucket, key string, offs
 			return nil, nil, fmt.Errorf("direct S3 range request failed: %w", err)
 		}
 		defer resp.Body.Close()
+		// A 206 carries Content-Range naming the span actually served; a
+		// present header must match the request exactly (armor-73564f97). A
+		// range-ignoring 200 is caught by the length check below: with
+		// offset > 0 the whole-object body is strictly longer than the span.
+		if err := checkContentRange(aws.ToString(resp.ContentRange), offset, length); err != nil {
+			return nil, nil, fmt.Errorf("direct S3 range response: %w", err)
+		}
 		data, err := readRangeBody(resp.Body, length)
 		if err != nil {
 			return nil, nil, fmt.Errorf("direct S3 range response: %w", err)
@@ -515,7 +522,7 @@ func (b *B2Backend) fetchRangeOnce(ctx context.Context, bucket, key string, offs
 		served := resp.Header.Get("X-Bz-File-Id")
 		if (served != "" && served != pinned) || resp.StatusCode == http.StatusRequestedRangeNotSatisfiable {
 			cfStaleFallbacks.Add(1)
-			return b.fetchRangeVersion(ctx, bucket, key, pinned, rangeHeader, length)
+			return b.fetchRangeVersion(ctx, bucket, key, pinned, rangeHeader, offset, length)
 		}
 	}
 
@@ -541,7 +548,7 @@ func (b *B2Backend) fetchRangeOnce(ctx context.Context, bucket, key string, offs
 
 // fetchRangeVersion reads one range of a specific version directly from B2's S3
 // API, bypassing Cloudflare.
-func (b *B2Backend) fetchRangeVersion(ctx context.Context, bucket, key, versionID, rangeHeader string, length int64) ([]byte, map[string]string, error) {
+func (b *B2Backend) fetchRangeVersion(ctx context.Context, bucket, key, versionID, rangeHeader string, offset, length int64) ([]byte, map[string]string, error) {
 	resp, err := b.s3Client.GetObject(ctx, &s3.GetObjectInput{
 		Bucket:    aws.String(bucket),
 		Key:       aws.String(key),
@@ -552,6 +559,9 @@ func (b *B2Backend) fetchRangeVersion(ctx context.Context, bucket, key, versionI
 		return nil, nil, fmt.Errorf("direct S3 range request for version %s after stale Cloudflare copy failed: %w", versionID, err)
 	}
 	defer resp.Body.Close()
+	if err := checkContentRange(aws.ToString(resp.ContentRange), offset, length); err != nil {
+		return nil, nil, fmt.Errorf("direct S3 range response for version %s: %w", versionID, err)
+	}
 	data, err := readRangeBody(resp.Body, length)
 	if err != nil {
 		return nil, nil, fmt.Errorf("direct S3 range response for version %s: %w", versionID, err)
