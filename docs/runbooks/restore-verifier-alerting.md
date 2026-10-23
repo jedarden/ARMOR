@@ -277,10 +277,10 @@ VMALERT_BASE=https://vmalert-rs-manager-ts.ardenone.com:8444 \
 AM_BASE=https://alertmanager-rs-manager-ts.ardenone.com:8444 \
   ./scripts/alerting-smoke-test.sh
 
-# iad-kalshi
-VM_BASE=https://vmetrics-iad-kalshi.tail1b1987.ts.net \
-VMALERT_BASE=https://vmalert-iad-kalshi.tail1b1987.ts.net \
-AM_BASE=https://alertmanager-iad-kalshi.tail1b1987.ts.net \
+# iad-kalshi — shared Traefik tailnet vpn entrypoint
+VM_BASE=https://vmetrics-iad-kalshi-ts.ardenone.com:8444 \
+VMALERT_BASE=https://vmalert-iad-kalshi-ts.ardenone.com:8444 \
+AM_BASE=https://alertmanager-iad-kalshi-ts.ardenone.com:8444 \
   ./scripts/alerting-smoke-test.sh
 
 # ord-devimprint
