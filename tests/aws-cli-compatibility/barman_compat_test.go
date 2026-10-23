@@ -102,6 +102,33 @@ func pgCtlStartArgs(dataDir, logPath string, port int, socketDir string) []strin
 	}
 }
 
+// initdbArgs builds the initdb invocation for the temporary cluster.  The
+// bootstrap superuser is pinned to postgres because initdb otherwise names the
+// role after the invoking OS user (armor-compat in CI), while every later step
+// — psql, barman-cloud-backup --user — connects as postgres.
+func initdbArgs(dataDir string) []string {
+	return []string{
+		"--no-locale",
+		"--encoding=UTF8",
+		"--auth=trust",
+		"-U", "postgres",
+		"-D", dataDir,
+	}
+}
+
+func TestInitdbArgsPinPostgresSuperuser(t *testing.T) {
+	want := []string{
+		"--no-locale",
+		"--encoding=UTF8",
+		"--auth=trust",
+		"-U", "postgres",
+		"-D", "/tmp/postgres",
+	}
+	if got := initdbArgs("/tmp/postgres"); !reflect.DeepEqual(got, want) {
+		t.Fatalf("initdb args = %#v, want %#v", got, want)
+	}
+}
+
 func TestPgCtlStartArgsRedirectsServerOutput(t *testing.T) {
 	want := []string{
 		"-D", "/tmp/postgres",
@@ -126,7 +153,7 @@ func startCompatPostgres(t *testing.T, binDir string) (dataDir string, port int)
 	initdb := filepath.Join(binDir, "initdb")
 	pgCtl := filepath.Join(binDir, "pg_ctl")
 	psql := filepath.Join(binDir, "psql")
-	mustRun(t, initdb, nil, "--no-locale", "--encoding=UTF8", "--auth=trust", "-D", dataDir)
+	mustRun(t, initdb, nil, initdbArgs(dataDir)...)
 
 	// The temporary cluster is local and disposable.  Trust authentication
 	// keeps the fixture free of passwords while allowing barman's pg_basebackup
