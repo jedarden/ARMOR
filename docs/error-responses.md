@@ -770,6 +770,17 @@ Method not allowed
 }
 ```
 
+**Error Response (400 Bad Request):** malformed `writer`, `untracked`,
+`max_entries`, or `timeout` query parameter (see
+[provenance-audit-walker.md](provenance-audit-walker.md) for the bounded
+audit parameters).
+```json
+{
+  "status": "error",
+  "error": "invalid max_entries parameter \"three\": expected a positive integer"
+}
+```
+
 **Error Response (405 Method Not Allowed):**
 ```
 Method not allowed

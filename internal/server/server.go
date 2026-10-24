@@ -1524,6 +1524,14 @@ func (s *Server) canaryHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 // audit returns the audit status.
+//
+// GET /armor/audit accepts optional bounds so the walk completes on a real
+// bucket: ?writer=<id> scopes it to one chain, ?untracked=false skips the
+// full-bucket cross-reference (bounded walks skip it by default),
+// ?max_entries=<n> truncates the entry verification with status
+// "incomplete", and ?timeout=<duration> converts an over-long walk into an
+// incomplete result instead of hanging the caller. No parameters keeps the
+// historical unbounded behaviour.
 func (s *Server) audit(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -1532,9 +1540,45 @@ func (s *Server) audit(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 
+	opts := provenance.AuditOptions{Writer: r.URL.Query().Get("writer")}
+	badParam := func(name, value, want string) {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"status": "error",
+			"error":  fmt.Sprintf("invalid %s parameter %q: expected %s", name, value, want),
+		})
+	}
+	if raw := r.URL.Query().Get("untracked"); raw != "" {
+		val, parseErr := strconv.ParseBool(raw)
+		if parseErr != nil {
+			badParam("untracked", raw, "true or false")
+			return
+		}
+		opts.IncludeUntracked = &val
+	}
+	if raw := r.URL.Query().Get("max_entries"); raw != "" {
+		val, parseErr := strconv.ParseInt(raw, 10, 64)
+		if parseErr != nil || val <= 0 {
+			badParam("max_entries", raw, "a positive integer")
+			return
+		}
+		opts.MaxEntries = val
+	}
+	ctx := r.Context()
+	if raw := r.URL.Query().Get("timeout"); raw != "" {
+		val, parseErr := time.ParseDuration(raw)
+		if parseErr != nil || val <= 0 {
+			badParam("timeout", raw, "a positive duration such as 25s")
+			return
+		}
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, val)
+		defer cancel()
+	}
+
 	// Create auditor and perform audit
 	auditor := provenance.NewAuditorWithPrefix(s.backend, s.config.Bucket, s.config.Prefix)
-	result, err := auditor.Audit(r.Context())
+	result, err := auditor.AuditWithOptions(ctx, opts)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		json.NewEncoder(w).Encode(map[string]interface{}{

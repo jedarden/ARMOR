@@ -200,10 +200,10 @@ type Manager struct {
 // NewManager creates a new provenance manager.
 func NewManager(be backend.Backend, bucket, writerID string) *Manager {
 	return &Manager{
-		backend:      be,
-		bucket:       bucket,
-		writerID:     writerID,
-		appendQueue:  make(chan *pendingAppend, appendQueueDepth),
+		backend:     be,
+		bucket:      bucket,
+		writerID:    writerID,
+		appendQueue: make(chan *pendingAppend, appendQueueDepth),
 		skipPrefixes: []string{
 			".armor/", // Internal ARMOR objects
 		},
@@ -1061,9 +1061,78 @@ func NewAuditorWithPrefix(be backend.Backend, bucket, prefix string) *Auditor {
 	}
 }
 
+// AuditOptions bounds an audit walk. The zero value is the historical
+// unbounded behaviour: every writer's chain plus the full-bucket
+// untracked-object cross-reference.
+type AuditOptions struct {
+	// Writer, when non-empty, restricts the audit to that writer's chain
+	// head and entries. Other writers are neither walked nor reported, and
+	// a missing head for the named writer is reported as an incomplete
+	// audit rather than an empty valid one.
+	Writer string
+
+	// IncludeUntracked controls the full-bucket cross-reference that lists
+	// every object to find ARMOR-encrypted objects absent from the chain.
+	// Nil means the default: included for an unbounded full audit, skipped
+	// for any bounded form (Writer set or MaxEntries set), because a
+	// bounded walk cannot vouch for the whole bucket.
+	IncludeUntracked *bool
+
+	// MaxEntries bounds the total chain entries verified across the walk.
+	// When the budget is exhausted the walk stops mid-chain, the affected
+	// writer is reported with the stopping error, and the overall status is
+	// "incomplete" rather than "valid". Zero means unbounded. Setting it
+	// also skips the untracked cross-reference by default (see
+	// IncludeUntracked).
+	MaxEntries int64
+}
+
+// entryBudget bounds how many chain entries one audit walk may verify.
+// The zero value (limit <= 0) is unbounded.
+type entryBudget struct {
+	limit     int64
+	remaining int64
+}
+
+func newEntryBudget(limit int64) *entryBudget {
+	if limit < 0 {
+		limit = 0
+	}
+	return &entryBudget{limit: limit, remaining: limit}
+}
+
+// take reports whether the walk may verify one more chain entry, consuming
+// from the remaining budget when a limit is set.
+func (b *entryBudget) take() bool {
+	if b == nil || b.limit <= 0 {
+		return true
+	}
+	if b.remaining <= 0 {
+		return false
+	}
+	b.remaining--
+	return true
+}
+
+// budgetWindow returns the delta-reading window implied by the remaining
+// budget: -1 when the walk is unbounded, otherwise the number of entries
+// still allowed (0 when the budget is already spent).
+func budgetWindow(b *entryBudget) int64 {
+	if b == nil || b.limit <= 0 {
+		return -1
+	}
+	return b.remaining
+}
+
 // Audit performs a full provenance chain audit.
 // It walks all writer chains, verifies integrity, and checks for untracked objects.
 func (a *Auditor) Audit(ctx context.Context) (*AuditResult, error) {
+	return a.AuditWithOptions(ctx, AuditOptions{})
+}
+
+// AuditWithOptions performs a bounded audit; see AuditOptions. Bounded walks
+// stop early and report status "incomplete" rather than running unbounded.
+func (a *Auditor) AuditWithOptions(ctx context.Context, opts AuditOptions) (*AuditResult, error) {
 	result := &AuditResult{
 		Status:  "valid",
 		Writers: make([]WriterAudit, 0),
@@ -1101,12 +1170,18 @@ func (a *Auditor) Audit(ctx context.Context) (*AuditResult, error) {
 
 	trackedObjects := make(map[string]bool)
 	headWriters := make(map[string]bool)
+	budget := newEntryBudget(opts.MaxEntries)
 
 	for _, headKey := range headKeys {
 		writerID, parseErr := parseChainHeadKey(headKey)
 		if parseErr != nil {
 			markInvalid(result)
 			result.Errors = append(result.Errors, parseErr.Error())
+			continue
+		}
+		if opts.Writer != "" && writerID != opts.Writer {
+			// Writer-scoped audits only walk the requested chain; other
+			// writers stay out of the report entirely.
 			continue
 		}
 		headWriters[writerID] = true
@@ -1150,7 +1225,7 @@ func (a *Auditor) Audit(ctx context.Context) (*AuditResult, error) {
 		}
 
 		writerTracked := make(map[string]bool)
-		writerAudit, gap, incomplete := a.auditWriterChain(ctx, &head, writerID, entriesByWriter[writerID], writerTracked)
+		writerAudit, gap, incomplete := a.auditWriterChain(ctx, &head, writerID, entriesByWriter[writerID], writerTracked, budget)
 		result.Writers = append(result.Writers, writerAudit)
 		result.TotalEntries += int64(writerAudit.EntriesVerified)
 		if gap != nil {
@@ -1174,9 +1249,26 @@ func (a *Auditor) Audit(ctx context.Context) (*AuditResult, error) {
 	// that the cryptographic contents themselves are invalid.
 	orphanWriters := make([]string, 0)
 	for writerID := range entriesByWriter {
-		if !headWriters[writerID] {
-			orphanWriters = append(orphanWriters, writerID)
+		if headWriters[writerID] {
+			continue
 		}
+		if opts.Writer != "" && writerID != opts.Writer {
+			continue
+		}
+		orphanWriters = append(orphanWriters, writerID)
+	}
+
+	// A writer-scoped audit that found no head for the requested writer has
+	// audited nothing; say so instead of returning an empty "valid" result.
+	if opts.Writer != "" && !headWriters[opts.Writer] && len(orphanWriters) == 0 {
+		errText := fmt.Sprintf("no chain head found for writer %q", opts.Writer)
+		result.Writers = append(result.Writers, WriterAudit{
+			WriterID: opts.Writer,
+			Valid:    false,
+			Error:    errText,
+		})
+		result.Errors = append(result.Errors, errText)
+		markIncomplete(result)
 	}
 	sort.Strings(orphanWriters)
 	for _, writerID := range orphanWriters {
@@ -1193,10 +1285,19 @@ func (a *Auditor) Audit(ctx context.Context) (*AuditResult, error) {
 	// Cross-reference the current object namespace. Backend listings do not
 	// necessarily include metadata (B2's intentionally does not), so the helper
 	// performs authoritative HEAD requests before deciding an object is ARMOR-
-	// encrypted.
-	if err := a.findUntrackedObjects(ctx, trackedObjects, result); err != nil {
-		result.Errors = append(result.Errors, fmt.Sprintf("failed to find untracked objects: %v", err))
-		markIncomplete(result)
+	// encrypted. Bounded walks skip it unless the caller asks for it
+	// explicitly: a single writer's chain or an entry-budget truncation cannot
+	// vouch for the whole bucket, and the listing is the unbounded part of the
+	// walk.
+	includeUntracked := opts.IncludeUntracked != nil && *opts.IncludeUntracked
+	if opts.IncludeUntracked == nil {
+		includeUntracked = opts.Writer == "" && opts.MaxEntries <= 0
+	}
+	if includeUntracked {
+		if err := a.findUntrackedObjects(ctx, trackedObjects, result); err != nil {
+			result.Errors = append(result.Errors, fmt.Sprintf("failed to find untracked objects: %v", err))
+			markIncomplete(result)
+		}
 	}
 	if len(result.UntrackedObjects) > 0 {
 		markInvalid(result)
@@ -1260,12 +1361,15 @@ func (a *Auditor) listInternalKeys(ctx context.Context, prefix string) ([]string
 // 1. Legacy chain objects (`.armor/chain/<writer>/*.json`)
 // 2. Chain segments (`.armor/chain-segments/<writer>/<from>-<to>.jsonl`)
 // 3. Delta-embedded entries (`.armor/manifest/<writer>/delta-*.jsonl`)
+// budget bounds the entries verified; exhausting it mid-chain reports an
+// incomplete walk (third return value) instead of silently stopping.
 func (a *Auditor) auditWriterChain(
 	ctx context.Context,
 	head *ChainHead,
 	expectedWriterID string,
 	entryKeys map[int64]string,
 	trackedObjects map[string]bool,
+	budget *entryBudget,
 ) (WriterAudit, *GapInfo, bool) {
 	audit := WriterAudit{
 		WriterID:     expectedWriterID,
@@ -1317,8 +1421,9 @@ func (a *Auditor) auditWriterChain(
 		}
 		_ = deltaSeq // retained for the manifest-head format validation above
 
-		// Walk delta-embedded entries
-		deltaEntries, deltaTracked, err := a.walkDeltaEntries(ctx, expectedWriterID, 1) // Start from delta 1
+		// Walk delta-embedded entries. A bounded walk reads the delta tree
+		// newest-first and stops once it covers the entry window it can verify.
+		deltaEntries, deltaTracked, err := a.walkDeltaEntriesLimited(ctx, expectedWriterID, 1, head.Sequence, budgetWindow(budget))
 		if err != nil {
 			audit.Valid = false
 			audit.Error = fmt.Sprintf("failed to walk delta entries: %v", err)
@@ -1331,6 +1436,11 @@ func (a *Auditor) auditWriterChain(
 			if !ok {
 				// This entry might be in legacy chain or segments
 				break
+			}
+			if !budget.take() {
+				audit.Valid = false
+				audit.Error = fmt.Sprintf("entry budget of %d exhausted at sequence %d; chain not fully verified", budget.limit, seq)
+				return audit, nil, true
 			}
 
 			// Verify the chain link
@@ -1365,6 +1475,11 @@ func (a *Auditor) auditWriterChain(
 
 	// Walk legacy chain entries (for both legacy and manifest format)
 	for seq := expectedSeq; seq > 0; seq-- {
+		if !budget.take() {
+			audit.Valid = false
+			audit.Error = fmt.Sprintf("entry budget of %d exhausted at sequence %d; chain not fully verified", budget.limit, seq)
+			return audit, nil, true
+		}
 		key, wasListed := entryKeys[seq]
 		if !wasListed {
 			// The head may have advanced after the entry listing completed. Fetch
@@ -1658,11 +1773,20 @@ func (a *Auditor) walkChainSegments(ctx context.Context, writerID string, fromSe
 	return entries, trackedObjects, nil
 }
 
-// walkDeltaEntries walks manifest delta files for a writer and extracts
+// walkDeltaEntries walks every manifest delta file for a writer and extracts
 // chain entries embedded in "put" operations.
 // Delta files are at [<prefix>.].armor/manifest/<writer>/delta-{seq:010d}.jsonl —
 // below the tenant prefix when one is in force, at the bucket root otherwise.
 func (a *Auditor) walkDeltaEntries(ctx context.Context, writerID string, fromDeltaSeq uint64) (map[int64]*ChainEntryData, map[string]bool, error) {
+	return a.walkDeltaEntriesLimited(ctx, writerID, fromDeltaSeq, 0, -1)
+}
+
+// walkDeltaEntriesLimited is the bounded form of walkDeltaEntries. When
+// maxEntries >= 0 it reads delta files newest-first and stops once the
+// collected entries cover the verification window
+// [headSequence-maxEntries+1, headSequence] — the only part of the delta tree
+// a budgeted walk can verify. maxEntries < 0 reads every file, oldest first.
+func (a *Auditor) walkDeltaEntriesLimited(ctx context.Context, writerID string, fromDeltaSeq uint64, headSequence, maxEntries int64) (map[int64]*ChainEntryData, map[string]bool, error) {
 	// Unlike the chain records this package owns — which are deliberately
 	// bucket-level, see NewAuditorWithPrefix — manifest deltas are
 	// tenant-scoped internal bookkeeping, so they sit at <prefix>.armor/
@@ -1705,6 +1829,25 @@ func (a *Auditor) walkDeltaEntries(ctx context.Context, writerID string, fromDel
 	}
 	sort.Strings(deltaFiles)
 
+	// A budgeted walk only needs the entries of the verification window, so
+	// read newest-first and stop once a file reaches below the window floor.
+	// floor is the lowest sequence the walk can still verify; a floor above
+	// headSequence means the budget is already spent and nothing is read.
+	bounded := maxEntries >= 0
+	floor := int64(0)
+	if bounded {
+		floor = headSequence - maxEntries + 1
+		if floor < 1 {
+			floor = 1
+		}
+		if floor > headSequence {
+			return entries, trackedObjects, nil
+		}
+		for i, j := 0, len(deltaFiles)-1; i < j; i, j = i+1, j-1 {
+			deltaFiles[i], deltaFiles[j] = deltaFiles[j], deltaFiles[i]
+		}
+	}
+
 	// Read delta files and extract chain entries
 	for _, deltaKey := range deltaFiles {
 		body, _, err := a.backend.GetDirect(ctx, a.bucket, deltaKey)
@@ -1714,6 +1857,10 @@ func (a *Auditor) walkDeltaEntries(ctx context.Context, writerID string, fromDel
 		if body == nil {
 			return nil, nil, fmt.Errorf("failed to load delta file %s: backend returned nil body", deltaKey)
 		}
+
+		// Track the lowest sequence this file contributes so the bounded
+		// walk knows when it has read past the window floor.
+		fileMinSeq := int64(-1)
 
 		// Parse JSONL operations
 		scanner := newJSONLScanner(body)
@@ -1730,6 +1877,9 @@ func (a *Auditor) walkDeltaEntries(ctx context.Context, writerID string, fromDel
 			// Extract chain entries from put operations
 			if op.Operation == "put" && op.Chain != nil {
 				entries[op.Chain.Sequence] = op.Chain
+				if fileMinSeq < 0 || op.Chain.Sequence < fileMinSeq {
+					fileMinSeq = op.Chain.Sequence
+				}
 				// Track the object key (remove bucket prefix if present)
 				objectKey := op.Key
 				if idx := strings.Index(objectKey, "/"); idx >= 0 {
@@ -1743,6 +1893,10 @@ func (a *Auditor) walkDeltaEntries(ctx context.Context, writerID string, fromDel
 			return nil, nil, fmt.Errorf("error reading delta %s: %w", deltaKey, err)
 		}
 		body.Close()
+
+		if bounded && fileMinSeq >= 0 && fileMinSeq <= floor {
+			break
+		}
 	}
 
 	return entries, trackedObjects, nil

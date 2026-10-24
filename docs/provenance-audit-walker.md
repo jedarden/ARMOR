@@ -76,6 +76,26 @@ The audit walker verifies:
 
 Requires authentication via `ARMOR_ADMIN_TOKEN` bearer token.
 
+Without parameters the audit is unbounded: it walks every writer's chain and
+lists every object in the bucket to cross-reference tracked objects. On a
+bucket with months of writes that walk far outlasts any HTTP client timeout,
+so the endpoint accepts optional bounds. Bounded walks report `status:
+"incomplete"` with the progress verified so far when a bound stops them,
+rather than hanging until the client gives up.
+
+| Parameter | Meaning |
+|---|---|
+| `writer=<id>` | Audit only that writer's chain head and entries. Other writers are neither walked nor reported. A writer with no chain head is reported as an incomplete audit, not an empty valid one. |
+| `untracked=false` | Skip the full-bucket cross-reference (the `total_objects` / `untracked_objects` fields stay empty). Bounded walks (`writer` or `max_entries` set) skip it by default, because a bounded walk cannot vouch for the whole bucket; pass `untracked=true` to force it on. |
+| `max_entries=<n>` | Bound the total chain entries verified across the walk. When the budget is exhausted the walk stops mid-chain, the affected writer is reported with the stopping error, and the overall status is `incomplete`. The delta walk reads manifest files newest-first and stops once the covered sequences suffice for the window, so the bound also caps the number of delta reads. |
+| `timeout=<duration>` | Server-side deadline (for example `timeout=25s`). When it fires, backend calls fail, and the walk returns the partial result with status `incomplete` instead of holding the connection open. |
+
+**Bounded request example:**
+
+```
+GET /armor/audit?writer=armor-integration-ci&untracked=false&timeout=25s
+```
+
 **Response Example:**
 
 ```json

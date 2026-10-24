@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"testing"
 	"time"
@@ -63,9 +64,24 @@ func TestProvenanceAudit(t *testing.T) {
 		}
 	})
 
-	// Test 2: Authenticated request should return audit results
+	// Test 2: Authenticated request should return audit results.
+	//
+	// The audit is bounded to this suite's own writer (ARMOR_WRITER_ID,
+	// armor-integration-ci in CI) with the untracked cross-reference off:
+	// the iad-ci bucket carries months of writes from several writers, and
+	// an unbounded audit walks every chain and lists every object, which
+	// never finishes inside the client timeout. The server-side timeout
+	// converts a still-slow single-writer walk into an incomplete result
+	// instead of a client timeout.
 	t.Run("authenticated", func(t *testing.T) {
-		req, err := http.NewRequest("GET", adminEndpoint+"/armor/audit", nil)
+		writerID := os.Getenv("ARMOR_WRITER_ID")
+		if writerID == "" {
+			writerID = "armor-integration-ci"
+		}
+		auditURL := adminEndpoint + "/armor/audit?writer=" + url.QueryEscape(writerID) +
+			"&untracked=false&timeout=25s"
+
+		req, err := http.NewRequest("GET", auditURL, nil)
 		if err != nil {
 			t.Fatalf("Failed to create request: %v", err)
 		}
@@ -84,11 +100,11 @@ func TestProvenanceAudit(t *testing.T) {
 
 		// Parse response
 		var result struct {
-			Status           string `json:"status"`
-			TotalEntries     int64  `json:"total_entries"`
-			TotalObjects     int64  `json:"total_objects"`
+			Status           string   `json:"status"`
+			TotalEntries     int64    `json:"total_entries"`
+			TotalObjects     int64    `json:"total_objects"`
 			UntrackedObjects []string `json:"untracked_objects,omitempty"`
-			Writers         []struct {
+			Writers          []struct {
 				WriterID        string `json:"writer_id"`
 				HeadSequence    int64  `json:"head_sequence"`
 				EntriesVerified int    `json:"entries_verified"`
@@ -110,6 +126,15 @@ func TestProvenanceAudit(t *testing.T) {
 		// Verify response structure
 		if result.Status != "valid" && result.Status != "invalid" && result.Status != "incomplete" {
 			t.Errorf("Unexpected status: %s", result.Status)
+		}
+
+		// The bounded audit must report exactly the requested writer, with
+		// the untracked cross-reference skipped (total_objects stays 0).
+		if len(result.Writers) != 1 || result.Writers[0].WriterID != writerID {
+			t.Errorf("Expected exactly writer %s in audit result, got %+v", writerID, result.Writers)
+		}
+		if result.TotalObjects != 0 {
+			t.Errorf("Expected total_objects 0 with untracked=false, got %d", result.TotalObjects)
 		}
 
 		t.Logf("Audit status: %s", result.Status)
