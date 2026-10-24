@@ -141,6 +141,35 @@ func TestPgCtlStartArgsRedirectsServerOutput(t *testing.T) {
 	}
 }
 
+// TestBarmanBackupArgsEnableInfoLogging pins -v on the barman-cloud-backup
+// invocation.  Barman 3.19's cloud scripts log at WARNING by default and emit
+// the backup id only at INFO, so dropping the flag makes a successful backup
+// print nothing — the failure seen on armor-build-l8nvg (0.1.1998), where the
+// backup completed and backupIDFromOutput fatalled on empty output.
+func TestBarmanBackupArgsEnableInfoLogging(t *testing.T) {
+	cfg := barmanConfig{
+		Endpoint:    "http://armor:9000",
+		ChunkSize:   "5MB",
+		Destination: "s3://demo-bucket/barman-compat",
+		Server:      "armor-compat",
+	}
+	want := []string{
+		"-v",
+		"--cloud-provider", "aws-s3",
+		"--endpoint-url", "http://armor:9000",
+		"--jobs", "1",
+		"--min-chunk-size", "5MB",
+		"--immediate-checkpoint",
+		"--host", "127.0.0.1",
+		"--port", "5432",
+		"--user", "postgres",
+		"s3://demo-bucket/barman-compat", "armor-compat",
+	}
+	if got := barmanBackupArgs(cfg, 5432); !reflect.DeepEqual(got, want) {
+		t.Fatalf("barman-cloud-backup args = %#v, want %#v", got, want)
+	}
+}
+
 func startCompatPostgres(t *testing.T, binDir string) (dataDir string, port int) {
 	t.Helper()
 	dataDir = filepath.Join(t.TempDir(), "postgres")
@@ -199,11 +228,32 @@ func barmanEnv(t *testing.T, cfg barmanConfig) []string {
 	})
 }
 
+// barmanBackupArgs builds the barman-cloud-backup invocation for the
+// temporary cluster.  The leading -v is load-bearing: barman's cloud scripts
+// log at WARNING by default (barman/cloud.py configure_logging), and the
+// backup id is only ever emitted at INFO — "Starting backup '<id>'" — so a
+// successful default invocation is silent and backupIDFromOutput would have
+// nothing to parse.
+func barmanBackupArgs(cfg barmanConfig, port int) []string {
+	return []string{
+		"-v",
+		"--cloud-provider", "aws-s3",
+		"--endpoint-url", cfg.Endpoint,
+		"--jobs", "1",
+		"--min-chunk-size", cfg.ChunkSize,
+		"--immediate-checkpoint",
+		"--host", "127.0.0.1",
+		"--port", strconv.Itoa(port),
+		"--user", "postgres",
+		cfg.Destination, cfg.Server,
+	}
+}
+
 func backupIDFromOutput(t *testing.T, output string) string {
 	t.Helper()
 	match := regexp.MustCompile(`\b[0-9]{8}T[0-9]{6}\b`).FindString(output)
 	if match == "" {
-		t.Fatalf("barman-cloud-backup did not report a backup id:\n%s", output)
+		t.Fatalf("barman-cloud-backup reported no backup id (the invocation must pass -v; barman logs the id at INFO only):\n%s", output)
 	}
 	return match
 }
@@ -227,16 +277,7 @@ func TestBarmanCloud_BackupRestoreNonUniformParts(t *testing.T) {
 	env := barmanEnv(t, cfg)
 
 	want := postgresDigest(t, binDir, port)
-	backupOutput := mustRun(t, "barman-cloud-backup", env,
-		"--cloud-provider", "aws-s3",
-		"--endpoint-url", cfg.Endpoint,
-		"--jobs", "1",
-		"--min-chunk-size", cfg.ChunkSize,
-		"--immediate-checkpoint",
-		"--host", "127.0.0.1",
-		"--port", strconv.Itoa(port),
-		"--user", "postgres",
-		cfg.Destination, cfg.Server)
+	backupOutput := mustRun(t, "barman-cloud-backup", env, barmanBackupArgs(cfg, port)...)
 	backupID := backupIDFromOutput(t, backupOutput)
 
 	// Confirm that this was a multipart-sized base backup, rather than a
@@ -266,7 +307,11 @@ func TestBarmanCloud_BackupRestoreNonUniformParts(t *testing.T) {
 	}
 
 	restoredDir := filepath.Join(t.TempDir(), "restored")
+	// -v only widens failure diagnostics here: restore errors already print at
+	// ERROR regardless, but a mid-flight stall otherwise leaves mustRun's
+	// captured output empty.
 	mustRun(t, "barman-cloud-restore", env,
+		"-v",
 		"--cloud-provider", "aws-s3",
 		"--endpoint-url", cfg.Endpoint,
 		cfg.Destination, cfg.Server, backupID, restoredDir)
