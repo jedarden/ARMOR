@@ -111,7 +111,7 @@
       "table_label": "Byte-range reads",
       "status": "active-regression",
       "tokens": ["range read", "range reads", "byte-range"],
-      "evidence_beads": ["armor-817d9d92", "armor-73564f97", "armor-5694713b", "armor-272299ca"],
+      "evidence_beads": ["armor-817d9d92", "armor-73564f97", "armor-5694713b", "armor-272299ca", "armor-68e3d5a9", "armor-ebd22a99"],
       "active_evidence_terms": ["active regression", "not currently supported", "currently unverified"],
       "forbidden_claims": [
         "release[- ]verified",
