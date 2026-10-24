@@ -279,6 +279,12 @@ func (h *Handlers) WithSecondaryBackend(be backend.Backend) {
 // WithMetrics wires the metrics instance into the handlers.
 func (h *Handlers) WithMetrics(m *metrics.Metrics) {
 	h.metrics = m
+	// The sidecar cache is built in New, before a metrics instance is
+	// available; wire its LRU counters here so its lookups and evictions
+	// publish alongside the server-owned caches' (armor-a4e5356d).
+	if h.multipartSidecarCache != nil {
+		h.multipartSidecarCache.WithMetrics(m)
+	}
 }
 
 // WithReplicationQueue wires the replication queue into the handlers.

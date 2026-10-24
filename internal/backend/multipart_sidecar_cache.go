@@ -6,18 +6,23 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"fmt"
-	"sync"
 	"time"
+
+	"github.com/jedarden/armor/internal/metrics"
 )
+
+// defaultSidecarCacheMaxBytes is the total-bytes backstop for the sidecar
+// cache (armor-a4e5356d), matching the v3 block-table cache's byte bound: a
+// 5GiB object at 64KiB blocks carries a sidecar in the MiB range, so an
+// entry bound alone would not bound memory.
+const defaultSidecarCacheMaxBytes = 64 << 20
 
 // MultipartSidecarCache is a cache for v3 multipart sidecar data.
 // It stores parsed sidecar information with prefix sums for efficient range mapping.
 // Cache entries are invalidated when the object's ETag changes (object overwritten).
+// Bounded by entries and total bytes via the shared lruCache.
 type MultipartSidecarCache struct {
-	mu         sync.RWMutex
-	entries    map[string]*MultipartSidecarEntry
-	maxEntries int
-	ttl        time.Duration
+	lru *lruCache[*MultipartSidecarEntry]
 }
 
 // MultipartSidecarEntry represents a cached v3 multipart sidecar.
@@ -34,111 +39,118 @@ type MultipartSidecarEntry struct {
 	// sidecar whose offsets overflow int64 is rejected at load instead of
 	// silently addressing the wrong bytes (armor-817d9d92 class).
 	CiphertextPrefixSums []int64
-	ExpiresAt            time.Time
+}
+
+// sidecarEntryBytes estimates one cached entry's memory cost: the prefix-sum
+// slices (8 bytes per element), the sidecar's own parts and base64 block
+// entries (the cache holds the only live reference between requests), and
+// per-slice overhead. An estimate, not an exact accounting — see
+// metadataEntryBytes.
+func sidecarEntryBytes(e *MultipartSidecarEntry) int64 {
+	n := int64(96 + 24*2) // entry struct + the three slice headers
+	n += int64(len(e.PartPrefixSums)+len(e.CiphertextPrefixSums)) * 8
+	for _, blocks := range e.BlockPrefixSums {
+		n += 24 + int64(len(blocks))*8
+	}
+	if e.Sidecar == nil {
+		return n
+	}
+	for _, part := range e.Sidecar.Parts {
+		n += 64
+		for _, block := range part.Blocks {
+			for _, s := range block {
+				n += int64(len(s))
+			}
+			n += 32 // slice header + two string headers
+		}
+	}
+	return n
 }
 
 // NewMultipartSidecarCache creates a new v3 multipart sidecar cache.
-func NewMultipartSidecarCache(maxEntries int, ttlSeconds int) *MultipartSidecarCache {
+// maxBytes, when given, overrides the total-bytes backstop; 0 or negative
+// selects the default.
+func NewMultipartSidecarCache(maxEntries int, ttlSeconds int, maxBytes ...int64) *MultipartSidecarCache {
 	if maxEntries <= 0 {
 		maxEntries = 1000
 	}
 	if ttlSeconds <= 0 {
 		ttlSeconds = 300
 	}
-	return &MultipartSidecarCache{
-		entries:    make(map[string]*MultipartSidecarEntry),
-		maxEntries: maxEntries,
-		ttl:        time.Duration(ttlSeconds) * time.Second,
+	budget := int64(defaultSidecarCacheMaxBytes)
+	if len(maxBytes) > 0 && maxBytes[0] > 0 {
+		budget = maxBytes[0]
 	}
+	return &MultipartSidecarCache{
+		lru: newLRUCache[*MultipartSidecarEntry](cacheNameSidecar, maxEntries, budget,
+			time.Duration(ttlSeconds)*time.Second, sidecarEntryBytes, nil),
+	}
+}
+
+// WithMetrics wires the metrics sink for the shared LRU counters.
+func (c *MultipartSidecarCache) WithMetrics(m *metrics.Metrics) *MultipartSidecarCache {
+	if c == nil {
+		return c
+	}
+	c.lru.setMetricsSink(m)
+	return c
+}
+
+// Stats snapshots the cache's cumulative hit/miss/eviction counters.
+func (c *MultipartSidecarCache) Stats() CacheStats {
+	if c == nil {
+		return CacheStats{}
+	}
+	return c.lru.stats()
 }
 
 // Get retrieves cached sidecar data for an object.
 // Returns nil if not cached, expired, or ETag doesn't match (object was overwritten).
 func (c *MultipartSidecarCache) Get(bucket, key, etag string) *MultipartSidecarEntry {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-
-	entry, ok := c.entries[cacheKey(bucket, key)]
+	entry, ok := c.lru.get(cacheKey(bucket, key), func(e *MultipartSidecarEntry) bool {
+		// ETag coherence: the object may have been overwritten since this
+		// entry was written.
+		return e.ETag == etag
+	})
 	if !ok {
 		return nil
 	}
-
-	// Check expiration
-	if time.Now().After(entry.ExpiresAt) {
-		return nil
-	}
-
-	// Check ETag match for cache invalidation on overwrite
-	if entry.ETag != etag {
-		return nil
-	}
-
 	return entry
 }
 
 // Set stores sidecar data in the cache.
 func (c *MultipartSidecarCache) Set(bucket, key, etag string, sidecar *HMACTableSidecarV3) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
 	// Build prefix sums
 	partPrefixSums, blockPrefixSums, ciphertextPrefixSums, err := buildPrefixSums(sidecar)
 	if err != nil {
 		return fmt.Errorf("failed to build prefix sums: %w", err)
 	}
 
-	// Evict if at capacity
-	if len(c.entries) >= c.maxEntries {
-		c.evictOldest()
-	}
-
-	c.entries[cacheKey(bucket, key)] = &MultipartSidecarEntry{
+	c.lru.set(cacheKey(bucket, key), &MultipartSidecarEntry{
 		Sidecar:              sidecar,
 		ETag:                 etag,
 		PartPrefixSums:       partPrefixSums,
 		BlockPrefixSums:      blockPrefixSums,
 		CiphertextPrefixSums: ciphertextPrefixSums,
-		ExpiresAt:            time.Now().Add(c.ttl),
-	}
+	})
 
 	return nil
 }
 
 // Delete removes an entry from the cache.
 func (c *MultipartSidecarCache) Delete(bucket, key string) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	delete(c.entries, cacheKey(bucket, key))
+	c.lru.remove(cacheKey(bucket, key))
 }
 
 // Clear removes all entries from the cache.
 func (c *MultipartSidecarCache) Clear() {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.entries = make(map[string]*MultipartSidecarEntry)
+	c.lru.clear()
 }
 
 // Size returns the number of entries in the cache.
 func (c *MultipartSidecarCache) Size() int {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	return len(c.entries)
-}
-
-func (c *MultipartSidecarCache) evictOldest() {
-	var oldestKey string
-	var oldestTime time.Time
-
-	for k, v := range c.entries {
-		if oldestKey == "" || v.ExpiresAt.Before(oldestTime) {
-			oldestKey = k
-			oldestTime = v.ExpiresAt
-		}
-	}
-
-	if oldestKey != "" {
-		delete(c.entries, oldestKey)
-	}
+	n, _ := c.lru.size()
+	return n
 }
 
 // buildPrefixSums builds cumulative plaintext lengths per part, cumulative

@@ -91,6 +91,13 @@ type Metrics struct {
 	// Cache metrics
 	CacheHitsTotal   *expvar.Int
 	CacheMissesTotal *expvar.Int
+	// Bounded-cache metrics (armor-a4e5356d): the four backend caches
+	// (metadata, list, footer, multipart_sidecar) count lookups and
+	// evictions here, keyed cache\x00outcome and cache respectively.
+	// CacheHitsTotal/CacheMissesTotal above remain the metadata cache's
+	// pair, mirrored by the MetadataCache for the dashboard.
+	CacheLookupsTotal   *labelledCounter
+	CacheEvictionsTotal *labelledCounter
 
 	// Encryption metrics
 	EncryptionOpsTotal *labelledCounter
@@ -270,6 +277,8 @@ func NewMetrics() *Metrics {
 	// Cache metrics
 	m.CacheHitsTotal = new(expvar.Int)
 	m.CacheMissesTotal = new(expvar.Int)
+	m.CacheLookupsTotal = newLabelledCounter()
+	m.CacheEvictionsTotal = newLabelledCounter()
 
 	// Encryption metrics
 	m.EncryptionOpsTotal = newLabelledCounter()
@@ -574,6 +583,21 @@ func (m *Metrics) IncCacheHits() {
 // IncCacheMisses increments the cache miss counter.
 func (m *Metrics) IncCacheMisses() {
 	m.CacheMissesTotal.Add(1)
+}
+
+// IncCacheLookup increments the bounded-cache lookup counter
+// (armor_cache_lookups_total). cache is one of "metadata", "list",
+// "footer", "multipart_sidecar"; outcome is "hit" or "miss".
+func (m *Metrics) IncCacheLookup(cache, outcome string) {
+	m.CacheLookupsTotal.Add(cache+"\x00"+outcome, 1)
+}
+
+// IncCacheEviction increments the bounded-cache eviction counter
+// (armor_cache_evictions_total): entries dropped by a cache's entry-count or
+// byte bound, including expired entries reaped on lookup and inserts refused
+// for exceeding the byte bound alone.
+func (m *Metrics) IncCacheEviction(cache string) {
+	m.CacheEvictionsTotal.Add(cache, 1)
 }
 
 // IncEncryptionOps increments the encryption operations counter.
@@ -912,6 +936,24 @@ func (m *Metrics) PrometheusFormat() string {
 	// Cache metrics
 	writeMetric("metadata_cache_hits_total", "Total number of metadata cache hits", "counter", m.CacheHitsTotal)
 	writeMetric("metadata_cache_misses_total", "Total number of metadata cache misses", "counter", m.CacheMissesTotal)
+
+	// Bounded-cache lookups by cache and outcome (armor-a4e5356d): the four
+	// backend caches (metadata, list, footer, multipart_sidecar) share one
+	// bounded-bytes LRU and count every lookup here.
+	sb.WriteString("\n# HELP armor_cache_lookups_total Bounded cache lookups by cache and outcome\n")
+	sb.WriteString("# TYPE armor_cache_lookups_total counter\n")
+	m.CacheLookupsTotal.Do(func(kv expvar.KeyValue) {
+		cache, outcome, _ := strings.Cut(kv.Key, "\x00")
+		fmt.Fprintf(&sb, "armor_cache_lookups_total{cache=%q,outcome=%q} %s\n", cache, outcome, kv.Value.String())
+	})
+
+	// Bounded-cache evictions: entries dropped because of a cache's
+	// entry-count or total-bytes bound.
+	sb.WriteString("\n# HELP armor_cache_evictions_total Entries dropped by the bounded caches' entry or byte limits\n")
+	sb.WriteString("# TYPE armor_cache_evictions_total counter\n")
+	m.CacheEvictionsTotal.Do(func(kv expvar.KeyValue) {
+		fmt.Fprintf(&sb, "armor_cache_evictions_total{cache=%q} %s\n", kv.Key, kv.Value.String())
+	})
 
 	// Encryption metrics
 	writeMetric("key_wrap_ops_total", "Total number of key wrap operations", "counter", m.KeyWrapOpsTotal)

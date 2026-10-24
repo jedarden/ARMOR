@@ -58,7 +58,7 @@ func TestListCache_KeyDistinction(t *testing.T) {
 
 func TestListCache_Expiry(t *testing.T) {
 	c := NewListCache(10, 1) // 1-second TTL; override to nanosecond for a fast test
-	c.ttl = time.Nanosecond
+	c.lru.ttl = time.Nanosecond
 
 	c.Set("bucket", "", "", 1000, "", &ListResult{})
 	time.Sleep(2 * time.Millisecond)

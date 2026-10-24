@@ -493,16 +493,37 @@ armor_errors_total{code="NoSuchBucket",operation="GetObject"} 3
 
 ## Cache Metrics
 
+The four bounded caches — object metadata (`ARMOR_CACHE_MAX_ENTRIES` /
+`ARMOR_CACHE_TTL`), ListObjectsV2 results (`ARMOR_LIST_CACHE_MAX_ENTRIES` /
+`ARMOR_LIST_CACHE_TTL`), Parquet footers, and v3 multipart sidecars (both
+sharing the metadata cache's bounds) — run on one generic bounded-bytes LRU:
+eviction is least-recently-used in O(1), every cache is bounded by its entry
+count and by a total-bytes backstop (entry-count bound from configuration;
+byte backstop 64–128 MiB per cache), and each counts every lookup and
+eviction below.
+
+### `armor_cache_lookups_total`
+
+**Type:** Counter  
+**Description:** Bounded cache lookups by cache and outcome  
+**Labels:** `cache` — One of `metadata`, `list`, `footer`, `multipart_sidecar`; `outcome` — `hit` (served from a live, matching entry) or `miss` (no usable entry: absent, expired, or generation/ETag mismatch)
+
+### `armor_cache_evictions_total`
+
+**Type:** Counter  
+**Description:** Entries dropped because of a cache's entry-count or total-bytes bound  
+**Labels:** `cache` — One of `metadata`, `list`, `footer`, `multipart_sidecar`. Counts least-recently-used entries dropped when a bound is exceeded, expired entries reaped on lookup, and inserts refused because a single entry exceeds the byte bound alone
+
 ### `armor_metadata_cache_hits_total`
 
 **Type:** Counter  
-**Description:** Total number of metadata cache hits  
+**Description:** Total number of metadata cache hits — the `metadata` cache's `hit` subset of `armor_cache_lookups_total`, mirrored here for the dashboard  
 **Labels:** None
 
 ### `armor_metadata_cache_misses_total`
 
 **Type:** Counter  
-**Description:** Total number of metadata cache misses  
+**Description:** Total number of metadata cache misses — the `metadata` cache's `miss` subset of `armor_cache_lookups_total`  
 **Labels:** None
 
 ## Encryption Metrics

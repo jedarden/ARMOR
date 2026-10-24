@@ -1,8 +1,9 @@
 package backend
 
 import (
-	"sync"
 	"time"
+
+	"github.com/jedarden/armor/internal/metrics"
 )
 
 // Parquet footer magic bytes (PAR1)
@@ -10,33 +11,67 @@ const parquetMagic = "PAR1"
 const parquetMagicLen = 4
 const parquetFooterLenSize = 4 // Footer length is stored as uint32 LE
 
+// defaultFooterCacheMaxBytes is the total-bytes backstop for the footer
+// cache (armor-a4e5356d). Footers are typically a few KB; the bound exists
+// so a workload of unusually large footers cannot grow the cache past its
+// memory budget while under the entry count.
+const defaultFooterCacheMaxBytes = 128 << 20
+
 // FooterCacheEntry represents a cached Parquet footer.
 type FooterCacheEntry struct {
-	Footer    []byte    // Decrypted footer bytes
-	ETag      string    // ETag for cache coherence
-	ExpiresAt time.Time // When this entry expires
+	Footer []byte // Decrypted footer bytes
+	ETag   string // ETag for cache coherence
+}
+
+// footerEntryBytes estimates one cached entry's memory cost: the decrypted
+// footer bytes plus the entry struct and ETag. The footer dominates, so this
+// is close to an exact accounting.
+func footerEntryBytes(e *FooterCacheEntry) int64 {
+	if e == nil {
+		return 64
+	}
+	return int64(len(e.Footer)) + int64(len(e.ETag)) + 64
 }
 
 // FooterCache caches Parquet footers to avoid repeated decryption
 // for DuckDB queries. Footers are typically a few KB and are immutable
-// per file version (ETag ensures cache coherence).
+// per file version (ETag ensures cache coherence). Bounded by entries and
+// total bytes via the shared lruCache.
 //
 // Impact: 50-80% reduction in DuckDB query startup latency for repeated
 // queries against the same files.
 type FooterCache struct {
-	mu         sync.RWMutex
-	entries    map[string]*FooterCacheEntry // key: bucket/key
-	maxEntries int
-	ttl        time.Duration
+	lru *lruCache[*FooterCacheEntry]
 }
 
-// NewFooterCache creates a new footer cache.
-func NewFooterCache(maxEntries int, ttlSeconds int) *FooterCache {
-	return &FooterCache{
-		entries:    make(map[string]*FooterCacheEntry),
-		maxEntries: maxEntries,
-		ttl:        time.Duration(ttlSeconds) * time.Second,
+// NewFooterCache creates a new footer cache. maxBytes, when given,
+// overrides the total-bytes backstop; 0 or negative selects the default.
+func NewFooterCache(maxEntries int, ttlSeconds int, maxBytes ...int64) *FooterCache {
+	budget := int64(defaultFooterCacheMaxBytes)
+	if len(maxBytes) > 0 && maxBytes[0] > 0 {
+		budget = maxBytes[0]
 	}
+	return &FooterCache{
+		lru: newLRUCache[*FooterCacheEntry](cacheNameFooter, maxEntries, budget,
+			time.Duration(ttlSeconds)*time.Second, footerEntryBytes, nil),
+	}
+}
+
+// WithMetrics wires the metrics sink for the shared LRU counters.
+func (c *FooterCache) WithMetrics(m *metrics.Metrics) *FooterCache {
+	if c == nil {
+		return c
+	}
+	c.lru.setMetricsSink(m)
+	return c
+}
+
+// Stats snapshots the cache's cumulative hit/miss/eviction counters.
+func (c *FooterCache) Stats() CacheStats {
+	if c == nil {
+		return CacheStats{}
+	}
+	return c.lru.stats()
 }
 
 // footerCacheKey generates a cache key from bucket and object key.
@@ -47,84 +82,43 @@ func footerCacheKey(bucket, key string) string {
 // Get retrieves a cached footer if it exists and the ETag matches.
 // Returns the footer bytes and true if found, nil and false otherwise.
 func (c *FooterCache) Get(bucket, key, etag string) ([]byte, bool) {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-
-	entry, ok := c.entries[footerCacheKey(bucket, key)]
+	entry, ok := c.lru.get(footerCacheKey(bucket, key), func(e *FooterCacheEntry) bool {
+		// ETag coherence: the file may have been replaced since this entry
+		// was written.
+		return e.ETag == etag
+	})
 	if !ok {
 		return nil, false
 	}
-
-	// Check ETag for cache coherence (file may have been replaced)
-	if entry.ETag != etag {
-		return nil, false
-	}
-
-	// Check expiration
-	if time.Now().After(entry.ExpiresAt) {
-		return nil, false
-	}
-
 	return entry.Footer, true
 }
 
 // Set stores a footer in the cache.
 func (c *FooterCache) Set(bucket, key, etag string, footer []byte) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	// Evict if at capacity
-	if len(c.entries) >= c.maxEntries {
-		c.evictOldest()
-	}
-
 	// Copy the footer to avoid holding references to external buffers
 	footerCopy := make([]byte, len(footer))
 	copy(footerCopy, footer)
 
-	c.entries[footerCacheKey(bucket, key)] = &FooterCacheEntry{
-		Footer:    footerCopy,
-		ETag:      etag,
-		ExpiresAt: time.Now().Add(c.ttl),
-	}
+	c.lru.set(footerCacheKey(bucket, key), &FooterCacheEntry{
+		Footer: footerCopy,
+		ETag:   etag,
+	})
 }
 
 // Delete removes a footer from the cache.
 func (c *FooterCache) Delete(bucket, key string) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	delete(c.entries, footerCacheKey(bucket, key))
+	c.lru.remove(footerCacheKey(bucket, key))
 }
 
 // Clear removes all entries from the cache.
 func (c *FooterCache) Clear() {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.entries = make(map[string]*FooterCacheEntry)
+	c.lru.clear()
 }
 
 // Size returns the number of entries in the cache.
 func (c *FooterCache) Size() int {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	return len(c.entries)
-}
-
-// evictOldest removes the oldest entry.
-func (c *FooterCache) evictOldest() {
-	var oldestKey string
-	var oldestTime time.Time
-
-	for k, v := range c.entries {
-		if oldestKey == "" || v.ExpiresAt.Before(oldestTime) {
-			oldestKey = k
-			oldestTime = v.ExpiresAt
-		}
-	}
-
-	if oldestKey != "" {
-		delete(c.entries, oldestKey)
-	}
+	n, _ := c.lru.size()
+	return n
 }
 
 // IsParquetFile checks if the given data represents a Parquet file

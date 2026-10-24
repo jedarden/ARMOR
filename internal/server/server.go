@@ -207,15 +207,15 @@ func New(cfg *config.Config) (*Server, error) {
 	}
 
 	// Create metadata cache
-	cache := backend.NewMetadataCache(cfg.CacheMaxEntries, cfg.CacheTTL)
+	cache := backend.NewMetadataCache(cfg.CacheMaxEntries, cfg.CacheTTL).WithMetrics(metrics.DefaultMetrics)
 
 	// Create footer cache (for Parquet footer pinning)
-	footerCache := backend.NewFooterCache(cfg.CacheMaxEntries, cfg.CacheTTL)
+	footerCache := backend.NewFooterCache(cfg.CacheMaxEntries, cfg.CacheTTL).WithMetrics(metrics.DefaultMetrics)
 
 	// Create list cache (nil when TTL is 0, meaning disabled)
 	var listCache *backend.ListCache
 	if cfg.ListCacheTTL > 0 {
-		listCache = backend.NewListCache(cfg.ListCacheMaxEntries, cfg.ListCacheTTL)
+		listCache = backend.NewListCache(cfg.ListCacheMaxEntries, cfg.ListCacheTTL).WithMetrics(metrics.DefaultMetrics)
 	}
 
 	// Create key manager
