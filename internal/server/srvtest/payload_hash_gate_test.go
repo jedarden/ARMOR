@@ -11,9 +11,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/xml"
-	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -146,7 +147,7 @@ func TestPayloadHashGateStreamingModeStillDecodes(t *testing.T) {
 	key := "gate/streaming.bin"
 	payload := []byte("payload carried in aws-chunked framing")
 
-	rec := doPayloadHashRequest(h, "PUT", "/"+h.Bucket+"/"+key, encodeChunkedForGateTest(t, payload), "STREAMING-AWS4-HMAC-SHA256-PAYLOAD")
+	rec := doStreamingRequest(h, "PUT", "/"+h.Bucket+"/"+key, payload, 8, nil)
 	if rec.Code != 200 {
 		t.Fatalf("streaming PUT: status = %d (body %s)", rec.Code, rec.Body.String())
 	}
@@ -154,6 +155,54 @@ func TestPayloadHashGateStreamingModeStillDecodes(t *testing.T) {
 	if string(got) != string(payload) {
 		t.Fatalf("decoded payload %q, want %q", got, payload)
 	}
+}
+
+// TestPayloadHashGateStreamingTamperedChunkRejected drives the chained
+// chunk-signature verification through the real mux: a body whose chunk data
+// was altered after signing must fail the PUT with 403
+// SignatureDoesNotMatch at the first bad chunk and leave no object behind.
+func TestPayloadHashGateStreamingTamperedChunkRejected(t *testing.T) {
+	h := New(t)
+	key := "gate/streaming-tampered.bin"
+	payload := []byte("payload carried in aws-chunked framing")
+
+	rec := doStreamingRequest(h, "PUT", "/"+h.Bucket+"/"+key, payload, 4, func(data []byte) []byte {
+		data[0] ^= 0xff
+		return data
+	})
+	if rec.Code != 403 {
+		t.Fatalf("tampered streaming PUT: status = %d, want 403 (body %s)", rec.Code, rec.Body.String())
+	}
+	if code := parseS3Error(h, rec).Code; code != "SignatureDoesNotMatch" {
+		t.Fatalf("tampered streaming PUT: error code = %q, want SignatureDoesNotMatch (body %s)", code, rec.Body.String())
+	}
+	objectAbsent(h, key)
+
+	// The same request with its intact body still succeeds, proving the
+	// failure is the tampering and not the request shape.
+	rec = doStreamingRequest(h, "PUT", "/"+h.Bucket+"/"+key, payload, 4, nil)
+	if rec.Code != 200 {
+		t.Fatalf("intact streaming PUT: status = %d (body %s)", rec.Code, rec.Body.String())
+	}
+	if got := signedGET(h, key); string(got) != string(payload) {
+		t.Fatalf("decoded payload %q, want %q", got, payload)
+	}
+}
+
+// doStreamingRequest signs target as a STREAMING-AWS4-HMAC-SHA256-PAYLOAD
+// upload and sends body as its aws-chunked content: chunkSize splits payload,
+// and mutate (if non-nil) corrupts each chunk after signing.
+func doStreamingRequest(h *Harness, method, target string, payload []byte, chunkSize int, mutate func([]byte) []byte) *httptest.ResponseRecorder {
+	h.t.Helper()
+	req := httptest.NewRequest(method, target, nil)
+	signer := SignS3RequestStreaming(req, TestAccessKey, TestSecretKey, TestRegion)
+	body := signer.EncodeBody(payload, chunkSize, mutate)
+	req.Body = io.NopCloser(bytes.NewReader(body))
+	req.ContentLength = int64(len(body))
+	req.Header.Set("X-Amz-Decoded-Content-Length", strconv.Itoa(len(payload)))
+	rec := httptest.NewRecorder()
+	h.Handler().ServeHTTP(rec, req)
+	return rec
 }
 
 // TestPayloadHashGateMismatchStreamingPath covers the temp-file streaming PUT
@@ -174,24 +223,4 @@ func TestPayloadHashGateMismatchStreamingPath(t *testing.T) {
 		t.Fatalf("streaming mismatched PUT: error code = %q, want XAmzContentSHA256Mismatch", code)
 	}
 	objectAbsent(h, key)
-}
-
-// encodeChunkedForGateTest wraps payload in the aws-chunked wire format,
-// including the X-Amz-Decoded-Content-Length header the server reads.
-func encodeChunkedForGateTest(t *testing.T, payload []byte) []byte {
-	t.Helper()
-	var buf bytes.Buffer
-	sig := strings.Repeat("ab", 32) // per-chunk signatures are not re-verified
-	chunkSize := 8
-	for off := 0; off < len(payload); off += chunkSize {
-		end := off + chunkSize
-		if end > len(payload) {
-			end = len(payload)
-		}
-		fmt.Fprintf(&buf, "%x;chunk-signature=%s\r\n", end-off, sig)
-		buf.Write(payload[off:end])
-		buf.WriteString("\r\n")
-	}
-	fmt.Fprintf(&buf, "0;chunk-signature=%s\r\n\r\n", sig)
-	return buf.Bytes()
 }

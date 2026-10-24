@@ -31,8 +31,8 @@ const (
 	// bound to the signature and passes through unmodified.
 	payloadUnsigned
 	// payloadStreaming: STREAMING-AWS4-HMAC-SHA256-PAYLOAD — the aws-chunked
-	// framing is stripped. Per-chunk signatures are not verified (see
-	// aws_chunked.go); that follow-on work is blocked on this gate.
+	// framing is stripped and the chained per-chunk signatures are verified
+	// against the Authorization seed (see aws_chunked.go).
 	payloadStreaming
 )
 

@@ -150,8 +150,17 @@ accepts exactly three values for it:
   absent `x-amz-content-sha256` header behaves the same way.
 - **`STREAMING-AWS4-HMAC-SHA256-PAYLOAD`** — the aws-chunked framing used by
   litestream, barman-cloud, and the AWS SDKs for streamed uploads is stripped
-  before the handler sees the body. The seed signature in the Authorization
-  header authenticates the request; per-chunk signatures are not re-verified.
+  before the handler sees the body, and the chained per-chunk signatures are
+  verified: each chunk's `chunk-signature` must match the SigV4 streaming
+  computation seeded from the Authorization header's signature (chunk N signs
+  chunk N's data hash together with chunk N−1's signature), so every chunk of
+  the body is bound to the authenticated request. The first bad chunk fails
+  the read with HTTP 403 and `SignatureDoesNotMatch`, before the object is
+  finalised — the same never-visible, never-overwrites guarantee as the
+  digest mode above. A chunk header without a verifiable signature fails the
+  same way. Presigned requests carry no Authorization header to seed the
+  chain, so their streaming bodies are still accepted with the framing
+  stripped and no per-chunk verification.
 
 Any other value — for example `STREAMING-UNSIGNED-PAYLOAD-TRAILER`, which some
 AWS SDKs send for checksum-trailer uploads — is rejected with HTTP 400 and

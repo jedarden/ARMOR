@@ -5328,6 +5328,13 @@ func (h *Handlers) writeErrorCause(w http.ResponseWriter, r *http.Request, code,
 	if errors.As(cause, &payloadMismatch) {
 		code, message, statusCode = ContentSHA256MismatchCode, payloadMismatch.Error(), http.StatusBadRequest
 	}
+	// A chunk signature that fails the chained streaming verification is a
+	// client error too: fail the upload with 403 at the first bad chunk
+	// (armor-3b18e5bc).
+	var chunkMismatch *ChunkSignatureMismatchError
+	if errors.As(cause, &chunkMismatch) {
+		code, message, statusCode = ChunkSignatureMismatchCode, chunkMismatch.Error(), http.StatusForbidden
+	}
 	*r = *r.WithContext(middleware.SetErrorCode(r.Context(), code))
 
 	// Extract request ID from middleware context

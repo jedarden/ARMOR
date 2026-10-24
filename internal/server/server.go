@@ -1704,15 +1704,18 @@ func (s *Server) wrapHandler(h http.HandlerFunc) http.HandlerFunc {
 		}
 		switch mode {
 		case payloadStreaming:
-			// Decode aws-chunked body when the streaming signature is used.
-			// The seed signature in the Authorization header already authenticated the
-			// request; we only need to strip the chunk framing to recover the payload.
+			// Decode aws-chunked body when the streaming signature is used,
+			// verifying the chained per-chunk signatures against the seed
+			// signature on the Authorization header (armor-3b18e5bc).
+			// Requests without header auth (presigned URLs) strip the framing
+			// only; the seed signature there already authenticated the request
+			// path ARMOR can honour.
 			if decoded := r.Header.Get("X-Amz-Decoded-Content-Length"); decoded != "" {
 				if n, err := strconv.ParseInt(decoded, 10, 64); err == nil {
 					r.ContentLength = n
 				}
 			}
-			r.Body = newAWSChunkedReader(r.Body)
+			r.Body = newAWSChunkedReader(r.Body, s.streamingChunkVerifier(r))
 		case payloadDigest:
 			r.Body = newPayloadHashVerifier(r.Body, r.Header.Get("X-Amz-Content-Sha256"))
 		}

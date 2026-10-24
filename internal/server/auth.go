@@ -283,11 +283,7 @@ func (a *SigV4Auth) buildStringToSign(amzDate, credentialDate, region, canonical
 
 // getSigningKeyForCredential derives the signing key for the given credential, date, and region.
 func (a *SigV4Auth) getSigningKeyForCredential(cred *config.Credential, date, region string) []byte {
-	kDate := a.hmacSHA256([]byte("AWS4"+cred.SecretKey), date)
-	kRegion := a.hmacSHA256(kDate, region)
-	kService := a.hmacSHA256(kRegion, a.service)
-	kSigning := a.hmacSHA256(kService, "aws4_request")
-	return kSigning
+	return sigV4SigningKey(cred.SecretKey, date, region, a.service)
 }
 
 // hmacSHA256 computes HMAC-SHA256.
