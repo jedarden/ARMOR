@@ -31,6 +31,15 @@ All of these must be set to run the integration tests:
 | `ARMOR_AUTH_SECRET_KEY` | ARMOR client secret key | `my-secret-key` |
 | `ARMOR_ENDPOINT` | ARMOR server endpoint (optional) | `http://localhost:9000` |
 | `ARMOR_ADMIN_ENDPOINT` | ARMOR admin endpoint (optional) | `http://localhost:9001` |
+| `ARMOR_LARGE_OBJECT_TESTS` | Opt-in for the 7 GiB `TestLargeObjectMigration*` pair (default: skipped) | `1` |
+
+`ARMOR_LARGE_OBJECT_TESTS=1` deserves its own warning: the large-object
+migration fixture materializes the full 7 GiB plaintext in memory (plus a
+second buffer of the same order while encrypting the legacy V1 form), so a
+run needs a host with well above that — a 6 GiB CI pod is OOMKilled before
+the first test body finishes. The tests stay skipped unless the variable is
+explicitly set; the bounded-memory streaming rewrite of the fixture is
+tracked separately.
 
 ## Running Tests
 
@@ -110,6 +119,11 @@ executes nothing — this was exactly how the suite sat unused until 2026-09
 uploads a genuine 6 GiB object and stays opt-in by its own design; submit a
 manual workflow run with `skip-tests: ""` to include it.
 
+The workflow env deliberately does **not** set `ARMOR_LARGE_OBJECT_TESTS`, so
+the two 7 GiB `TestLargeObjectMigration*` tests skip as well: their in-memory
+fixture OOMKills the 6 GiB pod (armor-809557bb). They are host opt-in until
+the streaming rewrite lands, not `-skip` regex material.
+
 The equivalent local run is the Quick Start above, minus `-short`.
 Credentials for the CI leg reach the workflow through the
 `armor-integration` ExternalSecret, which reads the live deployment's
@@ -124,6 +138,12 @@ Set the environment variable: `export ARMOR_INTEGRATION_TEST=1`
 ### "Skipping integration tests: missing environment variables"
 
 Ensure all required environment variables are set.
+
+### "ARMOR_LARGE_OBJECT_TESTS != 1" skip
+
+The 7 GiB large-object migration tests skip unless explicitly opted in with
+`export ARMOR_LARGE_OBJECT_TESTS=1` — their fixture holds the whole plaintext
+in memory and will OOMKill anything with a normal CI memory limit.
 
 ### Connection refused errors
 

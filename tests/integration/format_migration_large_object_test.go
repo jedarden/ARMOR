@@ -1,6 +1,10 @@
 // Package integration provides comprehensive format migration tests for large objects (>7GB)
 // This test proves that a published ARMOR image can migrate legacy V1/V2 objects to V3
 // with full verification under bounded memory limits.
+//
+// Both tests here are explicit opt-in via ARMOR_LARGE_OBJECT_TESTS=1: the
+// fixture materializes the 7 GiB plaintext (and its V1 encryption) in memory,
+// which OOMKills a normal CI pod (6 GiB limit). See tests/integration/README.md.
 package integration
 
 import (
@@ -56,6 +60,7 @@ func TestLargeObjectMigrationV1ToV3(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping large object migration test in short mode")
 	}
+	largeObjectTestsEnabled(t)
 
 	ctx := context.Background()
 
@@ -299,6 +304,7 @@ func TestLargeObjectMigrationV1MultipartToV3(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping large object migration test in short mode")
 	}
+	largeObjectTestsEnabled(t)
 
 	ctx := context.Background()
 
@@ -431,6 +437,20 @@ func generateLargePlaintext(t *testing.T, size int64) ([]byte, string) {
 	shaHex := hex.EncodeToString(sha[:])
 
 	return plaintext, shaHex
+}
+
+// largeObjectTestsEnabled gates the 7 GiB large-object migration tests behind
+// an explicit opt-in. generateLargePlaintext materializes the whole plaintext
+// in memory (and encryptV1Object builds a second buffer of the same order), so
+// these tests need a host with well above the 6 GiB a CI pod is given — a bare
+// run without this gate OOMKills the pod before loadTestMEK can skip on
+// credentials. Set ARMOR_LARGE_OBJECT_TESTS=1 to opt in.
+func largeObjectTestsEnabled(t *testing.T) {
+	t.Helper()
+
+	if os.Getenv("ARMOR_LARGE_OBJECT_TESTS") != "1" {
+		t.Skip("ARMOR_LARGE_OBJECT_TESTS != 1: 7 GiB large-object migration tests are explicit opt-in; see tests/integration/README.md")
+	}
 }
 
 // loadTestMEK loads the master encryption key for testing

@@ -127,7 +127,8 @@ any of these set. The gates:
 | `ARMOR_INTEGRATION_TEST=1` plus `ARMOR_B2_ACCESS_KEY_ID`, `ARMOR_B2_SECRET_ACCESS_KEY`, `ARMOR_B2_REGION`, `ARMOR_BUCKET`, `ARMOR_CF_DOMAIN`, `ARMOR_MEK`, `ARMOR_AUTH_ACCESS_KEY`, `ARMOR_AUTH_SECRET_KEY`, `ARMOR_ADMIN_TOKEN` | `tests/integration` — the real-B2 suite. Runs via the `armor-integration` WorkflowTemplate (nightly, per release), never in `armor-build` |
 | `ARMOR_ENDPOINT` (with `ARMOR_ADMIN_ENDPOINT`, `ARMOR_ADMIN_TOKEN` for admin legs) | Live-server integration legs (`tests/integration/awscli_test.go`, admin key management) that skip when the endpoint is unset |
 | `ARMOR_TEST_ACCESS_KEY`, `ARMOR_TEST_SECRET_KEY` | `tests/rbac` against the live armor-test instance (values from OpenBao `secret/rs-manager/iad-ci/armor-test`) |
-| `ARMOR_TEST_MEK` | Large-object format-migration integration leg (`tests/integration`) |
+| `ARMOR_TEST_MEK` | Large-object format-migration integration leg (`tests/integration`) — additionally requires `ARMOR_LARGE_OBJECT_TESTS=1` (explicit opt-in; the in-memory 7 GiB fixture OOMs a CI pod) |
+| `ARMOR_LARGE_OBJECT_TESTS=1` | The `TestLargeObjectMigration*` pair in `tests/integration` (with `ARMOR_TEST_MEK` and the other credential variables) |
 | `ARMOR_TEST_ROTATION=1` | Expensive key-rotation integration tests |
 | `ARMOR_KEY_ROUTES` | Key-routing integration test |
 | `ARMOR_COMPAT_ENDPOINT` | `tests/aws-cli-compatibility` endpoint mode against a running server — what the armor-build image gate uses; in that mode a missing client is fatal, not a skip |
