@@ -9,11 +9,20 @@ import (
 
 // CacheEntry represents a cached metadata entry.
 type CacheEntry struct {
-	Metadata  *ARMORMetadata
+	Metadata *ARMORMetadata
+	// Version binds the entry to one stored-object generation — the backend's
+	// content identity (ETag) observed when the entry was written. A versioned
+	// Get only serves the entry while the stored generation still matches, so
+	// an overwrite (even one that keeps the plaintext ETag, e.g. a
+	// re-encryption of the same content) cannot serve stale sizes.
+	Version   string
 	ExpiresAt time.Time
 }
 
-// MetadataCache is an LRU cache for object metadata.
+// MetadataCache is an LRU cache for object metadata. Every method is safe on
+// a nil receiver: tests (and some companion binaries) build handler stacks
+// without a metadata cache, and the retirement/warm calls on the PUT, HEAD,
+// GET and LIST paths must be no-ops there rather than panics.
 type MetadataCache struct {
 	mu         sync.RWMutex
 	entries    map[string]*CacheEntry
@@ -35,8 +44,25 @@ func cacheKey(bucket, key string) string {
 	return bucket + "/" + key
 }
 
-// Get retrieves cached metadata.
+// Get retrieves cached metadata. Only unversioned entries (written by Set)
+// are served; version-bound entries require GetVersioned with the generation
+// the caller observed.
 func (c *MetadataCache) Get(bucket, key string) (*ARMORMetadata, bool) {
+	return c.getVersion(bucket, key, "")
+}
+
+// GetVersioned retrieves cached metadata bound to a stored-object generation.
+// The entry is served only while version equals the one SetVersioned recorded,
+// so a same-key overwrite misses instead of serving the previous object's
+// plaintext size.
+func (c *MetadataCache) GetVersioned(bucket, key, version string) (*ARMORMetadata, bool) {
+	return c.getVersion(bucket, key, version)
+}
+
+func (c *MetadataCache) getVersion(bucket, key, version string) (*ARMORMetadata, bool) {
+	if c == nil {
+		return nil, false
+	}
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
@@ -49,11 +75,31 @@ func (c *MetadataCache) Get(bucket, key string) (*ARMORMetadata, bool) {
 		return nil, false
 	}
 
+	if entry.Version != version {
+		return nil, false
+	}
+
 	return entry.Metadata, true
 }
 
-// Set stores metadata in the cache.
+// Set stores metadata in the cache (unversioned: served to any Get until it
+// expires or is deleted).
 func (c *MetadataCache) Set(bucket, key string, meta *ARMORMetadata) {
+	c.setVersion(bucket, key, "", meta)
+}
+
+// SetVersioned stores metadata bound to a stored-object generation. Callers
+// pass the backend's content identity for the stored object they just
+// observed (its ETag), never a plaintext-only value: a re-encryption of the
+// same plaintext must not collide with the previous generation.
+func (c *MetadataCache) SetVersioned(bucket, key, version string, meta *ARMORMetadata) {
+	c.setVersion(bucket, key, version, meta)
+}
+
+func (c *MetadataCache) setVersion(bucket, key, version string, meta *ARMORMetadata) {
+	if c == nil {
+		return
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -64,12 +110,16 @@ func (c *MetadataCache) Set(bucket, key string, meta *ARMORMetadata) {
 
 	c.entries[cacheKey(bucket, key)] = &CacheEntry{
 		Metadata:  meta,
+		Version:   version,
 		ExpiresAt: time.Now().Add(c.ttl),
 	}
 }
 
 // Delete removes an entry from the cache.
 func (c *MetadataCache) Delete(bucket, key string) {
+	if c == nil {
+		return
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	delete(c.entries, cacheKey(bucket, key))
@@ -77,6 +127,9 @@ func (c *MetadataCache) Delete(bucket, key string) {
 
 // Clear removes all entries from the cache.
 func (c *MetadataCache) Clear() {
+	if c == nil {
+		return
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.entries = make(map[string]*CacheEntry)
@@ -84,6 +137,9 @@ func (c *MetadataCache) Clear() {
 
 // Size returns the number of entries in the cache.
 func (c *MetadataCache) Size() int {
+	if c == nil {
+		return 0
+	}
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return len(c.entries)

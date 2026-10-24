@@ -170,6 +170,11 @@ type Config struct {
 	ListCacheMaxEntries int
 	ListCacheTTL        int
 
+	// ListHeadFanout caps the concurrent backend HEADs one ListObjectsV2 page
+	// issues to resolve plaintext sizes for keys missing from the in-memory
+	// indexes.
+	ListHeadFanout int
+
 	// Pre-signed URL configuration
 	PresignEnabled bool   // Enable pre-signed URL feature (default false)
 	PresignSecret  []byte // Secret key for signing pre-signed URLs
@@ -484,6 +489,15 @@ func Load() (*Config, error) {
 	// List cache configuration
 	cfg.ListCacheMaxEntries = getEnvInt("ARMOR_LIST_CACHE_MAX_ENTRIES", 1000)
 	cfg.ListCacheTTL = getEnvInt("ARMOR_LIST_CACHE_TTL", 60)
+
+	// Concurrent backend HEADs one ListObjectsV2 page may issue to resolve
+	// plaintext sizes for keys missing from the in-memory indexes. B2
+	// rate-limits per-key metadata calls, so the fan-out stays bounded even
+	// for a full 1000-key page.
+	cfg.ListHeadFanout = getEnvInt("ARMOR_LIST_HEAD_FANOUT", 16)
+	if cfg.ListHeadFanout < 1 {
+		errs = append(errs, fmt.Errorf("ARMOR_LIST_HEAD_FANOUT must be at least 1"))
+	}
 
 	// Manifest index configuration
 	manifestEnabledStr := os.Getenv("ARMOR_MANIFEST_ENABLED")
@@ -1252,6 +1266,9 @@ type RedactedConfig struct {
 	ListCacheMaxEntries int `json:"list_cache_max_entries"`
 	ListCacheTTL        int `json:"list_cache_ttl"`
 
+	// Concurrent backend HEAD cap for ListObjectsV2 plaintext-size resolution
+	ListHeadFanout int `json:"list_head_fanout"`
+
 	// Pre-signed URL configuration
 	PresignEnabled bool   `json:"presign_enabled"`
 	PresignSecret  string `json:"presign_secret"` // "<set>" or "<unset>"
@@ -1353,6 +1370,7 @@ func (c *Config) Redacted() *RedactedConfig {
 		CacheTTL:                    c.CacheTTL,
 		ListCacheMaxEntries:         c.ListCacheMaxEntries,
 		ListCacheTTL:                c.ListCacheTTL,
+		ListHeadFanout:              c.ListHeadFanout,
 		PresignEnabled:              c.PresignEnabled,
 		PresignBaseURL:              c.PresignBaseURL,
 		ManifestEnabled:             c.ManifestEnabled,

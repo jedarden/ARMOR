@@ -597,6 +597,22 @@ armor_backend_retries_total{reason="connection_reset",outcome="cancelled"} 1
 
 A nonzero `outcome="exhausted"` series is the persistent-degradation signal: it counts reads that retries could not save (one transient 5xx no longer fails a whole 1000-fetch pipelined GET, but a hard outage still does). `outcome="success"` at a steady rate is the normal Cloudflare blip baseline.
 
+### `armor_list_head_total`
+
+**Type:** Counter  
+**Description:** How each listed key's plaintext size was resolved during ListObjectsV2 enrichment, one increment per listed key. A listed key missing from both the manifest index and the version-gated metadata cache costs one backend HEAD (bounded by `ARMOR_LIST_HEAD_FANOUT`, retried once); a HEAD that still fails omits the size rather than reporting the ciphertext size  
+**Labels:** `outcome` — Resolution outcome: `index` (manifest index hit), `cache` (version-gated metadata cache hit), `head` (backend HEAD resolved it), `error` (HEAD failed after retry — the page reports no size for that key)
+
+**Example Output:**
+```
+# HELP armor_list_head_total ListObjectsV2 plaintext-size resolution outcomes per listed key
+# TYPE armor_list_head_total counter
+armor_list_head_total{outcome="index"} 4500
+armor_list_head_total{outcome="cache"} 320
+armor_list_head_total{outcome="head"} 180
+armor_list_head_total{outcome="error"} 0
+```
+
 ## Restore Verifier Metrics
 
 ### `armor_restore_verifier_checks_total`

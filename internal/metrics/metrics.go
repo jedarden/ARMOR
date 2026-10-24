@@ -151,6 +151,13 @@ type Metrics struct {
 	// (the caller stopped during backoff).
 	BackendRetriesTotal *labelledCounter
 
+	// List HEAD resolution outcomes (armor-7d94c42d). One increment per listed
+	// key: "index" (manifest index hit), "cache" (version-gated metadata cache
+	// hit), "head" (backend HEAD resolved it), "error" (HEAD failed after one
+	// retry — the page omits the size rather than reporting the ciphertext
+	// size).
+	ListHeadTotal *labelledCounter
+
 	// Request duration histogram (fixed buckets)
 	requestDurationBuckets    []int64
 	requestDurationSum        *expvar.Map // operation -> sum of durations
@@ -313,6 +320,7 @@ func NewMetrics() *Metrics {
 	m.BackendRequestsTotal = newLabelledCounter()
 	m.BackendRequestDuration = newLabelledCounter()
 	m.BackendRetriesTotal = newLabelledCounter()
+	m.ListHeadTotal = newLabelledCounter()
 
 	// Request duration histogram (fixed buckets in milliseconds)
 	m.requestDurationBuckets = []int64{5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000}
@@ -573,13 +581,19 @@ func (m *Metrics) IncEncryptionOps(opType string) {
 	m.EncryptionOpsTotal.Add(opType, 1)
 }
 
+// IncListHead increments the ListObjectsV2 plaintext-size resolution counter
+// for one listed key. outcome is one of "index", "cache", "head", "error".
+func (m *Metrics) IncListHead(outcome string) {
+	m.ListHeadTotal.Add(outcome, 1)
+}
+
 // IncBackendRetry increments the backend read-retry counter (armor-f1791426).
 // reason is the transient-failure class ("http_5xx", "http_429",
 // "connection_reset", "truncated_body", "network"); outcome is "success" (a
 // later attempt succeeded), "exhausted" (the attempt bound was reached) or
 // "cancelled" (the caller stopped during backoff).
 func (m *Metrics) IncBackendRetry(reason, outcome string) {
-	m.BackendRetriesTotal.Add(reason + "\x00" + outcome, 1)
+	m.BackendRetriesTotal.Add(reason+"\x00"+outcome, 1)
 }
 
 // IncDecryptionOps increments the decryption operations counter.
@@ -1046,6 +1060,14 @@ func (m *Metrics) PrometheusFormat() string {
 	sb.WriteString("# TYPE armor_backend_request_duration_total counter\n")
 	m.BackendRequestDuration.Do(func(kv expvar.KeyValue) {
 		fmt.Fprintf(&sb, "armor_backend_request_duration_total{key=%q} %s\n", kv.Key, kv.Value.String())
+	})
+
+	// List HEAD resolution outcomes (armor-7d94c42d): how each listed key's
+	// plaintext size was resolved, and how often it could not be at all.
+	sb.WriteString("# HELP armor_list_head_total ListObjectsV2 plaintext-size resolution outcomes per listed key\n")
+	sb.WriteString("# TYPE armor_list_head_total counter\n")
+	m.ListHeadTotal.Do(func(kv expvar.KeyValue) {
+		fmt.Fprintf(&sb, "armor_list_head_total{outcome=%q} %s\n", kv.Key, kv.Value.String())
 	})
 
 	// Backend read retries (armor-f1791426): transient-failure class and how

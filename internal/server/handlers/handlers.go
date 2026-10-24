@@ -756,11 +756,8 @@ func (h *Handlers) PutObject(w http.ResponseWriter, r *http.Request, bucket, key
 
 	// The overwrite retired the cached generation (if any). Backend.Put does
 	// not return the new stored ETag, so there is nothing sound to cache here;
-	// the next HEAD or GET repopulates it. Tests may build Handlers without a
-	// metadata cache, so the retirement is nil-safe.
-	if h.cache != nil {
-		h.cache.Delete(bucket, key)
-	}
+	// the next HEAD or GET repopulates it.
+	h.cache.Delete(bucket, key)
 
 	// PUT latency instrumentation (armor-69dd394b): when the request takes the
 	// provenance-recording path below, collect the provenance lock-wait/write
@@ -1096,11 +1093,8 @@ func (h *Handlers) putObjectStreaming(ctx context.Context, w http.ResponseWriter
 
 	// The overwrite retired the cached generation (if any). Backend.Put does
 	// not return the new stored ETag, so there is nothing sound to cache here;
-	// the next HEAD or GET repopulates it. Tests may build Handlers without a
-	// metadata cache, so the retirement is nil-safe.
-	if h.cache != nil {
-		h.cache.Delete(bucket, key)
-	}
+	// the next HEAD or GET repopulates it.
+	h.cache.Delete(bucket, key)
 
 	// Close temp file
 	tmpFile.Close()
@@ -1326,6 +1320,9 @@ func (h *Handlers) GetObject(w http.ResponseWriter, r *http.Request, bucket, key
 			Metadata:         manifestMeta,
 			IsARMOREncrypted: true,
 		}
+		// Warm the metadata cache for ListObjectsV2 size resolution, bound to
+		// the stored ciphertext generation the freshness HEAD just observed.
+		h.cache.SetVersioned(bucket, key, ciphertextInfo.ETag, armorMeta)
 
 		// Override prefixedKey to point to ciphertext object
 		prefixedKey = manifestBody.CiphertextObject
@@ -1336,6 +1333,14 @@ func (h *Handlers) GetObject(w http.ResponseWriter, r *http.Request, bucket, key
 		// been in flight since before the manifest probe started.
 		res := <-legacyHeadCh
 		info, err = res.info, res.err
+		if err == nil && info != nil && info.IsARMOREncrypted {
+			// Warm the metadata cache for ListObjectsV2 size resolution
+			// (the manifest path above warmed it from its own HEAD),
+			// bound to this stored generation (info.ETag).
+			if am, ok := backend.ParseARMORMetadata(info.Metadata); ok && am != nil {
+				h.cache.SetVersioned(bucket, key, info.ETag, am)
+			}
+		}
 	}
 
 	if err != nil && info == nil {
@@ -2695,6 +2700,9 @@ func (h *Handlers) HeadObject(w http.ResponseWriter, r *http.Request, bucket, ke
 	var contentType string
 	if info.IsARMOREncrypted {
 		if am, ok := backend.ParseARMORMetadata(info.Metadata); ok {
+			// Warm the metadata cache for ListObjectsV2 size resolution,
+			// bound to this stored generation (info.ETag).
+			h.cache.SetVersioned(bucket, key, info.ETag, am)
 			etag = am.ETag
 			contentLength = am.PlaintextSize
 			contentType = am.ContentType
@@ -3065,30 +3073,89 @@ func parseCopySource(copySource string) (bucket, key string) {
 	return bucket, key
 }
 
+// defaultListHeadFanout bounds the per-page HEAD fan-out when the handler was
+// built from a Config literal that did not go through config.Load (tests).
+const defaultListHeadFanout = 16
+
 // enrichPlaintextSizes replaces encrypted on-disk sizes with plaintext sizes for
 // ARMOR-encrypted objects. B2's ListObjectsV2 response includes the encrypted
-// object size; we resolve the plaintext size using the metadata cache (if warm)
-// or a parallel HeadObject call per object (on cache miss). Each errgroup goroutine
-// writes to a distinct slice index so no mutex is needed.
+// object size; the plaintext size is resolved from the in-memory manifest index
+// first, then from the version-gated metadata cache, and only on a double miss
+// from a bounded fan-out of backend HeadObject calls (ARMOR_LIST_HEAD_FANOUT,
+// retried once on failure). A HEAD that still fails leaves the size unset (0)
+// with a WARN — never the ciphertext size, which would silently corrupt
+// clients that compute byte offsets from LIST sizes (DuckDB/httpfs).
+//
+// backend.List returns stored-space keys (ARMOR_PREFIX applied), so the
+// manifest and cache lookups use the client-space key while the backend HEAD
+// reuses the listed stored key as-is — applying the prefix again would 404
+// every HEAD on a prefixed deployment. Each errgroup goroutine writes to a
+// distinct slice index so no mutex is needed.
 func (h *Handlers) enrichPlaintextSizes(ctx context.Context, bucket string, result *backend.ListResult) {
+	fanout := defaultListHeadFanout
+	if h.config != nil && h.config.ListHeadFanout >= 1 {
+		fanout = h.config.ListHeadFanout
+	}
 	eg, egCtx := errgroup.WithContext(ctx)
+	eg.SetLimit(fanout)
 	for i := range result.Objects {
 		i := i
-		key := result.Objects[i].Key
-		if am, ok := h.cache.Get(bucket, key); ok {
-			if am != nil && am.PlaintextSize > 0 {
-				result.Objects[i].Size = am.PlaintextSize
+		storedKey := result.Objects[i].Key
+		clientKey := h.stripPrefix(storedKey)
+
+		if h.manifest != nil {
+			if entry, ok := h.manifest.Lookup(bucket, clientKey); ok && entry != nil {
+				result.Objects[i].Size = entry.PlaintextSize
+				if h.metrics != nil {
+					h.metrics.IncListHead("index")
+				}
+				continue
+			}
+		}
+		// The listed ETag is the stored generation this row describes; a
+		// version-matched cache entry therefore describes the same object and
+		// its plaintext size is authoritative. A miss after an overwrite is
+		// the freshness rule working, not a negative cache.
+		if am, ok := h.cache.GetVersioned(bucket, clientKey, result.Objects[i].ETag); ok && am != nil {
+			result.Objects[i].Size = am.PlaintextSize
+			if h.metrics != nil {
+				h.metrics.IncListHead("cache")
 			}
 			continue
 		}
 		eg.Go(func() error {
-			prefixedKey := h.applyPrefix(key)
-			info, err := h.backend.Head(egCtx, bucket, prefixedKey)
-			if err != nil {
-				return nil // non-fatal: keep encrypted size rather than failing the listing
+			var info *backend.ObjectInfo
+			var err error
+			for attempt := 0; attempt < 2; attempt++ {
+				info, err = h.backend.Head(egCtx, bucket, storedKey)
+				if err == nil || egCtx.Err() != nil {
+					break
+				}
 			}
-			if info.Size > 0 {
-				result.Objects[i].Size = info.Size
+			if err != nil {
+				log.Printf("WARN LIST %s/%s: plaintext-size HEAD failed after retry; omitting size rather than reporting the ciphertext size: %v", bucket, storedKey, err)
+				result.Objects[i].Size = 0
+				if h.metrics != nil {
+					h.metrics.IncListHead("error")
+				}
+				return nil
+			}
+			if info.IsARMOREncrypted {
+				if am, ok := backend.ParseARMORMetadata(info.Metadata); ok && am != nil {
+					result.Objects[i].Size = am.PlaintextSize
+					h.cache.SetVersioned(bucket, clientKey, info.ETag, am)
+				} else {
+					// Encrypted but unparseable: the size cannot be resolved.
+					log.Printf("WARN LIST %s/%s: ARMOR metadata unparseable; omitting size rather than reporting the ciphertext size", bucket, storedKey)
+					result.Objects[i].Size = 0
+					if h.metrics != nil {
+						h.metrics.IncListHead("error")
+					}
+					return nil
+				}
+			}
+			if h.metrics != nil {
+				h.metrics.IncListHead("head")
 			}
 			return nil
 		})
@@ -4752,11 +4819,8 @@ func (h *Handlers) CompleteMultipartUpload(w http.ResponseWriter, r *http.Reques
 	}
 
 	// Completion installed a new stored generation at this key; retire any
-	// cached entry for the previous one (see the PUT paths above). Nil-safe
-	// for the same reason as the PUT paths.
-	if h.cache != nil {
-		h.cache.Delete(bucket, key)
-	}
+	// cached entry for the previous one (see the PUT paths above).
+	h.cache.Delete(bucket, key)
 
 	// Record provenance (fallback when manifest is disabled)
 	if h.manifest == nil && h.provenance != nil && h.provenance.ShouldRecord(key) {
