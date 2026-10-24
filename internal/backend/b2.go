@@ -668,14 +668,23 @@ func checkContentRange(header string, offset, length int64) error {
 }
 
 func readRangeBody(body io.Reader, expectedLength int64) ([]byte, error) {
-	data, err := io.ReadAll(io.LimitReader(body, expectedLength+1))
-	if err != nil {
+	if expectedLength < 0 {
+		return nil, &shortReadError{got: 0, want: expectedLength}
+	}
+	// The caller named the exact span it asked for, so read into one
+	// pre-sized buffer instead of growing through io.ReadAll's geometric
+	// regrowth (~20 reallocations per 1 MiB fetch). One extra byte of
+	// headroom keeps an over-long body detectable as a length mismatch
+	// rather than silently truncated.
+	buf := make([]byte, expectedLength+1)
+	n, err := io.ReadFull(body, buf)
+	if err != nil && !errors.Is(err, io.EOF) && !errors.Is(err, io.ErrUnexpectedEOF) {
 		return nil, fmt.Errorf("read %d bytes: %w", expectedLength, err)
 	}
-	if int64(len(data)) != expectedLength {
-		return nil, &shortReadError{got: len(data), want: expectedLength}
+	if int64(n) != expectedLength {
+		return nil, &shortReadError{got: n, want: expectedLength}
 	}
-	return data, nil
+	return buf[:expectedLength], nil
 }
 
 func cloudflareHeaders(resp *http.Response) map[string]string {
