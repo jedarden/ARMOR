@@ -1213,6 +1213,32 @@ func (h *Handlers) GetObject(w http.ResponseWriter, r *http.Request, bucket, key
 	// manifest path; on the legacy path info itself is the stored HEAD.
 	var ciphertextInfo *backend.ObjectInfo
 	var headErr error
+
+	// The manifest probe decides which object is served, but for every
+	// single-PUT object it is a miss that used to cost one full sequential
+	// round trip before the legacy HEAD could even start (~74 ms per read;
+	// armor-50a36688). Start the legacy HEAD concurrently and decide exactly
+	// as the sequential path did: an existing manifest wins and the HEAD
+	// result is discarded, a manifest miss consumes it, and a non-404
+	// manifest failure still fails the request — never a fallback to the
+	// legacy object. The overlap trades one extra backend request on the
+	// manifest path for one fewer sequential round trip on the legacy path;
+	// which object is served is unchanged (armor-420c15a5). legacyKey is
+	// captured before the goroutine starts because the manifest path below
+	// reassigns prefixedKey to the ciphertext object. The channel is
+	// buffered so the probe goroutine can always deliver and exit, and the
+	// request context — cancelled by net/http when this handler returns or
+	// the client disconnects — bounds its lifetime.
+	type legacyHeadResult struct {
+		info *backend.ObjectInfo
+		err  error
+	}
+	legacyKey := prefixedKey
+	legacyHeadCh := make(chan legacyHeadResult, 1)
+	go func() {
+		i, herr := h.backend.Head(ctx, bucket, legacyKey)
+		legacyHeadCh <- legacyHeadResult{info: i, err: herr}
+	}()
 	manifestBody, manifestMeta, manifestErr := h.readManifest(ctx, bucket, key)
 	if manifestErr != nil && !backend.IsNotFound(manifestErr) {
 		// The manifest read failed for a reason other than "no manifest was
@@ -1282,8 +1308,12 @@ func (h *Handlers) GetObject(w http.ResponseWriter, r *http.Request, bucket, key
 		// Override prefixedKey to point to ciphertext object
 		prefixedKey = manifestBody.CiphertextObject
 	} else {
-		// Legacy path: no manifest, get metadata from object itself
-		info, err = h.backend.Head(ctx, bucket, prefixedKey)
+		// Legacy path: no manifest, so the overlapped HEAD's result IS the
+		// decision input — wait for it here instead of issuing a second,
+		// sequential HEAD. This wait is why the overlap wins: the HEAD has
+		// been in flight since before the manifest probe started.
+		res := <-legacyHeadCh
+		info, err = res.info, res.err
 	}
 
 	if err != nil && info == nil {

@@ -26,29 +26,37 @@ GET through the HTTP surface over a call-recording backend and asserts the
 exact call sequence. A change that adds a round trip fails CI; a change that
 removes one updates the pin **and this table in the same bead**.
 
-| Write version | Object shape | Backend calls | Sequence |
-|---|---|---|---|
-| v1 | single-PUT | **5** | manifest GET (404 miss) → HEAD → header GetRange → HMAC-table GetRange → data GetRange |
-| v2 | single-PUT | **5** | same as v1 (v1/v2 share the inline-HMAC read path) |
-| v3 | single-PUT | **5** | manifest GET (404 miss) → HEAD → header GetRange → trailer block-table GetRange → data GetRange |
-| v3 | multipart | **4** | manifest GET (hit) → combined freshness/size HEAD → HMAC sidecar GetDirect → one GetRange covering the whole concatenated ciphertext |
+| Write version | Object shape | Backend calls | Critical path | Sequence |
+|---|---|---|---|---|
+| v1 | single-PUT | **5** | **4** | manifest GET (404 miss) ∥ HEAD → header GetRange → HMAC-table GetRange → data GetRange |
+| v2 | single-PUT | **5** | **4** | same as v1 (v1/v2 share the inline-HMAC read path) |
+| v3 | single-PUT | **5** | **4** | manifest GET (404 miss) ∥ HEAD → header GetRange → trailer block-table GetRange → data GetRange |
+| v3 | multipart | **5** | **4** | manifest GET (hit) ∥ plaintext-key HEAD (hit, discarded) → combined freshness/size HEAD → HMAC sidecar GetDirect → one GetRange covering the whole concatenated ciphertext |
 
-The table reflects armor-c3199f1c (2026-10-23): GetObject reads the envelope
-header once and passes it to the downstream helpers (previously the header was
-read twice on every single-PUT GET), and the multipart path's ADR-016 freshness
-check and ciphertext-size lookup share one authoritative HEAD (previously two
-HEADs of the same object). armor-272299ca (2026-10-24) replaced the multipart
-GET's one-range-per-part fetch with a single ranged request over the whole
-stored object — parts are contiguous in storage, so the pipelined reader owns
-read-ahead across part boundaries and per-part requests were an extra round
-trip per part. Range reads additionally reuse the v3 trailer block
-table across requests through a stored-generation-keyed cache — not visible in
-a first-GET pin; repeated same-version ranges skip the trailer fetch entirely.
+The table reflects armor-420c15a5 (2026-10-24): GetObject issues the manifest
+probe and the legacy plaintext-key HEAD concurrently and then decides exactly
+as the sequential path did — an existing manifest wins and the HEAD result is
+discarded, a miss consumes it. The overlap costs one extra backend request on
+the manifest path (the multipart row went 4 → 5, its probe HEAD discarded) and
+removes one sequential round trip from every single-PUT read: the first two
+calls are one round trip of wall time, not two. Previously (armor-c3199f1c,
+2026-10-23): GetObject read the envelope header once and passed it to the
+downstream helpers, and the multipart path's ADR-016 freshness check and
+ciphertext-size lookup shared one authoritative HEAD. armor-272299ca
+(2026-10-24) replaced the multipart GET's one-range-per-part fetch with a
+single ranged request over the whole stored object. Range reads additionally
+reuse the v3 trailer block table across requests through a
+stored-generation-keyed cache — not visible in a first-GET pin; repeated
+same-version ranges skip the trailer fetch entirely (in steady state a v3
+single-PUT GET is 4 calls / 3 round trips, as the §2 matrix measures).
 
 Notes for anyone lowering these:
 
 - Call 1 is the `readManifest` GET, which **misses for every non-multipart
-  object** — a pure wasted round trip on the single-PUT path.
+  object**. Since armor-420c15a5 it overlaps the HEAD instead of serializing
+  in front of it, so its cost on the critical path is zero on the legacy
+  path; the request-count tests prove the overlap deterministically (the
+  guarded manifest GET blocks until a HEAD is recorded).
 - The HEAD exists to distinguish the legacy (v1/v2/inline-HMAC) path from
   the v3 path before either is committed.
 - Multipart cannot be "small" (ADR-015 requires uniform parts ≥ 5 MiB), so
@@ -71,17 +79,35 @@ ARMOR_SMALL_OBJECT_BENCH=1 go test ./internal/server/handlers/ \
   -run TestSmallObjectFullGETLatencyMatrix -v -count=1 -timeout 45m
 ```
 
-Environment: codinghome, go1.26.5 linux/amd64, 2026-10-15 (clean source
-export). RTT = **74 ms** per backend call
-(the measured cluster→`us-west-002` round trip in
+Environment: codinghome, linux/amd64 (2026-10-24 matrix: go1.25.14, the
+go.mod toolchain; 2026-10-15 matrix: go1.26.5). RTT =
+**74 ms** per backend call (the measured cluster→`us-west-002` round trip in
 [docs/plan/plan.md](../plan/plan.md) ADR-013 note;
 `ARMOR_SMALL_OBJECT_BENCH_RTT_MS` overrides). v2 and v3 writes, 64 KiB
 blocks, AES-256-CTR + HMAC-SHA256, and the block and footer caches configured
 by the test harness.
 
-p50 / p95 (ms) and inverse mean latency per client (shown as /s) per cell.
-These rates are not aggregate throughput. **n = max(2×concurrency, 32) GETs
-per cell, each GET verified to make exactly 6 backend calls**:
+**2026-10-24 (overlapped probe, armor-420c15a5).** Steady state: every cell
+GETs one hot object, so v3's trailer block table is generation-keyed
+cache-resident after the first GET (armor-c3199f1c) — the pin verifies v2
+makes 5 backend calls per GET and v3 makes 4 plus exactly one first-GET table
+fetch. p50 / p95 (ms) and inverse mean latency per client (shown as /s);
+these rates are not aggregate throughput; **n = max(2×concurrency, 32) GETs
+per cell**:
+
+| Write version | Size | c=1 | c=16 | c=64 | c=256 |
+|---|---|---|---|---|---|
+| v2 | 4 KiB | 296.9 / 297.0 · 3.37/s | 298.0 / 298.8 · 3.36/s | 299.8 / 300.9 · 3.34/s | 308.1 / 315.4 · 3.25/s |
+| v2 | 32 KiB | 296.9 / 297.2 · 3.37/s | 298.0 / 298.7 · 3.36/s | 299.7 / 302.5 · 3.33/s | 305.3 / 310.8 · 3.27/s |
+| v2 | 256 KiB | 297.7 / 298.3 · 3.36/s | 299.1 / 300.8 · 3.34/s | 304.3 / 307.3 · 3.29/s | 315.6 / 328.8 · 3.17/s |
+| v2 | 1 MiB | 299.5 / 300.1 · 3.34/s | 303.4 / 306.6 · 3.29/s | 314.2 / 323.0 · 3.19/s | 362.8 / 404.1 · 2.77/s |
+| v3 | 4 KiB | 222.7 / 222.8 · 4.44/s | 223.0 / 297.3 · 3.85/s | 224.5 / 298.3 · 3.84/s | 232.2 / 303.9 · 3.77/s |
+| v3 | 32 KiB | 222.7 / 223.2 · 4.44/s | 224.1 / 298.4 · 3.83/s | 228.2 / 302.6 · 3.80/s | 245.0 / 310.9 · 3.70/s |
+| v3 | 256 KiB | 223.9 / 225.5 · 4.42/s | 226.6 / 301.7 · 3.80/s | 236.5 / 311.0 · 3.72/s | 273.0 / 327.1 · 3.52/s |
+| v3 | 1 MiB | 225.8 / 226.4 · 4.38/s | 235.0 / 315.1 · 3.68/s | 250.7 / 328.3 · 3.56/s | 321.9 / 409.4 · 3.07/s |
+
+**2026-10-15 (pre-overlap, 6-call sequential read path), kept as the
+before-numbers:**
 
 | Write version | Size | c=1 | c=16 | c=64 | c=256 |
 |---|---|---|---|---|---|
@@ -94,17 +120,26 @@ per cell, each GET verified to make exactly 6 backend calls**:
 | v3 | 256 KiB | 446.1 / 446.9 · 2.24/s | 448.3 / 450.6 · 2.23/s | 452.9 / 456.3 · 2.21/s | 456.6 / 475.9 · 2.18/s |
 | v3 | 1 MiB | 448.3 / 449.2 · 2.23/s | 455.1 / 457.6 · 2.20/s | 463.6 / 475.1 · 2.16/s | 485.4 / 535.7 · 2.04/s |
 
-Reading:
+Reading (2026-10-24 matrix):
 
-- **p50 ≈ 6 × RTT = 444 ms at every size and both envelope versions.** The
-  bead's source-inspection estimate (~370 ms at 5 calls) was one round trip
-  short: the measured count is 6.
-- Object size is irrelevant below ~1 MiB — the round trips are the latency,
-  exactly the claim this baseline pins.
-- Per-client latency stays near six RTTs as concurrency rises for small
-  objects. At 1 MiB and high concurrency it rises modestly; this in-memory
-  backend has no bandwidth term, so local compute and scheduling account for
-  the added time.
+- **v2 p50 ≈ 4 × RTT = 296 ms; v3 p50 ≈ 3 × RTT = 222 ms at every small
+  size.** Against the 2026-10-15 matrix (6 × RTT = 445 ms at every size and
+  version) v2 dropped ~148 ms (−33%) and v3 ~223 ms (−50%). Two changes
+  landed between the measurements, never measured separately:
+  armor-c3199f1c removed one sequential round trip (header dedup on v1/v2;
+  the generation-keyed table cache on steady-state v3) and armor-420c15a5
+  overlapped the manifest probe with the plaintext-key HEAD, removing the
+  second. The v2 numbers are the clean read on the overlap: 5 calls, 4
+  round trips.
+- Object size is irrelevant below ~256 KiB — the round trips are the
+  latency, exactly the claim this baseline pins.
+- Per-client latency stays near the model as concurrency rises for small
+  objects. At 1 MiB and high concurrency it rises (v2 1 MiB c=256 p50
+  362.8 ms, v3 321.9 ms); this in-memory backend has no bandwidth term, so
+  local compute and scheduling account for the added time (the 1 MiB c=256
+  cells decrypt + HMAC the whole object in the hot path). The v3 p95 ≈
+  297 ms tail in every cell is the one first-GET trailer-table fetch
+  (4 round trips) the steady-state pin excepts.
 - At 1 ms injected RTT the same matrix runs in seconds and is a quick
   sanity check when re-pinning counts.
 
@@ -173,6 +208,15 @@ Reading:
 ~70 mCPU idle and one ~5-minute cycle per 6 h, and gives the small-object
 beads that depend on this baseline a standing regression signal. Remove it
 by deleting the manifest file in declarative-config (ArgoCD prunes with it).
+
+**Pending re-harvest (armor-420c15a5):** the §2 matrices above were re-run
+2026-10-24 against the overlapped-probe read path, but the production table
+still reflects the 0.1.1975 sequential read path. One probe cycle is to be
+harvested after the release carrying armor-420c15a5 rolls to
+ord-devimprint, and the table above replaced with its numbers (expect
+small-object p50 to fall by roughly one 74 ms round trip for
+single-PUT objects, plus the c3199f1c header-dedup saving that also shipped
+unmeasured).
 
 ## Using this baseline
 

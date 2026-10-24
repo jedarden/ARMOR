@@ -9,9 +9,15 @@ package handlers_test
 // small single-PUT object written in v1/v2 and in v3, and of a small v3
 // multipart object. Every backend call the handler makes — including the
 // readManifest GET that misses for every non-multipart object — is recorded
-// and asserted in order, so a change that adds a round trip fails here, and a
-// change that removes one updates this pin and the published baseline in
+// and asserted, so a change that adds a round trip fails here, and a change
+// that removes one updates this pin and the published baseline in
 // docs/performance/small-object-get-baseline.md in the same bead.
+//
+// Since armor-420c15a5 the manifest probe and the plaintext-key HEAD run
+// concurrently, so the first two recorded calls are asserted as an unordered
+// pair and the overlap itself is proven deterministically: the guarded
+// manifest GET blocks until a HEAD is recorded, which a sequential read path
+// cannot satisfy (see callCountingBackend's overlap guard).
 
 import (
 	"bytes"
@@ -52,8 +58,19 @@ type callCountingBackend struct {
 	*recordingBackend
 	delay time.Duration // injected per-call RTT; 0 disables
 
-	mu    sync.Mutex
-	calls []backendCall
+	// Overlap guard (armor-420c15a5): the manifest-object GET blocks until a
+	// HEAD has been recorded and remembers that it happened. A read path that
+	// still probes the manifest and heads the plaintext key sequentially can
+	// never satisfy it — no HEAD is in flight while the manifest GET runs —
+	// so manifestSawHead() after a measured GET is a deterministic proof the
+	// two ran concurrently, not a timing assertion.
+	overlapGuard bool
+	headSeen     chan struct{}
+	headSeenOnce sync.Once
+
+	mu          sync.Mutex
+	calls       []backendCall
+	manifestSaw bool
 }
 
 func (c *callCountingBackend) record(method, key string, offset, length int64, hit bool) {
@@ -65,9 +82,30 @@ func (c *callCountingBackend) record(method, key string, offset, length int64, h
 	c.mu.Unlock()
 }
 
+// manifestSawHead reports whether the guarded manifest GET observed a HEAD
+// while it was in flight (see the overlap guard above).
+func (c *callCountingBackend) manifestSawHead() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.manifestSaw
+}
+
 func (c *callCountingBackend) Get(ctx context.Context, bucket, key string) (io.ReadCloser, *backend.ObjectInfo, error) {
 	body, info, err := c.mockBackend.Get(ctx, bucket, key)
 	c.record("GET", bucket+"/"+key, 0, 0, err == nil)
+	if c.overlapGuard && strings.HasSuffix(key, ".armor-manifest") {
+		select {
+		case <-c.headSeen:
+			c.mu.Lock()
+			c.manifestSaw = true
+			c.mu.Unlock()
+		case <-time.After(5 * time.Second):
+			// Not seen: the read path ran the probe and the HEAD
+			// sequentially. The caller's manifestSawHead() assertion fails
+			// with that verdict; resolve here so a regression degrades to a
+			// slow failure instead of a hang.
+		}
+	}
 	return body, info, err
 }
 
@@ -92,6 +130,7 @@ func (c *callCountingBackend) GetRangeWithHeaders(ctx context.Context, bucket, k
 func (c *callCountingBackend) Head(ctx context.Context, bucket, key string) (*backend.ObjectInfo, error) {
 	info, err := c.mockBackend.Head(ctx, bucket, key)
 	c.record("HEAD", bucket+"/"+key, 0, 0, err == nil)
+	c.headSeenOnce.Do(func() { close(c.headSeen) })
 	return info, err
 }
 
@@ -129,6 +168,8 @@ func countingTestSetup(t *testing.T, formatWriteVersion int, delay time.Duration
 	cb := &callCountingBackend{
 		recordingBackend: newRecordingBackend(),
 		delay:            delay,
+		overlapGuard:     true,
+		headSeen:         make(chan struct{}),
 	}
 	cache := backend.NewMetadataCache(1000, 300)
 	footerCache := backend.NewFooterCache(1000, 300)
@@ -281,12 +322,52 @@ func assertCallsEqual(t *testing.T, got, want []backendCall, context string) {
 	}
 }
 
+// assertProbePair asserts that the first two recorded calls are the manifest
+// GET and the overlapped plaintext-key HEAD in either order — they race by
+// design since armor-420c15a5 — and that the overlap guard fired: the
+// manifest GET must have observed the HEAD in flight, which a read path that
+// serializes the two calls cannot satisfy.
+func assertProbePair(t *testing.T, cb *callCountingBackend, manifestCall, headCall backendCall, context string) {
+	t.Helper()
+	calls := cb.recordedCalls()
+	if len(calls) < 2 {
+		t.Fatalf("%s: only %d backend calls recorded, want at least the probe/HEAD pair\nrecorded: %s",
+			context, len(calls), formatCalls(calls))
+	}
+	first, second := calls[0], calls[1]
+	if !((first == manifestCall && second == headCall) || (first == headCall && second == manifestCall)) {
+		t.Fatalf("%s: first two backend calls should be the manifest probe and the overlapped HEAD in either order:\n  got  %s, %s\n  want %s / %s\nfull recorded sequence: %s",
+			context, formatCalls([]backendCall{first}), formatCalls([]backendCall{second}),
+			formatCalls([]backendCall{manifestCall}), formatCalls([]backendCall{headCall}), formatCalls(calls))
+	}
+	if !cb.manifestSawHead() {
+		t.Fatalf("%s: the manifest GET did not overlap a HEAD — the probe and the legacy HEAD ran sequentially; armor-420c15a5's round-trip saving is gone", context)
+	}
+}
+
+// assertProbePairThen pins a measured GET whose first two backend calls are
+// the manifest GET and the overlapped plaintext-key HEAD (assertProbePair),
+// with the remaining calls matching want exactly, in order, and the total
+// count pinned at 2+len(want).
+func assertProbePairThen(t *testing.T, cb *callCountingBackend, manifestCall, headCall backendCall, want []backendCall, context string) {
+	t.Helper()
+	calls := cb.recordedCalls()
+	if len(calls) != 2+len(want) {
+		t.Fatalf("%s: %d backend calls recorded, baseline is %d — a round trip was added or removed; update this pin and docs/performance/small-object-get-baseline.md in the same bead\nrecorded: %s",
+			context, len(calls), 2+len(want), formatCalls(calls))
+	}
+	assertProbePair(t, cb, manifestCall, headCall, context)
+	assertCallsEqual(t, calls[2:], want, context)
+}
+
 // TestSmallObjectFullGETRequestCountSinglePUTV2 pins the backend request
-// count for a full GET of a small single-PUT v2-envelope object: the
-// readManifest GET (a miss for every non-multipart object), the legacy-path
-// Head, the envelope header read GetObject performs, the header re-read
-// handleFullObjectStream performs, the inline HMAC table prefetch, and the
-// data stream read.
+// count for a full GET of a small single-PUT v2-envelope object: five calls
+// total, four on the critical path. The readManifest GET (a miss for every
+// non-multipart object) and the legacy-path HEAD overlap (armor-420c15a5 —
+// previously the HEAD waited one full sequential round trip for the probe);
+// then the envelope header read (read once and reused by the full-object
+// stream, armor-c3199f1c), the inline HMAC table prefetch, and the data
+// stream read.
 func TestSmallObjectFullGETRequestCountSinglePUTV2(t *testing.T) {
 	const bucket = "test-bucket"
 	const key = "small-v2.bin"
@@ -304,16 +385,18 @@ func TestSmallObjectFullGETRequestCountSinglePUTV2(t *testing.T) {
 
 	hmacOffset := crypto.HeaderSize + int64(len(plaintext))
 	hmacSize := int64(crypto.ComputeBlockCount(int64(len(plaintext)), 65536)) * crypto.HMACSize
-	want := []backendCall{
-		{Method: "GET", Key: bucket + "/" + key + ".armor-manifest", Hit: false},
-		{Method: "HEAD", Key: bucket + "/" + key, Hit: true},
-		// Single header read: GetObject reads the envelope header once and the
-		// full-object stream reuses it (armor-c3199f1c; was two header reads).
-		{Method: "GET_RANGE", Key: bucket + "/" + key, Offset: 0, Length: crypto.HeaderSize, Hit: true},
-		{Method: "GET_RANGE", Key: bucket + "/" + key, Offset: hmacOffset, Length: hmacSize, Hit: true},
-		{Method: "GET_RANGE", Key: bucket + "/" + key, Offset: 0, Length: crypto.HeaderSize + int64(len(plaintext)), Hit: true},
-	}
-	assertCallsEqual(t, cb.recordedCalls(), want, "single-PUT v2")
+	assertProbePairThen(t, cb,
+		backendCall{Method: "GET", Key: bucket + "/" + key + ".armor-manifest", Hit: false},
+		backendCall{Method: "HEAD", Key: bucket + "/" + key, Hit: true},
+		[]backendCall{
+			// Single header read: GetObject reads the envelope header once and
+			// the full-object stream reuses it (armor-c3199f1c; was two header
+			// reads).
+			{Method: "GET_RANGE", Key: bucket + "/" + key, Offset: 0, Length: crypto.HeaderSize, Hit: true},
+			{Method: "GET_RANGE", Key: bucket + "/" + key, Offset: hmacOffset, Length: hmacSize, Hit: true},
+			{Method: "GET_RANGE", Key: bucket + "/" + key, Offset: 0, Length: crypto.HeaderSize + int64(len(plaintext)), Hit: true},
+		},
+		"single-PUT v2")
 }
 
 // TestSmallObjectFullGETRequestCountSinglePUTV1 plants a legacy v1 envelope
@@ -335,24 +418,26 @@ func TestSmallObjectFullGETRequestCountSinglePUTV1(t *testing.T) {
 
 	hmacOffset := crypto.HeaderSize + int64(len(plaintext))
 	hmacSize := int64(crypto.ComputeBlockCount(int64(len(plaintext)), 65536)) * crypto.HMACSize
-	want := []backendCall{
-		{Method: "GET", Key: bucket + "/" + key + ".armor-manifest", Hit: false},
-		{Method: "HEAD", Key: bucket + "/" + key, Hit: true},
-		// Single header read: GetObject reads the envelope header once and the
-		// full-object stream reuses it (armor-c3199f1c; was two header reads).
-		{Method: "GET_RANGE", Key: bucket + "/" + key, Offset: 0, Length: crypto.HeaderSize, Hit: true},
-		{Method: "GET_RANGE", Key: bucket + "/" + key, Offset: hmacOffset, Length: hmacSize, Hit: true},
-		{Method: "GET_RANGE", Key: bucket + "/" + key, Offset: 0, Length: crypto.HeaderSize + int64(len(plaintext)), Hit: true},
-	}
-	assertCallsEqual(t, cb.recordedCalls(), want, "single-PUT v1")
+	assertProbePairThen(t, cb,
+		backendCall{Method: "GET", Key: bucket + "/" + key + ".armor-manifest", Hit: false},
+		backendCall{Method: "HEAD", Key: bucket + "/" + key, Hit: true},
+		[]backendCall{
+			// Single header read: GetObject reads the envelope header once and
+			// the full-object stream reuses it (armor-c3199f1c; was two header
+			// reads).
+			{Method: "GET_RANGE", Key: bucket + "/" + key, Offset: 0, Length: crypto.HeaderSize, Hit: true},
+			{Method: "GET_RANGE", Key: bucket + "/" + key, Offset: hmacOffset, Length: hmacSize, Hit: true},
+			{Method: "GET_RANGE", Key: bucket + "/" + key, Offset: 0, Length: crypto.HeaderSize + int64(len(plaintext)), Hit: true},
+		},
+		"single-PUT v1")
 }
 
 // TestSmallObjectFullGETRequestCountSinglePUTV3 pins the backend request
-// count for a full GET of a small single-PUT v3-envelope object: the
-// readManifest miss, the legacy-path Head, one envelope header read (GetObject
-// reads it once and the full-object stream reuses it — armor-c3199f1c removed
-// the header re-read), the v3 trailer block table fetch, and the data stream
-// read.
+// count for a full GET of a small single-PUT v3-envelope object: five calls
+// total, four on the critical path — the overlapped manifest-probe/HEAD pair
+// (armor-420c15a5), one envelope header read (GetObject reads it once and the
+// full-object stream reuses it — armor-c3199f1c removed the header re-read),
+// the v3 trailer block table fetch, and the data stream read.
 func TestSmallObjectFullGETRequestCountSinglePUTV3(t *testing.T) {
 	const bucket = "test-bucket"
 	const key = "small-v3.bin"
@@ -369,19 +454,17 @@ func TestSmallObjectFullGETRequestCountSinglePUTV3(t *testing.T) {
 
 	calls := cb.recordedCalls()
 	if len(calls) != 5 {
-		t.Fatalf("single-PUT v3: %d backend calls recorded, baseline is 5 (manifest miss, head, header, trailer block table, data): %s",
+		t.Fatalf("single-PUT v3: %d backend calls recorded, baseline is 5 (manifest probe ∥ head, header, trailer block table, data): %s",
 			len(calls), formatCalls(calls))
 	}
-	prefix := []backendCall{
-		{Method: "GET", Key: bucket + "/" + key + ".armor-manifest", Hit: false},
-		{Method: "HEAD", Key: bucket + "/" + key, Hit: true},
-		{Method: "GET_RANGE", Key: bucket + "/" + key, Offset: 0, Length: crypto.HeaderSize, Hit: true},
-	}
-	for i := range prefix {
-		if calls[i] != prefix[i] {
-			t.Fatalf("single-PUT v3: backend call %d mismatch:\n  got  %+v\n  want %+v\nfull recorded sequence: %s",
-				i+1, calls[i], prefix[i], formatCalls(calls))
-		}
+	// The probe/HEAD pair races; the envelope header read follows the decision.
+	assertProbePair(t, cb,
+		backendCall{Method: "GET", Key: bucket + "/" + key + ".armor-manifest", Hit: false},
+		backendCall{Method: "HEAD", Key: bucket + "/" + key, Hit: true},
+		"single-PUT v3")
+	header := calls[2]
+	if header.Method != "GET_RANGE" || header.Offset != 0 || header.Length != crypto.HeaderSize {
+		t.Fatalf("single-PUT v3: call 3 should be the envelope header read, got %+v", header)
 	}
 
 	// Trailer block table read: sized to the block count, starting after the
@@ -399,17 +482,19 @@ func TestSmallObjectFullGETRequestCountSinglePUTV3(t *testing.T) {
 }
 
 // TestSmallObjectFullGETRequestCountMultipartV3 pins the backend request
-// count for a full GET of a v3 multipart object: the manifest hit, one
-// ciphertext HEAD (armor-c3199f1c: the ADR-016 freshness head and the
-// ciphertext-size head were the same round trip and are now a single
-// authoritative HEAD), the HMAC sidecar load, and ONE range read covering
-// the whole concatenated ciphertext (armor-272299ca: storage has no part
-// boundaries, so the pipelined reader streams the object in a single ranged
-// request instead of one per-part fetch).
-// Multipart objects cannot be
-// small by construction (ADR-015 requires a uniform part size of at least
-// 5 MiB), so this uses the smallest legal two-part shape; what is pinned is
-// the fixed per-GET overhead of 4 calls plus the single whole-object range.
+// count for a full GET of a v3 multipart object: five calls total. The
+// manifest hit races the plaintext-key probe HEAD (armor-420c15a5) whose
+// result is discarded on the manifest path — the "one more total request"
+// the overlap trades for one fewer sequential round trip on the legacy
+// path — followed by the one authoritative ciphertext HEAD (armor-c3199f1c:
+// the ADR-016 freshness check and the ciphertext-size lookup are a single
+// round trip), the HMAC sidecar load, and ONE range read covering the whole
+// concatenated ciphertext (armor-272299ca: storage has no part boundaries,
+// so the pipelined reader streams the object in a single ranged request
+// instead of one per-part fetch).
+// Multipart objects cannot be small by construction (ADR-015 requires a
+// uniform part size of at least 5 MiB), so this uses the smallest legal
+// two-part shape; what is pinned is the fixed per-GET overhead.
 func TestSmallObjectFullGETRequestCountMultipartV3(t *testing.T) {
 	const bucket = "test-bucket"
 	const key = "small-multipart-v3.bin"
@@ -433,24 +518,27 @@ func TestSmallObjectFullGETRequestCountMultipartV3(t *testing.T) {
 	}
 
 	calls := cb.recordedCalls()
-	// 3 fixed calls (manifest hit, combined freshness/size HEAD, sidecar)
+	// 4 fixed calls (probe pair, combined freshness/size HEAD, sidecar)
 	// plus one whole-object GET_RANGE (armor-272299ca).
-	const wantCount = 3 + 1
+	const wantCount = 4 + 1
 	if len(calls) != wantCount {
-		t.Fatalf("v3 multipart: %d backend calls recorded, baseline is %d (manifest hit, combined freshness/size head, sidecar, one whole-object range): %s",
+		t.Fatalf("v3 multipart: %d backend calls recorded, baseline is %d (manifest hit ∥ discarded plaintext-key probe head, combined freshness/size head, sidecar, one whole-object range): %s",
 			len(calls), wantCount, formatCalls(calls))
 	}
-	if calls[0].Method != "GET" || calls[0].Key != bucket+"/"+key+".armor-manifest" || !calls[0].Hit {
-		t.Fatalf("v3 multipart: call 1 should be the manifest hit, got %+v", calls[0])
+	// The probe pair races; the probe HEAD is a hit (the assembled ciphertext
+	// object lives under the key itself) and its result is discarded.
+	assertProbePair(t, cb,
+		backendCall{Method: "GET", Key: bucket + "/" + key + ".armor-manifest", Hit: true},
+		backendCall{Method: "HEAD", Key: bucket + "/" + key, Hit: true},
+		"v3 multipart")
+	if calls[2].Method != "HEAD" || !calls[2].Hit {
+		t.Fatalf("v3 multipart: call 3 should be the combined ciphertext freshness/size head, got %+v", calls[2])
 	}
-	if calls[1].Method != "HEAD" || !calls[1].Hit {
-		t.Fatalf("v3 multipart: call 2 should be the combined ciphertext freshness/size head, got %+v", calls[1])
+	if calls[3].Method != "GET_DIRECT" || !calls[3].Hit {
+		t.Fatalf("v3 multipart: call 4 should be the HMAC sidecar load, got %+v", calls[3])
 	}
-	if calls[2].Method != "GET_DIRECT" || !calls[2].Hit {
-		t.Fatalf("v3 multipart: call 3 should be the HMAC sidecar load, got %+v", calls[2])
-	}
-	data := calls[3]
+	data := calls[4]
 	if data.Method != "GET_RANGE" || data.Offset != 0 || data.Length <= 0 {
-		t.Fatalf("v3 multipart: call 4 should be the whole-object range read from offset 0, got %+v", data)
+		t.Fatalf("v3 multipart: call 5 should be the whole-object range read from offset 0, got %+v", data)
 	}
 }

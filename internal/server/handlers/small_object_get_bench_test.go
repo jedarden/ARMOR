@@ -144,11 +144,20 @@ func runBenchCell(t *testing.T, cell benchCell, rtt time.Duration) []float64 {
 
 	// Every GET in this benchmark must make exactly the pinned number of
 	// backend calls; a drift here belongs in the request-count tests first.
-	const callsPerGET = 6
+	// Steady-state per-GET counts on one hot object: v2 makes 5 calls per GET
+	// (manifest probe ∥ plaintext-key HEAD — overlapped since
+	// armor-420c15a5 — envelope header, inline HMAC prefetch, data; nothing
+	// cacheable). v3 makes 4 (probe ∥ HEAD, header, data): the trailer block
+	// table is generation-keyed cached since armor-c3199f1c, so exactly one
+	// extra table fetch happens on the cell's first GET.
+	callsPerGET, warmupCalls := 5, 0
+	if cell.version == 3 {
+		callsPerGET, warmupCalls = 4, 1
+	}
 	totalCalls := len(cb.recordedCalls())
-	if totalCalls != callsPerGET*target {
-		t.Fatalf("benchmark made %d backend calls for %d GETs (%.2f per GET), expected exactly %d per GET — the read path changed; update the request-count pin and the baseline doc together",
-			totalCalls, target, float64(totalCalls)/float64(target), callsPerGET)
+	if totalCalls != callsPerGET*target+warmupCalls {
+		t.Fatalf("benchmark made %d backend calls for %d GETs (%.2f per GET), expected exactly %d per GET (+%d one-shot warm-up) — the read path changed; update the request-count pin and the baseline doc together",
+			totalCalls, target, float64(totalCalls)/float64(target), callsPerGET, warmupCalls)
 	}
 	return latencies
 }
@@ -170,13 +179,21 @@ func reportBenchCell(t *testing.T, cell benchCell, rtt time.Duration, latencies 
 	}
 	objectsPerSec := float64(len(latencies)) / (totalMs / 1000.0)
 
-	// Under a pure fixed-RTT model the expected per-object latency is
-	// callsPerGET x RTT regardless of size or concurrency (the in-memory
-	// backend has no bandwidth term); the size axis exists to demonstrate
-	// exactly that and to mirror the production probe's matrix.
-	expected := float64(6) * float64(rtt.Milliseconds())
+	// Under a pure fixed-RTT model the expected per-object latency is the
+	// critical-path round trip count x RTT regardless of size or concurrency
+	// (the in-memory backend has no bandwidth term); the size axis exists to
+	// demonstrate exactly that and to mirror the production probe's matrix.
+	// Four since armor-420c15a5: the manifest probe and the plaintext-key
+	// HEAD overlap, so v2's five calls take four sequential round trips. v3
+	// additionally serves the block table from the generation-keyed cache
+	// (armor-c3199f1c) and takes three.
+	criticalPath := 4
+	if cell.version == 3 {
+		criticalPath = 3
+	}
+	expected := float64(criticalPath) * float64(rtt.Milliseconds())
 
-	t.Logf("RESULT version=%d size=%dKiB concurrency=%d n=%d p50=%.1fms p95=%.1fms p99=%.1fms max=%.1fms mean=%.1fms objs/s=%.2f (expected ≈%.0fms = 6 x RTT)",
+	t.Logf("RESULT version=%d size=%dKiB concurrency=%d n=%d p50=%.1fms p95=%.1fms p99=%.1fms max=%.1fms mean=%.1fms objs/s=%.2f (expected ≈%.0fms = %d x RTT)",
 		cell.version, cell.sizeBytes/1024, cell.concurrency, len(sorted),
-		pct(0.50), pct(0.95), pct(0.99), sorted[len(sorted)-1], totalMs/float64(len(sorted)), objectsPerSec, expected)
+		pct(0.50), pct(0.95), pct(0.99), sorted[len(sorted)-1], totalMs/float64(len(sorted)), objectsPerSec, expected, criticalPath)
 }
