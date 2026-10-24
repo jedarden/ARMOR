@@ -509,10 +509,30 @@ func (h *Handlers) PutObject(w http.ResponseWriter, r *http.Request, bucket, key
 	contentLength := r.ContentLength
 	streamingThreshold := int64(10 * 1024 * 1024) // 10MB threshold
 
-	// Use streaming for large files or unknown size, but NOT when compression is enabled
-	// Compression requires buffering the entire file anyway (to compress), so disable streaming
-	// Also disable streaming when compress rules are configured (may require evaluation)
-	useStreaming := !h.config.Compress && !h.config.CompressRules.HasRules() && (contentLength < 0 || contentLength > streamingThreshold)
+	// Resolve the per-object compression decision (x-amz-meta-armor-compress
+	// override > compress rules > global Compress flag) BEFORE choosing the
+	// upload path. Keying streaming off the mere presence of compression
+	// configuration forced every large or unknown-length body — including
+	// objects no rule would compress — through io.ReadAll, and the streaming
+	// path never evaluated the override header (silently ignoring compress
+	// requests and never rejecting invalid ones). Only an object that will
+	// actually be whole-object compressed needs the buffered path.
+	contentType := r.Header.Get("Content-Type")
+	if contentType == "" {
+		contentType = "application/octet-stream"
+	}
+	contentType = config.ExtractContentType(contentType)
+	compressOverride := r.Header.Get("x-amz-meta-armor-compress")
+	shouldCompress, err := config.EvaluateCompression(key, contentType, h.config.CompressRules, compressOverride, h.config.Compress)
+	if err != nil {
+		h.writeError(w, r, "InvalidArgument", fmt.Sprintf("Invalid compression override: %v", err), 400)
+		return
+	}
+
+	// Use streaming for large files or unknown size unless THIS object will be
+	// compressed: whole-object compression requires the buffer, and the
+	// streaming path stores objects uncompressed.
+	useStreaming := !shouldCompress && (contentLength < 0 || contentLength > streamingThreshold)
 
 	if useStreaming {
 		h.putObjectStreaming(ctx, w, r, bucket, key, createOnly, appendOnly, explicitCondition)
@@ -572,30 +592,15 @@ func (h *Handlers) PutObject(w http.ResponseWriter, r *http.Request, bucket, key
 	// Compute plaintext SHA-256 BEFORE compression (ADR-007)
 	plaintextSHA := crypto.ComputePlaintextSHA256(plaintext)
 
-	// Extract content-type for compression rules (before compression decision)
-	contentType := r.Header.Get("Content-Type")
-	if contentType == "" {
-		contentType = "application/octet-stream"
-	}
-	contentType = config.ExtractContentType(contentType)
-
-	// Get compression override header (highest priority)
-	compressOverride := r.Header.Get("x-amz-meta-armor-compress")
-
-	// Compress based on rules (ADR-007: compress-before-encrypt)
+	// contentType and the compression decision (shouldCompress) were resolved
+	// above, before the buffered-vs-streaming choice; reuse them here.
+	// Compress based on that decision (ADR-007: compress-before-encrypt).
 	// Rules support: suffix matching (.jsonl), content-type matching (application/json),
 	// wildcard (*), and per-request override (x-amz-meta-armor-compress header).
 	// ARMOR_COMPRESS=true is an alias for "*=zstd".
 	var compressed bool
 	var compressionType crypto.CompressionType
 	dataToEncrypt := plaintext
-
-	// Evaluate compression decision (rules + override)
-	shouldCompress, err := config.EvaluateCompression(key, contentType, h.config.CompressRules, compressOverride, h.config.Compress)
-	if err != nil {
-		h.writeError(w, r, "InvalidArgument", fmt.Sprintf("Invalid compression override: %v", err), 400)
-		return
-	}
 
 	if shouldCompress {
 		compressedData, wasCompressed, compType, err := crypto.Compress(plaintext)
