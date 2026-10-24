@@ -11,7 +11,9 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -118,9 +120,24 @@ aws_secret_access_key = %s
 			t.Fatalf("aws s3 ls failed: %v", err)
 		}
 
-		// Verify the uploaded file is in the listing
-		if !strings.Contains(stdout, testKey) {
-			t.Errorf("Expected listing to contain %s, got:\n%s", testKey, stdout)
+		// `aws s3 ls` against a trailing-slash prefix prints keys relative
+		// to that prefix, so the basename is what appears in the output.
+		listedName := path.Base(testKey)
+		if !strings.Contains(stdout, listedName) {
+			t.Errorf("Expected listing to contain %s, got:\n%s", listedName, stdout)
+		}
+		// ListObjects can report the ciphertext size rather than the
+		// uploaded size; plaintext sizes from the manifest index are
+		// tracked by armor-7d94c42d. Log the mismatch, don't fail on it,
+		// until that bead lands.
+		for _, line := range strings.Split(strings.TrimSpace(stdout), "\n") {
+			fields := strings.Fields(line)
+			if len(fields) < 2 || fields[len(fields)-1] != listedName {
+				continue
+			}
+			if n, err := strconv.Atoi(fields[len(fields)-2]); err == nil && n != len(testContent) {
+				t.Logf("Listed size %d differs from uploaded %d bytes: ListObjects reports ciphertext size (armor-7d94c42d)", n, len(testContent))
+			}
 		}
 		t.Logf("List successful: %s", stdout)
 	})
@@ -168,13 +185,15 @@ aws_secret_access_key = %s
 		}
 		t.Logf("Delete successful: %s", stdout)
 
-		// Verify the file is gone by trying to list it again
+		// Verify the file is gone by trying to list it again. The AWS CLI
+		// prints entries relative to the listing prefix's parent, so the
+		// basename is what would appear if the object survived.
 		listStdout, listStderr, listErr := runAWSCLI("s3", "ls",
 			fmt.Sprintf("s3://%s/%s", bucket, testKey),
 			"--profile", "armor-test",
 			"--endpoint-url", armorEndpoint,
 		)
-		if listErr == nil && strings.Contains(listStdout, testKey) {
+		if listErr == nil && strings.Contains(listStdout, path.Base(testKey)) {
 			t.Errorf("File still exists after delete. List output:\n%s", listStdout)
 		}
 		if listErr != nil {
@@ -230,8 +249,8 @@ aws_secret_access_key = %s
 	}
 
 	files := map[string]string{
-		"file1.txt": "Content of file 1\n",
-		"file2.txt": "Content of file 2\n",
+		"file1.txt":        "Content of file 1\n",
+		"file2.txt":        "Content of file 2\n",
 		"subdir/file3.txt": "Content of file 3 in subdirectory\n",
 	}
 
