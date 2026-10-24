@@ -187,7 +187,10 @@ limits below.
 The first live qualification against `iad-ci/armor` is recorded in
 [production-b2-cloudflare-2026-09-28.md](production-b2-cloudflare-2026-09-28.md);
 it produced no valid throughput numbers because the large-object verification
-GET did not deliver its expected bytes before the bounded timeout.
+GET did not deliver its expected bytes before the bounded timeout. The
+2026-10-24 rerun against `0.1.1993` — after the bounded read-ahead backend
+shipped — completed the full workload including ranged reads and produced the
+first valid production numbers; the same document records both attempts.
 
 ## Focused large-object range baseline
 

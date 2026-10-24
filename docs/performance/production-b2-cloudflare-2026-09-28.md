@@ -77,24 +77,82 @@ leave the ordinary ARMOR verification GET open indefinitely. The current
 not coalesce the single-PUT stream or add the required bounded read-ahead and
 failure deadline.
 
-The qualification remains blocked by primary bead
-[`armor-73564f97`](https://git.ardenone.com/jedarden/ARMOR/issues/armor-73564f97)
-(bounded read-ahead and larger backend ranges), with related v3 coalescing
-work in
-[`armor-5694713b`](https://git.ardenone.com/jedarden/ARMOR/issues/armor-5694713b).
-No valid production throughput numbers exist until one of those fixes is
-published and a deployment completes the ordinary full verification GET.
+The 0.1.1971-era blocker above is closed: both named beads landed
+(`armor-73564f97` in v0.1.1987, `armor-5694713b` on `main`), and the
+2026-10-24 rerun below completed the ordinary full verification GET and
+produced the first valid production numbers for this workload.
+
+## Qualification — 2026-10-24 (valid result)
+
+A full rerun of the documented workload produced a valid, checked result on
+2026-10-24 (run window 03:32:51–03:55:08 UTC; `TestRemoteBaseline` PASS in
+1340 s, exit 0). This is the result the release-status register cites.
+
+| Field | Value |
+|---|---|
+| Deployment | `iad-ci/armor` (1 replica, Ready throughout, no restarts) |
+| Image | `ronaldraygun/armor:0.1.1993@sha256:1845b2b4a704b30542e656bd0c87ec6b54539d732e50a83657a48623fddc9a60` |
+| Harness source | ARMOR `main` @ `abe39288`; the deployed server is the 0.1.1993 image and the two are recorded separately |
+| Blocker status | `armor-73564f97` (1 MiB coalesced backend fetches, bounded read-ahead window, 2 m per-request deadline, backend budget) shipped in v0.1.1987 and is deployed. `armor-5694713b` (v3 range coalescing, `792a619b`) is on `main` but **not** in this image, so the ARMOR range rows measure the per-block v3 range path over the new bounded backend. |
+| B2 region/bucket | `us-west-002` / `iad-ci` |
+| Runner | `codinghome`, Linux amd64, GOMAXPROCS=20, Go 1.25.14 |
+| Workload | default: 64 MiB synthetic incompressible object; 3 serialized single-PUT uploads, each followed by an untimed ordinary ARMOR verification GET; 5 warm full reads; 3 samples × 5 range shapes; the last object re-read through b2-origin and the public Cloudflare path |
+| Checks | all 19 reported rows passed their SHA-256 full-body (or exact-slice, for ranges) comparison; no row was accepted without its payload check |
+| Cache | public Cloudflare path served `CF-Cache-Status: DYNAMIC` on every leg |
+| Cleanup | the run's three `armor-bench/production/<run-id>/` keys deleted (HTTP 204) |
+
+Latency and throughput (p50 unless noted; ciphertext rows carry the v3
+envelope, 67,145,792 B):
+
+| Path | Scenario | p50 | p95 | Payload MB/s p50 |
+|---|---|---:|---:|---:|
+| armor | upload single-PUT (n=3) | 345.1 s | 403.3 s | 0.2 |
+| armor | full GET warm (n=5) | 32.4 s | 38.5 s | 2.0 |
+| armor | range aligned 64 KiB (n=3) | 1.43 s | 2.25 s | — |
+| armor | range unaligned 32 KiB (n=3) | 2.95 s | 4.00 s | — |
+| armor | range aligned 1 MiB (n=3) | 10.4 s | 10.5 s | — |
+| armor | range aligned 8 MiB (n=3) | 57.0 s | 60.1 s | — |
+| armor | range suffix 64 KiB (n=3) | 1.63 s | 3.87 s | — |
+| b2-origin | full GET (n=5) | 4.10 s | 4.44 s | 15.6 |
+| b2-origin | range aligned 8 MiB (n=3) | 608 ms | 693 ms | 13.2 |
+| b2-origin | range 32–64 KiB (n=3 each) | ~181 ms | ~186 ms | — |
+| cloudflare | full GET (n=5) | 4.43 s | 12.9 s | 14.5 |
+| cloudflare | range aligned 8 MiB (n=3) | 694 ms | 695 ms | 11.5 |
+| cloudflare | range 32–64 KiB (n=3 each) | ~200 ms | ~218 ms | — |
+
+Interpretation:
+
+- The blocker is fixed in the deployed shape: each of the three uploads was
+  followed by a completed ordinary ARMOR verification GET (server-side 200
+  delivering all 67,108,864 plaintext bytes in ~30 s), where the 0.1.1971
+  runs never delivered. The bounded backend read path
+  (`armor-73564f97`) is what changed.
+- Uploads are dominated by B2 PUT time, which varied 12 s → 315 s → 375 s
+  across the three samples (per-request `backend_put_ms` in the server log).
+  The ARMOR upload MB/s row is therefore the least stable row in the set.
+- ARMOR plaintext reads (2.0 MB/s full GET) remain ~7× slower than the same
+  ciphertext over direct Cloudflare (14.5 MB/s): the streamed decrypt
+  pipeline, not transport, is the read-throughput boundary. Large-object
+  read throughput stays the active regression boundary; this run measures it,
+  it does not lift it.
+- The 8 MiB aligned ARMOR range (57 s p50) reflects the deployed image's
+  per-block v3 range path (~128 sequential 64 KiB backend fetches per
+  sample). Re-measure once `armor-5694713b`'s span coalescing ships in a
+  release; the small range shapes do not exercise that path.
+- `CF-Cache-Status: DYNAMIC` on every leg means these public objects were
+  served uncached; the Cloudflare rows measure edge + origin, not a
+  cache-hit path.
 
 ## Release-status boundary
 
-This is an operational failure signal, not a production throughput number.
-The current release status must continue to say that B2/Cloudflare large-object
-performance is unmeasured and that range support needs a healthy deployment
-qualification. Re-run the workflow after the deployment read path and large
-PUT path are healthy, then replace this result with the generated summary and
-retain the image digest, runner, workload, cache statuses, and limits.
-
-The result is bounded by one runner and one replica. It is not a load test,
-capacity claim, SLO, or evidence for multipart performance. B2 origin rows
-also require a reference fetch of the encrypted object and may incur provider
-egress; Cloudflare cache state and edge selection are time-dependent.
+The register cites the 2026-10-24 figures with these limits: one runner and
+one replica, single client, synthetic objects. It is not a load test,
+capacity claim, SLO, or evidence for multipart performance. ARMOR plaintext
+read throughput and the large-PUT path remain the active regression
+boundary — the bounded read path removed the unbounded-hang failure, it did
+not make 2 MB/s a performance claim. B2 origin rows required a reference
+fetch of the encrypted object and incurred provider egress; Cloudflare cache
+state and edge selection are time-dependent (`DYNAMIC` throughout this run).
+Re-run the workload per release once the range-span coalescing
+(`armor-5694713b`) and whole-part multipart streaming (`armor-272299ca`)
+fixes reach a deployed image.
