@@ -28,13 +28,27 @@ removes one updates the pin **and this table in the same bead**.
 
 | Write version | Object shape | Backend calls | Critical path | Sequence |
 |---|---|---|---|---|
-| v1 | single-PUT | **5** | **4** | manifest GET (404 miss) ∥ HEAD → header GetRange → HMAC-table GetRange → data GetRange |
-| v2 | single-PUT | **5** | **4** | same as v1 (v1/v2 share the inline-HMAC read path) |
-| v3 | single-PUT | **5** | **4** | manifest GET (404 miss) ∥ HEAD → header GetRange → trailer block-table GetRange → data GetRange |
+| v1 | single-PUT ≤ threshold | **3** | **2** | manifest GET (404 miss) ∥ HEAD → one whole-envelope GetRange (header + data + inline HMAC table fetched together, parsed locally) |
+| v2 | single-PUT ≤ threshold | **3** | **2** | same as v1 (v1/v2 share the inline-HMAC layout) |
+| v3 | single-PUT ≤ threshold | **3** | **2** | manifest GET (404 miss) ∥ HEAD → one whole-envelope GetRange (header + data + trailer block table fetched together, parsed locally) |
+| v1/v2/v3 | single-PUT > threshold | **5** | **4** | the pre-armor-98864f12 streaming sequence: header GetRange → HMAC-table/trailer GetRange → data GetRange, unchanged |
 | v3 | multipart | **5** | **4** | manifest GET (hit) ∥ plaintext-key HEAD (hit, discarded) → combined freshness/size HEAD → HMAC sidecar GetDirect → one GetRange covering the whole concatenated ciphertext |
 
-The table reflects armor-420c15a5 (2026-10-24): GetObject issues the manifest
-probe and the legacy plaintext-key HEAD concurrently and then decides exactly
+The threshold is `ARMOR_SMALL_OBJECT_FETCH_BYTES` (default 1 MiB) against the
+**stored** ciphertext size the GET's HEAD reports; `0` restores the streaming
+reads everywhere, and multipart objects never single-fetch.
+
+The table reflects armor-98864f12 (2026-10-24): a full GET of a single-PUT
+object at or below the threshold reads the entire stored envelope in ONE
+ranged request and slices header, data blocks and the inline HMAC table or
+v3 trailer block table out of that buffer locally, replacing two further
+sequential round trips with extra bytes. Every block's HMAC is verified as
+before; a truncated, over-long, or wrongly-ranged response fails the request.
+Buffered fetches are capped at `ARMOR_READ_BACKEND_LIMIT` live at once, so
+aggregate buffered ciphertext is bounded at that cap × the threshold.
+
+Before that, armor-420c15a5 (2026-10-24) had made GetObject issue the manifest
+probe and the legacy plaintext-key HEAD concurrently and then decide exactly
 as the sequential path did — an existing manifest wins and the HEAD result is
 discarded, a miss consumes it. The overlap costs one extra backend request on
 the manifest path (the multipart row went 4 → 5, its probe HEAD discarded) and
@@ -47,8 +61,9 @@ ciphertext-size lookup shared one authoritative HEAD. armor-272299ca
 single ranged request over the whole stored object. Range reads additionally
 reuse the v3 trailer block table across requests through a
 stored-generation-keyed cache — not visible in a first-GET pin; repeated
-same-version ranges skip the trailer fetch entirely (in steady state a v3
-single-PUT GET is 4 calls / 3 round trips, as the §2 matrix measures).
+same-version ranges skip the trailer fetch entirely. Since armor-98864f12 the
+steady-state benefit of that cache applies to over-threshold full GETs and to
+range reads; a small in-threshold full GET never fetches the table at all.
 
 Notes for anyone lowering these:
 
@@ -58,12 +73,21 @@ Notes for anyone lowering these:
   path; the request-count tests prove the overlap deterministically (the
   guarded manifest GET blocks until a HEAD is recorded).
 - The HEAD exists to distinguish the legacy (v1/v2/inline-HMAC) path from
-  the v3 path before either is committed.
+  the v3 path before either is committed. armor-98864f12 investigated
+  dropping it for small objects and found it cannot go yet: the envelope
+  header carries only version, block size, IV, plaintext size and plaintext
+  SHA, while the read path also needs the wrapped DEK, MEK fingerprint and
+  key ID (key unwrap must precede any header use), the response-side
+  ContentType/ETag/LastModified, the per-object compression decision
+  (Compressed/CompressionType), the v3 CiphertextSize, and the multipart
+  flag — all HEAD-only today. Any change that moves them needs its own bead
+  and must preserve armor-c3199f1c's freshness rules.
 - Multipart cannot be "small" (ADR-015 requires uniform parts ≥ 5 MiB), so
   its row pins the fixed per-GET overhead, not a small-object end to end.
 
 Test names: `TestSmallObjectFullGETRequestCountSinglePUTV1/V2/V3`,
-`TestSmallObjectFullGETRequestCountMultipartV3`.
+`TestSmallObjectFullGETRequestCountMultipartV3`,
+`TestOverThresholdObjectKeepsStreamingPath` (the > threshold row).
 
 ## 2. Latency-injected benchmark
 
@@ -86,6 +110,37 @@ go.mod toolchain; 2026-10-15 matrix: go1.26.5). RTT =
 `ARMOR_SMALL_OBJECT_BENCH_RTT_MS` overrides). v2 and v3 writes, 64 KiB
 blocks, AES-256-CTR + HMAC-SHA256, and the block and footer caches configured
 by the test harness.
+
+**2026-10-24 (single fetch, armor-98864f12).** Steady state: every cell
+GETs one hot object; every in-threshold cell makes exactly 3 backend calls
+per GET — the overlapped manifest probe ∥ HEAD pair, then one whole-envelope
+ranged request parsed locally (no warm-up term: even v3's trailer table is
+sliced out of the fetched buffer, so the generation-keyed table cache is
+never engaged). The matrix's threshold clears the largest cell's stored
+size and its buffer-slot cap clears c256 (both knobs set by the harness —
+see `runBenchCell` — so the cells measure the single-fetch path itself;
+production's 1 MiB default and the cap-overload streaming fallback are
+pinned by the boundary and cap tests, not measured here). Two A/B cells
+(32 KiB / c16, `mode=streaming`) run with the single fetch disabled in the
+same run at the same RTT. p50 / p95 (ms) and inverse mean latency per client
+(shown as /s); these rates are not aggregate throughput; **n =
+max(2×concurrency, 32) GETs per cell**:
+
+| Write version | Size | c=1 | c=16 | c=64 | c=256 |
+|---|---|---|---|---|---|
+| v2 | 4 KiB | 148.6 / 149.0 · 6.73/s | 149.6 / 150.6 · 6.68/s | 157.4 / 161.2 · 6.38/s | 161.6 / 176.2 · 6.11/s |
+| v2 | 32 KiB | 149.0 / 149.8 · 6.71/s | 149.1 / 150.1 · 6.70/s | 154.8 / 160.9 · 6.42/s | 170.6 / 198.8 · 5.71/s |
+| v2 | 256 KiB | 149.6 / 152.4 · 6.66/s | 153.5 / 160.8 · 6.42/s | 178.8 / 205.3 · 5.58/s | 205.4 / 245.0 · 4.90/s |
+| v2 | 1 MiB | 152.7 / 154.0 · 6.52/s | 157.2 / 199.7 · 5.68/s | 185.9 / 215.2 · 5.23/s | 273.9 / 336.5 · 3.62/s |
+| v3 | 4 KiB | 148.5 / 148.7 · 6.73/s | 148.6 / 148.7 · 6.73/s | 150.8 / 152.4 · 6.64/s | 155.3 / 160.5 · 6.44/s |
+| v3 | 32 KiB | 148.6 / 149.2 · 6.72/s | 150.1 / 151.5 · 6.66/s | 155.4 / 166.2 · 6.34/s | 164.5 / 174.2 · 6.06/s |
+| v3 | 256 KiB | 150.0 / 152.1 · 6.66/s | 152.8 / 154.4 · 6.55/s | 191.8 / 201.2 · 5.24/s | 182.6 / 200.9 · 5.49/s |
+| v3 | 1 MiB | 153.6 / 160.6 · 6.45/s | 164.3 / 189.4 · 5.71/s | 218.2 / 242.2 · 4.64/s | 270.3 / 331.9 · 3.71/s |
+
+A/B legs from the same run (`mode=streaming`, single fetch disabled):
+v2 32 KiB c16 p50 = 297.4 ms / p95 = 298.3 ms · 3.36/s; v3 32 KiB c16
+p50 = 224.1 ms / p95 = 298.8 ms · 3.83/s (the v3 p95 tail is the one
+first-GET trailer-table fetch the streaming path still pays).
 
 **2026-10-24 (overlapped probe, armor-420c15a5).** Steady state: every cell
 GETs one hot object, so v3's trailer block table is generation-keyed
@@ -120,26 +175,21 @@ before-numbers:**
 | v3 | 256 KiB | 446.1 / 446.9 · 2.24/s | 448.3 / 450.6 · 2.23/s | 452.9 / 456.3 · 2.21/s | 456.6 / 475.9 · 2.18/s |
 | v3 | 1 MiB | 448.3 / 449.2 · 2.23/s | 455.1 / 457.6 · 2.20/s | 463.6 / 475.1 · 2.16/s | 485.4 / 535.7 · 2.04/s |
 
-Reading (2026-10-24 matrix):
+Reading (2026-10-24 single-fetch matrix):
 
-- **v2 p50 ≈ 4 × RTT = 296 ms; v3 p50 ≈ 3 × RTT = 222 ms at every small
-  size.** Against the 2026-10-15 matrix (6 × RTT = 445 ms at every size and
-  version) v2 dropped ~148 ms (−33%) and v3 ~223 ms (−50%). Two changes
-  landed between the measurements, never measured separately:
-  armor-c3199f1c removed one sequential round trip (header dedup on v1/v2;
-  the generation-keyed table cache on steady-state v3) and armor-420c15a5
-  overlapped the manifest probe with the plaintext-key HEAD, removing the
-  second. The v2 numbers are the clean read on the overlap: 5 calls, 4
-  round trips.
-- Object size is irrelevant below ~256 KiB — the round trips are the
-  latency, exactly the claim this baseline pins.
-- Per-client latency stays near the model as concurrency rises for small
-  objects. At 1 MiB and high concurrency it rises (v2 1 MiB c=256 p50
-  362.8 ms, v3 321.9 ms); this in-memory backend has no bandwidth term, so
-  local compute and scheduling account for the added time (the 1 MiB c=256
-  cells decrypt + HMAC the whole object in the hot path). The v3 p95 ≈
-  297 ms tail in every cell is the one first-GET trailer-table fetch
-  (4 round trips) the steady-state pin excepts.
+- **p50 ≈ 2 × RTT = 148 ms at every version and size** — one whole-envelope
+  request after the overlapped probe pair. Against the same-day
+  armor-420c15a5 matrix (v2 4 × RTT = 296 ms, v3 3 × RTT = 222 ms) the small
+  cells dropped ~148 ms (−50%) on v2 and ~74 ms (−33%) on v3, and per-client
+  rates rose from ~3.3/s to ~6.7/s (v2) and ~4.4/s to ~6.7/s (v3) at c=1.
+  The same-run A/B legs (v2 streaming 297.4 ms, v3 streaming 224.1 ms at
+  32 KiB / c16) isolate the single fetch as the entire remaining delta.
+- Object size is nearly irrelevant to latency below 256 KiB; the residual
+  size term (v2 1 MiB c=256 p50 273.9 ms vs 4 KiB 161.6 ms) is this
+  in-memory backend's decrypt + HMAC + copy of the whole buffered envelope,
+  not round trips.
+- The v3 streaming p95 ≈ 298 ms tail is gone from the single-fetch cells:
+  no table fetch happens at all, so there is no warm-up outlier to absorb.
 - At 1 ms injected RTT the same matrix runs in seconds and is a quick
   sanity check when re-pinning counts.
 

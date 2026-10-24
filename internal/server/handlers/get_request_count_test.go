@@ -153,6 +153,10 @@ func (c *callCountingBackend) resetCalls() {
 
 // countingTestSetup builds a Handlers over a call-counting backend. delay is
 // the per-call latency injected for the benchmark; 0 for pure counting tests.
+// SmallObjectFetchBytes is set to the production default (1 MiB, the
+// ARMOR_SMALL_OBJECT_FETCH_BYTES default) so the pins reflect what production
+// actually does; tests that need the streaming path set cfg.
+// SmallObjectFetchBytes = 0 after setup.
 func countingTestSetup(t *testing.T, formatWriteVersion int, delay time.Duration) (*config.Config, *callCountingBackend, *handlers.Handlers, *keymanager.KeyManager) {
 	t.Helper()
 	mek := make([]byte, 32)
@@ -160,10 +164,17 @@ func countingTestSetup(t *testing.T, formatWriteVersion int, delay time.Duration
 		t.Fatalf("failed to generate MEK: %v", err)
 	}
 	cfg := &config.Config{
-		BlockSize:          65536,
-		AuthAccessKey:      "test-access-key",
-		AuthSecretKey:      "REMOVED-NOT-A-SECRET-VALUE",
-		FormatWriteVersion: formatWriteVersion,
+		BlockSize:             65536,
+		AuthAccessKey:         "test-access-key",
+		AuthSecretKey:         "REMOVED-NOT-A-SECRET-VALUE",
+		FormatWriteVersion:    formatWriteVersion,
+		SmallObjectFetchBytes: 1 << 20,
+		// ReadBackendLimit sizes the small-fetch buffer cap inside
+		// handlers.New, so it must be set before construction: the latency
+		// matrix runs cells at c256, and the default-fallback cap of 64
+		// would push overflow requests onto the streaming reads mid-cell.
+		// Harmless for the sequential counting tests.
+		ReadBackendLimit: 512,
 	}
 	cb := &callCountingBackend{
 		recordingBackend: newRecordingBackend(),
@@ -361,13 +372,14 @@ func assertProbePairThen(t *testing.T, cb *callCountingBackend, manifestCall, he
 }
 
 // TestSmallObjectFullGETRequestCountSinglePUTV2 pins the backend request
-// count for a full GET of a small single-PUT v2-envelope object: five calls
-// total, four on the critical path. The readManifest GET (a miss for every
+// count for a full GET of a small single-PUT v2-envelope object: three calls
+// total, two on the critical path. The readManifest GET (a miss for every
 // non-multipart object) and the legacy-path HEAD overlap (armor-420c15a5 —
 // previously the HEAD waited one full sequential round trip for the probe);
-// then the envelope header read (read once and reused by the full-object
-// stream, armor-c3199f1c), the inline HMAC table prefetch, and the data
-// stream read.
+// then ONE ranged request covering the whole stored envelope — header, data
+// blocks and the inline HMAC table together (armor-98864f12) — which the
+// handler parses locally. Before armor-98864f12 this was three further
+// sequential calls: envelope header, HMAC table, data.
 func TestSmallObjectFullGETRequestCountSinglePUTV2(t *testing.T) {
 	const bucket = "test-bucket"
 	const key = "small-v2.bin"
@@ -383,25 +395,22 @@ func TestSmallObjectFullGETRequestCountSinglePUTV2(t *testing.T) {
 		t.Fatalf("GET did not round-trip the plaintext: got %d bytes, want %d", len(got), len(plaintext))
 	}
 
-	hmacOffset := crypto.HeaderSize + int64(len(plaintext))
 	hmacSize := int64(crypto.ComputeBlockCount(int64(len(plaintext)), 65536)) * crypto.HMACSize
+	storedLen := crypto.HeaderSize + int64(len(plaintext)) + hmacSize
 	assertProbePairThen(t, cb,
 		backendCall{Method: "GET", Key: bucket + "/" + key + ".armor-manifest", Hit: false},
 		backendCall{Method: "HEAD", Key: bucket + "/" + key, Hit: true},
 		[]backendCall{
-			// Single header read: GetObject reads the envelope header once and
-			// the full-object stream reuses it (armor-c3199f1c; was two header
-			// reads).
-			{Method: "GET_RANGE", Key: bucket + "/" + key, Offset: 0, Length: crypto.HeaderSize, Hit: true},
-			{Method: "GET_RANGE", Key: bucket + "/" + key, Offset: hmacOffset, Length: hmacSize, Hit: true},
-			{Method: "GET_RANGE", Key: bucket + "/" + key, Offset: 0, Length: crypto.HeaderSize + int64(len(plaintext)), Hit: true},
+			// One whole-envelope fetch (armor-98864f12): the handler slices
+			// header, data and HMAC table out of this buffer locally.
+			{Method: "GET_RANGE", Key: bucket + "/" + key, Offset: 0, Length: storedLen, Hit: true},
 		},
 		"single-PUT v2")
 }
 
 // TestSmallObjectFullGETRequestCountSinglePUTV1 plants a legacy v1 envelope
-// and pins the same call sequence: v1 and v2 share the inline-HMAC read path,
-// differing only in counter derivation inside the decryptor.
+// and pins the same call sequence as v2: v1 and v2 share the inline-HMAC
+// layout, differing only in counter derivation inside the decryptor.
 func TestSmallObjectFullGETRequestCountSinglePUTV1(t *testing.T) {
 	const bucket = "test-bucket"
 	const key = "small-v1.bin"
@@ -422,22 +431,23 @@ func TestSmallObjectFullGETRequestCountSinglePUTV1(t *testing.T) {
 		backendCall{Method: "GET", Key: bucket + "/" + key + ".armor-manifest", Hit: false},
 		backendCall{Method: "HEAD", Key: bucket + "/" + key, Hit: true},
 		[]backendCall{
-			// Single header read: GetObject reads the envelope header once and
-			// the full-object stream reuses it (armor-c3199f1c; was two header
-			// reads).
-			{Method: "GET_RANGE", Key: bucket + "/" + key, Offset: 0, Length: crypto.HeaderSize, Hit: true},
-			{Method: "GET_RANGE", Key: bucket + "/" + key, Offset: hmacOffset, Length: hmacSize, Hit: true},
-			{Method: "GET_RANGE", Key: bucket + "/" + key, Offset: 0, Length: crypto.HeaderSize + int64(len(plaintext)), Hit: true},
+			// One whole-envelope fetch (armor-98864f12): v1 shares the v2
+			// inline-HMAC layout, so the same single request covers header,
+			// data and table.
+			{Method: "GET_RANGE", Key: bucket + "/" + key, Offset: 0, Length: hmacOffset + hmacSize, Hit: true},
 		},
 		"single-PUT v1")
 }
 
 // TestSmallObjectFullGETRequestCountSinglePUTV3 pins the backend request
-// count for a full GET of a small single-PUT v3-envelope object: five calls
-// total, four on the critical path — the overlapped manifest-probe/HEAD pair
-// (armor-420c15a5), one envelope header read (GetObject reads it once and the
-// full-object stream reuses it — armor-c3199f1c removed the header re-read),
-// the v3 trailer block table fetch, and the data stream read.
+// count for a full GET of a small single-PUT v3-envelope object: three calls
+// total, two on the critical path — the overlapped manifest-probe/HEAD pair
+// (armor-420c15a5), then ONE ranged request covering the whole stored
+// envelope (armor-98864f12). The handler decodes the envelope header and the
+// trailer block table from that buffer locally; before armor-98864f12 this
+// was three further sequential calls: envelope header, trailer block table,
+// data. The generation-keyed table cache (armor-c3199f1c) is untouched but
+// unused by this path — there is no table fetch to cache.
 func TestSmallObjectFullGETRequestCountSinglePUTV3(t *testing.T) {
 	const bucket = "test-bucket"
 	const key = "small-v3.bin"
@@ -452,32 +462,68 @@ func TestSmallObjectFullGETRequestCountSinglePUTV3(t *testing.T) {
 		t.Fatalf("GET did not round-trip the plaintext: got %d bytes, want %d", len(got), len(plaintext))
 	}
 
+	// The one data-path request is the whole stored envelope, exactly as the
+	// HEAD reported it: header + data blocks + trailer block table.
+	storedLen := int64(len(cb.objects[bucket+"/"+key]))
 	calls := cb.recordedCalls()
-	if len(calls) != 5 {
-		t.Fatalf("single-PUT v3: %d backend calls recorded, baseline is 5 (manifest probe ∥ head, header, trailer block table, data): %s",
+	if len(calls) != 3 {
+		t.Fatalf("single-PUT v3: %d backend calls recorded, baseline is 3 (manifest probe ∥ head, one whole-envelope fetch): %s",
 			len(calls), formatCalls(calls))
 	}
-	// The probe/HEAD pair races; the envelope header read follows the decision.
 	assertProbePair(t, cb,
 		backendCall{Method: "GET", Key: bucket + "/" + key + ".armor-manifest", Hit: false},
 		backendCall{Method: "HEAD", Key: bucket + "/" + key, Hit: true},
 		"single-PUT v3")
-	header := calls[2]
-	if header.Method != "GET_RANGE" || header.Offset != 0 || header.Length != crypto.HeaderSize {
-		t.Fatalf("single-PUT v3: call 3 should be the envelope header read, got %+v", header)
+	fetch := calls[2]
+	if fetch.Method != "GET_RANGE" || fetch.Offset != 0 || fetch.Length != storedLen {
+		t.Fatalf("single-PUT v3: call 3 should be the whole-envelope fetch (%d bytes), got %+v", storedLen, fetch)
+	}
+}
+
+// TestOverThresholdObjectKeepsStreamingPath pins the request count for an
+// object one byte over the small-fetch threshold: the per-region streaming
+// reads are unchanged (armor-98864f12 only moved the small-object baseline).
+// Same shape as the pre-armor-98864f12 small-object pins: overlapped
+// manifest-probe/HEAD pair, envelope header, trailer block table, data.
+func TestOverThresholdObjectKeepsStreamingPath(t *testing.T) {
+	const bucket = "test-bucket"
+	const key = "over-threshold-v3.bin"
+	plaintext := smallGETPlaintext(23 * 1024)
+
+	cfg, cb, h, _ := countingTestSetup(t, 3, 0)
+	putObjectThroughHandler(t, h, bucket, key, plaintext)
+
+	storedLen := int64(len(cb.objects[bucket+"/"+key]))
+	// One byte below the stored size: the object no longer qualifies.
+	cfg.SmallObjectFetchBytes = storedLen - 1
+	cb.resetCalls()
+
+	got := getObjectThroughHandler(t, h, bucket, key)
+	if !bytes.Equal(got, plaintext) {
+		t.Fatalf("GET did not round-trip the plaintext: got %d bytes, want %d", len(got), len(plaintext))
 	}
 
-	// Trailer block table read: sized to the block count, starting after the
-	// data blocks (its exact offset depends on ciphertext block lengths).
+	calls := cb.recordedCalls()
+	if len(calls) != 5 {
+		t.Fatalf("over-threshold v3: %d backend calls recorded, baseline is 5 (manifest probe ∥ head, header, trailer block table, data): %s",
+			len(calls), formatCalls(calls))
+	}
+	assertProbePair(t, cb,
+		backendCall{Method: "GET", Key: bucket + "/" + key + ".armor-manifest", Hit: false},
+		backendCall{Method: "HEAD", Key: bucket + "/" + key, Hit: true},
+		"over-threshold v3")
+	header := calls[2]
+	if header.Method != "GET_RANGE" || header.Offset != 0 || header.Length != crypto.HeaderSize {
+		t.Fatalf("over-threshold v3: call 3 should be the envelope header read, got %+v", header)
+	}
 	blockCount := crypto.ComputeBlockCount(int64(len(plaintext)), 65536)
 	trailer := calls[3]
 	if trailer.Method != "GET_RANGE" || trailer.Length != int64(blockCount)*crypto.BlockTableEntrySize || trailer.Offset <= crypto.HeaderSize {
-		t.Fatalf("single-PUT v3: call 4 should be the trailer block table read (%d entries), got %+v", blockCount, trailer)
+		t.Fatalf("over-threshold v3: call 4 should be the trailer block table read (%d entries), got %+v", blockCount, trailer)
 	}
-	// Data read: a fresh range from offset 0 covering header + ciphertext.
 	data := calls[4]
-	if data.Method != "GET_RANGE" || data.Offset != 0 || data.Length <= crypto.HeaderSize {
-		t.Fatalf("single-PUT v3: call 5 should be the data stream read, got %+v", data)
+	if data.Method != "GET_RANGE" || data.Offset != 0 || data.Length != storedLen-int64(blockCount)*crypto.BlockTableEntrySize {
+		t.Fatalf("over-threshold v3: call 5 should be the header+data stream read, got %+v", data)
 	}
 }
 

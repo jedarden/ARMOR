@@ -116,6 +116,16 @@ type Config struct {
 	ReadRequestTimeout time.Duration // Deadline per backend ranged request (default 2m)
 	ReadBackendLimit   int           // Simultaneous ranged requests across all readers (default 64)
 
+	// SmallObjectFetchBytes is the stored-ciphertext size at or below which a
+	// full GET reads the entire single-PUT envelope — header, data blocks and
+	// the inline HMAC table or v3 trailer block table — in one ranged request
+	// and parses it locally (armor-98864f12). 0 disables the single-fetch
+	// path; objects above the threshold keep the per-part streaming reads.
+	// The number of concurrently buffered small fetches is capped at
+	// ReadBackendLimit, bounding aggregate buffered ciphertext at
+	// ReadBackendLimit * SmallObjectFetchBytes.
+	SmallObjectFetchBytes int64
+
 	// Read-retry policy for idempotent backend ranged GETs and HEADs
 	// (armor-f1791426). Attempts is the total number of tries on transient
 	// failures (5xx, 429, connection resets, truncated responses); the sleep
@@ -374,6 +384,16 @@ func Load() (*Config, error) {
 	cfg.ReadBackendLimit = getEnvInt("ARMOR_READ_BACKEND_LIMIT", 64)
 	if cfg.ReadBackendLimit < 1 {
 		errs = append(errs, fmt.Errorf("ARMOR_READ_BACKEND_LIMIT must be at least 1"))
+	}
+
+	// Small single-PUT objects at or below this stored size arrive in one
+	// ranged request on a full GET (armor-98864f12); 0 disables that path.
+	// The default covers the small-object population the baseline was cut for
+	// (docs/performance/small-object-get-baseline.md: median ~23 KiB) while
+	// staying at or below the default single backend fetch of ReadFetchSize.
+	cfg.SmallObjectFetchBytes = int64(getEnvInt("ARMOR_SMALL_OBJECT_FETCH_BYTES", 1<<20))
+	if cfg.SmallObjectFetchBytes < 0 {
+		errs = append(errs, fmt.Errorf("ARMOR_SMALL_OBJECT_FETCH_BYTES must be at least 0 (0 disables the single-fetch path)"))
 	}
 
 	// Read-retry policy (armor-f1791426). Retries stay inside the per-request

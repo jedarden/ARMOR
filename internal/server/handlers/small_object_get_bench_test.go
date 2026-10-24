@@ -37,6 +37,10 @@ type benchCell struct {
 	version     int
 	sizeBytes   int
 	concurrency int
+	// streaming disables the small-object single fetch (cfg.
+	// SmallObjectFetchBytes = 0) so the A/B leg measures the pre-98864f12
+	// per-region streaming shape in the same run at the same RTT.
+	streaming bool
 }
 
 func TestSmallObjectFullGETLatencyMatrix(t *testing.T) {
@@ -68,14 +72,22 @@ func TestSmallObjectFullGETLatencyMatrix(t *testing.T) {
 				cells = append(cells, benchCell{version: v, sizeBytes: sz, concurrency: c})
 			}
 		}
+		// The A/B leg: the same 32 KiB / c16 cell with the single fetch
+		// disabled, so the improvement is measured against the streaming
+		// shape in the same run instead of against a published number.
+		cells = append(cells, benchCell{version: v, sizeBytes: 32 * 1024, concurrency: 16, streaming: true})
 	}
 
-	t.Logf("matrix: %d cells (versions %v x sizes %v x concurrency %v), RTT %dms per backend call",
-		len(cells), versions, sizes, concs, rttMs)
+	t.Logf("matrix: %d cells (versions %v x sizes %v x concurrency %v, plus %d streaming A/B cells), RTT %dms per backend call",
+		len(cells), versions, sizes, concs, len(versions), rttMs)
 
 	for _, cell := range cells {
 		cell := cell
-		t.Run(fmt.Sprintf("v%d/%dKiB/c%d", cell.version, cell.sizeBytes/1024, cell.concurrency), func(t *testing.T) {
+		name := fmt.Sprintf("v%d/%dKiB/c%d", cell.version, cell.sizeBytes/1024, cell.concurrency)
+		if cell.streaming {
+			name += "/streaming"
+		}
+		t.Run(name, func(t *testing.T) {
 			latencies := runBenchCell(t, cell, rtt)
 			reportBenchCell(t, cell, rtt, latencies)
 		})
@@ -88,10 +100,27 @@ func TestSmallObjectFullGETLatencyMatrix(t *testing.T) {
 func runBenchCell(t *testing.T, cell benchCell, rtt time.Duration) []float64 {
 	t.Helper()
 	const bucket = "bench-bucket"
-	key := fmt.Sprintf("bench-v%d-%d.bin", cell.version, cell.sizeBytes)
 	plaintext := smallGETPlaintext(cell.sizeBytes)
 
-	_, cb, h, _ := countingTestSetup(t, cell.version, rtt)
+	cfg, cb, h, _ := countingTestSetup(t, cell.version, rtt)
+	if cell.streaming {
+		cfg.SmallObjectFetchBytes = 0
+	} else {
+		// The matrix measures the single-fetch path across its whole size
+		// axis, so the threshold here clears the largest cell's STORED size:
+		// a 1 MiB plaintext stores as plaintext + header + HMAC/block-table
+		// expansion, which is over the 1 MiB production default. That
+		// default still bounds the small-object population in production;
+		// the at/over-threshold boundary is pinned by
+		// TestSmallFetchBoundarySizes, not here. The buffer-slot cap that
+		// must clear c256 is ReadBackendLimit, set inside countingTestSetup
+		// before handlers.New sizes the channel.
+		cfg.SmallObjectFetchBytes = 8 << 20
+	}
+	key := fmt.Sprintf("bench-v%d-%d.bin", cell.version, cell.sizeBytes)
+	if cell.streaming {
+		key += "-streaming"
+	}
 	putObjectThroughHandler(t, h, bucket, key, plaintext)
 	cb.resetCalls()
 
@@ -144,15 +173,22 @@ func runBenchCell(t *testing.T, cell benchCell, rtt time.Duration) []float64 {
 
 	// Every GET in this benchmark must make exactly the pinned number of
 	// backend calls; a drift here belongs in the request-count tests first.
-	// Steady-state per-GET counts on one hot object: v2 makes 5 calls per GET
-	// (manifest probe ∥ plaintext-key HEAD — overlapped since
-	// armor-420c15a5 — envelope header, inline HMAC prefetch, data; nothing
-	// cacheable). v3 makes 4 (probe ∥ HEAD, header, data): the trailer block
-	// table is generation-keyed cached since armor-c3199f1c, so exactly one
-	// extra table fetch happens on the cell's first GET.
-	callsPerGET, warmupCalls := 5, 0
-	if cell.version == 3 {
-		callsPerGET, warmupCalls = 4, 1
+	// Single-fetch cells (armor-98864f12): 3 calls per GET — the overlapped
+	// manifest probe ∥ plaintext-key HEAD pair (armor-420c15a5), then ONE
+	// whole-envelope ranged request parsed locally. Nothing is cacheable and
+	// nothing warms up: even v3's trailer table is sliced out of the fetched
+	// buffer, so no generation-keyed table load happens on any GET.
+	// Streaming A/B cells measure the pre-98864f12 shape: v2 makes 5 calls
+	// per GET (probe ∥ HEAD, envelope header, inline HMAC prefetch, data);
+	// v3 makes 4 (probe ∥ HEAD, header, data) plus exactly one generation-
+	// keyed trailer-table fetch on the cell's first GET (armor-c3199f1c).
+	callsPerGET, warmupCalls := 3, 0
+	if cell.streaming {
+		if cell.version == 3 {
+			callsPerGET, warmupCalls = 4, 1
+		} else {
+			callsPerGET, warmupCalls = 5, 0
+		}
 	}
 	totalCalls := len(cb.recordedCalls())
 	if totalCalls != callsPerGET*target+warmupCalls {
@@ -183,17 +219,26 @@ func reportBenchCell(t *testing.T, cell benchCell, rtt time.Duration, latencies 
 	// critical-path round trip count x RTT regardless of size or concurrency
 	// (the in-memory backend has no bandwidth term); the size axis exists to
 	// demonstrate exactly that and to mirror the production probe's matrix.
-	// Four since armor-420c15a5: the manifest probe and the plaintext-key
-	// HEAD overlap, so v2's five calls take four sequential round trips. v3
-	// additionally serves the block table from the generation-keyed cache
-	// (armor-c3199f1c) and takes three.
-	criticalPath := 4
-	if cell.version == 3 {
-		criticalPath = 3
+	// Single-fetch cells (armor-98864f12): two round trips at every version —
+	// the overlapped manifest probe ∥ plaintext-key HEAD (armor-420c15a5),
+	// then the one whole-envelope request. Streaming A/B cells keep the
+	// pre-98864f12 shape: four for v2 (probe ∥ HEAD, header, HMAC table,
+	// data), three for v3 (the block table rides the generation-keyed cache,
+	// armor-c3199f1c).
+	criticalPath := 2
+	if cell.streaming {
+		criticalPath = 4
+		if cell.version == 3 {
+			criticalPath = 3
+		}
 	}
 	expected := float64(criticalPath) * float64(rtt.Milliseconds())
 
-	t.Logf("RESULT version=%d size=%dKiB concurrency=%d n=%d p50=%.1fms p95=%.1fms p99=%.1fms max=%.1fms mean=%.1fms objs/s=%.2f (expected ≈%.0fms = %d x RTT)",
+	fetchMode := "single-fetch"
+	if cell.streaming {
+		fetchMode = "streaming"
+	}
+	t.Logf("RESULT version=%d size=%dKiB concurrency=%d n=%d p50=%.1fms p95=%.1fms p99=%.1fms max=%.1fms mean=%.1fms objs/s=%.2f mode=%s (expected ≈%.0fms = %d x RTT)",
 		cell.version, cell.sizeBytes/1024, cell.concurrency, len(sorted),
-		pct(0.50), pct(0.95), pct(0.99), sorted[len(sorted)-1], totalMs/float64(len(sorted)), objectsPerSec, expected, criticalPath)
+		pct(0.50), pct(0.95), pct(0.99), sorted[len(sorted)-1], totalMs/float64(len(sorted)), objectsPerSec, fetchMode, expected, criticalPath)
 }

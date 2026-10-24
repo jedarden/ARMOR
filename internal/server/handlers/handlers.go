@@ -116,6 +116,13 @@ type Handlers struct {
 	// v3Tables caches decoded v3 trailer block tables, keyed by stored-object
 	// generation, with in-flight load coalescing and entry/byte bounds.
 	v3Tables *v3BlockTableCache
+
+	// smallFetchBufs bounds the number of small single-PUT objects whose whole
+	// ciphertext is buffered at once (armor-98864f12). Each slot covers one
+	// in-flight buffered GET from fetch to completed response, so aggregate
+	// buffered ciphertext never exceeds cap × SmallObjectFetchBytes. A request
+	// that finds the cap full takes the streaming path instead of waiting.
+	smallFetchBufs chan struct{}
 }
 
 const (
@@ -201,6 +208,15 @@ func (h *Handlers) getMultipartManager(bucket string) *backend.MultipartStateMan
 
 // New creates a new Handlers instance.
 func New(cfg *config.Config, be backend.Backend, cache *backend.MetadataCache, footerCache *backend.FooterCache, km *keymanager.KeyManager, listCache *backend.ListCache) *Handlers {
+	// The small-fetch buffer cap rides the backend's own ranged-request
+	// budget: one buffered small fetch is one ranged request, so the same
+	// limit that bounds in-flight backend requests bounds live buffers. A
+	// zero-valued config (direct Handlers construction in tests) falls back
+	// to the same default the backend applies for ReadBackendLimit.
+	bufCap := cfg.ReadBackendLimit
+	if bufCap < 1 {
+		bufCap = 64
+	}
 	return &Handlers{
 		config:                cfg,
 		backend:               be,
@@ -212,6 +228,7 @@ func New(cfg *config.Config, be backend.Backend, cache *backend.MetadataCache, f
 		manifest:              nil,
 		multipartSidecarCache: backend.NewMultipartSidecarCache(cfg.CacheMaxEntries, cfg.CacheTTL),
 		v3Tables:              newV3BlockTableCache(cfg.CacheMaxEntries, cfg.CacheTTL, 0),
+		smallFetchBufs:        make(chan struct{}, bufCap),
 	}
 }
 
@@ -1428,6 +1445,10 @@ func (h *Handlers) GetObject(w http.ResponseWriter, r *http.Request, bucket, key
 	// which have no envelope header.
 	var decryptor *crypto.Decryptor
 	var envelopeHeader *crypto.EnvelopeHeader
+	// singleFetchEnvelope holds the whole-ciphertext buffer taken by the
+	// small-object single fetch below; nil when the request streams. It is
+	// consumed by handleFullObjectStream and never by the range handlers.
+	var singleFetchEnvelope []byte
 	if isMultipart {
 		// Multipart objects have no envelope header - trust metadata version
 		decryptor, err = crypto.NewDecryptorWithVersion(dek, armorMeta.IV, armorMeta.BlockSize, uint8(armorMeta.Version))
@@ -1438,17 +1459,60 @@ func (h *Handlers) GetObject(w http.ResponseWriter, r *http.Request, bucket, key
 	} else {
 		// Single-PUT objects: read envelope header to get the actual version
 		prefixedKey := h.applyPrefix(key)
-		headerReader, err := h.backend.GetRange(ctx, bucket, prefixedKey, 0, crypto.HeaderSize)
-		if err != nil {
-			h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to read envelope header: %v", err), 500)
-			return
-		}
-		defer headerReader.Close()
 
-		headerBuf := make([]byte, crypto.HeaderSize)
-		if _, err := io.ReadFull(headerReader, headerBuf); err != nil {
-			h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to read header: %v", err), 500)
-			return
+		// Small single-PUT objects (armor-98864f12): the HEAD already reported
+		// the stored ciphertext length, so at or below the configured threshold
+		// the whole envelope — header, data blocks, and the v1/v2 inline HMAC
+		// table or v3 trailer block table — arrives in ONE ranged request and
+		// is parsed locally, replacing two further sequential round trips with
+		// extra bytes. Range requests deliberately keep the streaming reads:
+		// the range handlers fetch their own spans, so a whole-object fetch
+		// would buy them nothing. The slot is held until this handler returns
+		// — i.e. until the streamed response is complete — so at most
+		// ReadBackendLimit buffers of at most SmallObjectFetchBytes are live
+		// at once; a request that finds the cap full streams instead.
+		var singleFetch []byte
+		if threshold := h.config.SmallObjectFetchBytes; threshold > 0 &&
+			!isMultipart && r.Header.Get("Range") == "" {
+			if storedSize := info.StoredSize; storedSize >= crypto.HeaderSize && storedSize <= threshold {
+				select {
+				case h.smallFetchBufs <- struct{}{}:
+					defer func() { <-h.smallFetchBufs }()
+					body, ferr := h.backend.GetRange(ctx, bucket, prefixedKey, 0, storedSize)
+					if ferr != nil {
+						h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to read small object: %v", ferr), 500)
+						return
+					}
+					singleFetch, ferr = readSmallFetchBody(body, storedSize)
+					body.Close()
+					if ferr != nil {
+						h.writeError(w, r, "InternalError", fmt.Sprintf("Small object read did not match the stored length: %v", ferr), 500)
+						return
+					}
+				default:
+					// Buffer cap exhausted: stream rather than queue behind
+					// other small fetches.
+				}
+			}
+		}
+
+		var headerBuf []byte
+		if singleFetch != nil {
+			// The single fetch already covers the header; no separate read.
+			headerBuf = singleFetch[:crypto.HeaderSize]
+		} else {
+			headerReader, err := h.backend.GetRange(ctx, bucket, prefixedKey, 0, crypto.HeaderSize)
+			if err != nil {
+				h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to read envelope header: %v", err), 500)
+				return
+			}
+			defer headerReader.Close()
+
+			headerBuf = make([]byte, crypto.HeaderSize)
+			if _, err := io.ReadFull(headerReader, headerBuf); err != nil {
+				h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to read header: %v", err), 500)
+				return
+			}
 		}
 
 		header, err := crypto.DecodeHeader(headerBuf)
@@ -1474,6 +1538,7 @@ func (h *Handlers) GetObject(w http.ResponseWriter, r *http.Request, bucket, key
 				return
 			}
 		}
+		singleFetchEnvelope = singleFetch
 	}
 
 	// Check conditional request headers
@@ -1561,8 +1626,28 @@ func (h *Handlers) GetObject(w http.ResponseWriter, r *http.Request, bucket, key
 		prefixedKey := h.applyPrefix(key)
 		h.handleV3MultipartGet(w, r, bucket, key, prefixedKey, decryptor, armorMeta, plaintextSize, info.LastModified)
 	} else {
-		h.handleFullObjectStream(w, r, bucket, key, decryptor, armorMeta, plaintextSize, info.LastModified, isMultipart, multipartPartSize, isNonUniform, cumulativePartSizes, envelopeHeader, storedGen)
+		h.handleFullObjectStream(w, r, bucket, key, decryptor, armorMeta, plaintextSize, info.LastModified, isMultipart, multipartPartSize, isNonUniform, cumulativePartSizes, envelopeHeader, storedGen, singleFetchEnvelope)
 	}
+}
+
+// readSmallFetchBody reads exactly want bytes from a whole-object fetch,
+// failing short and over-long bodies alike (armor-98864f12). The buffered
+// small-fetch path sizes its request from the HEAD's stored length, so a body
+// that does not match it exactly means the object changed under the request
+// or the backend ignored the range — either way the bytes cannot be trusted
+// against the envelope layout the HEAD implied, and the request fails before
+// any plaintext exists. The real backends enforce the same length on every
+// ranged response (internal/backend readRangeBody); this re-check also covers
+// test doubles and any future backend that does not.
+func readSmallFetchBody(body io.Reader, want int64) ([]byte, error) {
+	data, err := io.ReadAll(io.LimitReader(body, want+1))
+	if err != nil {
+		return nil, fmt.Errorf("read %d bytes: %w", want, err)
+	}
+	if int64(len(data)) != want {
+		return nil, fmt.Errorf("got %d bytes, want %d", len(data), want)
+	}
+	return data, nil
 }
 
 // handleFullObjectStream handles full object downloads with pipelined stream decryption.
@@ -1572,7 +1657,10 @@ func (h *Handlers) GetObject(w http.ResponseWriter, r *http.Request, bucket, key
 // single-PUT objects (nil for multipart objects, which have none); the stream
 // path reuses it instead of re-reading the same 64 bytes from the backend.
 // storedGen is the verified stored-object generation for cache keying.
-func (h *Handlers) handleFullObjectStream(w http.ResponseWriter, r *http.Request, bucket, key string, decryptor *crypto.Decryptor, armorMeta *backend.ARMORMetadata, plaintextSize int64, lastModified time.Time, isMultipart bool, multipartPartSize int64, isNonUniform bool, cumulativePartSizes map[int]int64, header *crypto.EnvelopeHeader, storedGen v3TableKeyParts) {
+// singleFetch is the whole-ciphertext buffer GetObject took for a small
+// single-PUT object (armor-98864f12); nil when the object streams. When set,
+// the table and data regions are sliced out of it locally instead of fetched.
+func (h *Handlers) handleFullObjectStream(w http.ResponseWriter, r *http.Request, bucket, key string, decryptor *crypto.Decryptor, armorMeta *backend.ARMORMetadata, plaintextSize int64, lastModified time.Time, isMultipart bool, multipartPartSize int64, isNonUniform bool, cumulativePartSizes map[int]int64, header *crypto.EnvelopeHeader, storedGen v3TableKeyParts, singleFetch []byte) {
 	ctx := r.Context()
 
 	// Apply prefix for backend operations
@@ -1621,7 +1709,42 @@ func (h *Handlers) handleFullObjectStream(w http.ResponseWriter, r *http.Request
 			return
 		}
 
-		if header.Version == crypto.Version3 {
+		if singleFetch != nil {
+			// Small single-PUT object: the whole ciphertext is already local
+			// (armor-98864f12). Slice the table and data regions out of the
+			// buffer instead of two more round trips. Every layout invariant
+			// is checked against the buffer bounds here, so a table that
+			// disagrees with the fetched length, a shifted layout, or a
+			// wrong-sized envelope fails the request before any plaintext
+			// exists — the same failure the streaming path would reach on
+			// its own reads, one round trip earlier.
+			var dataEnd int64
+			if header.Version == crypto.Version3 {
+				blockTable, err := decodeV3BlockTableFromBuffer(singleFetch, armorMeta.CiphertextSize, blockCount)
+				if err != nil {
+					h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to read v3 block table: %v", err), 500)
+					return
+				}
+				if blockCount > 0 {
+					hmacTable = encodeV3BlockTableForTransport(blockTable)
+				}
+				// blockCount == 0 (an empty envelope): the transport encoder
+				// refuses an empty table by design, and the read loop below
+				// runs zero iterations either way, so no table is transported.
+				dataEnd = int64(crypto.HeaderSize) + blockTable.TotalCiphertextLength64()
+			} else {
+				hmacTableOffset := crypto.HeaderSize + plaintextSize
+				hmacTableSize := int64(blockCount) * crypto.HMACSize
+				if hmacTableOffset < crypto.HeaderSize || hmacTableOffset+hmacTableSize > int64(len(singleFetch)) {
+					h.writeError(w, r, "InternalError", "stored object shorter than its inline HMAC table", 500)
+					return
+				}
+				hmacTable = singleFetch[hmacTableOffset : hmacTableOffset+hmacTableSize]
+				dataEnd = hmacTableOffset
+			}
+			dataBody = io.NopCloser(bytes.NewReader(singleFetch[crypto.HeaderSize:dataEnd]))
+			defer dataBody.Close()
+		} else if header.Version == crypto.Version3 {
 			// v3: fetch trailer block table and use prefix sums for block offsets
 			if armorMeta.CiphertextSize == 0 {
 				h.writeError(w, r, "InternalError", "v3 object missing ciphertext size", 500)
@@ -5511,6 +5634,42 @@ func v3BlockTableTrailerWindow(ciphertextSize int64, blockCount int) (offset, si
 		return 0, 0, fmt.Errorf("invalid v3 trailer offset: ciphertextSize %d, trailerSize %d", ciphertextSize, size)
 	}
 	return offset, size, nil
+}
+
+// decodeV3BlockTableFromBuffer decodes the trailer block table out of an
+// already-fetched whole-ciphertext buffer (armor-98864f12) instead of a
+// separate trailer round trip. buf must be exactly the stored ciphertext the
+// request's HEAD reported: the trailer window is cut from its end, and the
+// decoded table must claim a data region that ends exactly where the trailer
+// begins. Any disagreement — a truncated or over-long buffer, a table whose
+// prefix sums do not fit the object — fails here, before the decryption loop
+// starts and before any plaintext exists.
+func decodeV3BlockTableFromBuffer(buf []byte, ciphertextSize int64, blockCount int) (*crypto.BlockTable, error) {
+	trailerOffset, trailerSize, err := v3BlockTableTrailerWindow(ciphertextSize, blockCount)
+	if err != nil {
+		return nil, err
+	}
+	if trailerOffset < crypto.HeaderSize || trailerOffset+trailerSize != int64(len(buf)) {
+		return nil, fmt.Errorf("v3 trailer window [%d,+%d] does not match the fetched ciphertext (%d bytes)", trailerOffset, trailerSize, len(buf))
+	}
+	// The block size is only used for per-entry validation here; each entry
+	// carries its own length (same convention as fetchV3BlockTable).
+	const defaultBlockSize = 65536
+	if blockCount == 0 {
+		// A zero-block envelope (empty object) has an empty trailer window;
+		// DecodeBlockTable rejects empty input by design, so build the empty
+		// table directly — the data region is empty either way.
+		return crypto.NewBlockTable(defaultBlockSize, 0), nil
+	}
+	table, err := crypto.DecodeBlockTable(buf[trailerOffset:], defaultBlockSize, uint32(blockCount))
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode v3 block table: %w", err)
+	}
+	dataEnd := int64(crypto.HeaderSize) + table.TotalCiphertextLength64()
+	if dataEnd != trailerOffset {
+		return nil, fmt.Errorf("v3 block table total ciphertext length (%d) does not fit the fetched object: data region ends at %d, trailer begins at %d", table.TotalCiphertextLength64(), dataEnd, trailerOffset)
+	}
+	return table, nil
 }
 
 // encodeV3BlockTableForTransport encodes a BlockTable for transport to the decryption goroutine.
