@@ -25,6 +25,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -680,6 +681,18 @@ func requireAWSCLI(t *testing.T) {
 		}
 		t.Skip("aws CLI not installed on PATH — skipping AWS CLI compatibility test " +
 			"(install with e.g. `pip install awscli` or the official AWS CLI v2 bundle)")
+	}
+	// A PATH hit is not enough: a shim whose interpreter is missing (e.g. a
+	// shebang naming /usr/bin/python3 on a host without it) passes LookPath
+	// and then dies at fork/exec. Probe once so an unrunnable binary counts
+	// as absent — under ARMOR_COMPAT_ENDPOINT that stays fatal, not a skip.
+	if err := exec.Command("aws", "--version").Run(); err != nil && errors.Is(err, fs.ErrNotExist) {
+		if isCompatEndpointMode() {
+			t.Fatalf("aws CLI on PATH cannot execute (broken interpreter or missing binary): %v — "+
+				"required in ARMOR_COMPAT_ENDPOINT mode", err)
+		}
+		t.Skipf("aws CLI on PATH cannot execute (%v) — skipping AWS CLI compatibility test "+
+			"(install with e.g. `pip install awscli` or the official AWS CLI v2 bundle)", err)
 	}
 }
 

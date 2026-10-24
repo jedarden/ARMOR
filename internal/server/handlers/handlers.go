@@ -2503,7 +2503,27 @@ func (h *Handlers) HeadObject(w http.ResponseWriter, r *http.Request, bucket, ke
 		}
 	}
 
-	// Manifest miss or disabled: fall back to a B2 HeadObject call.
+	// Manifest miss or disabled: mirror GetObject and consult the manifest
+	// object before treating the key as legacy. Multipart ciphertext carries
+	// no stamped metadata (ADR-016 moved metadata truth into the manifest
+	// object), so a bare ciphertext Head here would serve a zero-value
+	// ETag/Content-Type and the ciphertext size — exactly what made aws-cli's
+	// If-Match multipart download 412 on every part. A backend failure other
+	// than "no manifest was ever written" surfaces with the same
+	// classification GetObject uses; falling back would misreport a multipart
+	// object as a passthrough object.
+	manifestBody, manifestMeta, manifestErr := h.readManifest(ctx, bucket, key)
+	if manifestErr != nil && !backend.IsNotFound(manifestErr) {
+		code, _, status := backendFailureResponse(manifestErr)
+		h.writeBackendError(w, r, code, fmt.Sprintf("Failed to read manifest: %v", manifestErr), status, manifestErr)
+		return
+	}
+	if manifestErr == nil && manifestBody != nil {
+		h.headObjectFromManifest(w, r, bucket, manifestBody, manifestMeta)
+		return
+	}
+
+	// No manifest: legacy single-PUT or passthrough object.
 	info, err := h.backend.Head(ctx, bucket, prefixedKey)
 	if err != nil {
 		code, message, status := backendFailureResponse(err)
@@ -2549,6 +2569,60 @@ func (h *Handlers) HeadObject(w http.ResponseWriter, r *http.Request, bucket, ke
 	w.Header().Set("Accept-Ranges", "bytes")
 	w.Header().Set("Last-Modified", info.LastModified.UTC().Format(http.TimeFormat))
 	writeUserMetadataHeaders(w, info.Metadata)
+
+	w.WriteHeader(http.StatusOK)
+}
+
+// headObjectFromManifest serves HEAD metadata from a manifest object, applying
+// the same quarantine and ciphertext-freshness gates as the GetObject read
+// path so HEAD and GET agree on what a manifest describes (a HEAD that 200s
+// where GET 500s would send conditional-request clients into 412 loops). The
+// one authoritative ciphertext HEAD doubles as the Last-Modified source, the
+// same trade GetObject makes (armor-c3199f1c).
+func (h *Handlers) headObjectFromManifest(w http.ResponseWriter, r *http.Request, bucket string, manifestBody *backend.ManifestBody, manifestMeta map[string]string) {
+	ctx := r.Context()
+
+	if reason, quarantined := manifestQuarantineState(manifestMeta); quarantined {
+		h.writeError(w, r, "AccessDenied", fmt.Sprintf("object is quarantined and cannot be read; operator action is required: %s", reason), http.StatusForbidden)
+		return
+	}
+
+	ciphertextInfo, headErr := h.headCiphertextForFreshness(ctx, bucket, manifestBody.CiphertextObject, manifestMeta[metaCompletedAt])
+	if headErr != nil {
+		var freshErr *ciphertextFreshnessError
+		if errors.As(headErr, &freshErr) {
+			// Retryable by design; see GetObject's manifest path.
+			h.writeError(w, r, "InternalError", fmt.Sprintf("manifest verification failed; operator repair or quarantine is required: %v", freshErr.err), 500)
+		} else {
+			h.writeBackendError(w, r, "InternalError", fmt.Sprintf("Failed to head ciphertext object: %v", headErr), 500, headErr)
+		}
+		return
+	}
+
+	armorMeta, ok := backend.ParseARMORMetadata(manifestMeta)
+	if !ok {
+		h.writeError(w, r, "InternalError", "Failed to parse ARMOR metadata from manifest", 500)
+		return
+	}
+
+	// Check conditional request headers
+	if status := checkConditionalRequest(r, armorMeta.ETag, ciphertextInfo.LastModified); status != 0 {
+		if status == http.StatusNotModified {
+			w.Header().Set("ETag", fmt.Sprintf(`"%s"`, armorMeta.ETag))
+			w.Header().Set("Last-Modified", ciphertextInfo.LastModified.UTC().Format(http.TimeFormat))
+			w.WriteHeader(status)
+		} else {
+			h.writeError(w, r, "PreconditionFailed", "Precondition failed", status)
+		}
+		return
+	}
+
+	w.Header().Set("Content-Length", strconv.FormatInt(armorMeta.PlaintextSize, 10))
+	w.Header().Set("Content-Type", armorMeta.ContentType)
+	w.Header().Set("ETag", fmt.Sprintf(`"%s"`, armorMeta.ETag))
+	w.Header().Set("Accept-Ranges", "bytes")
+	w.Header().Set("Last-Modified", ciphertextInfo.LastModified.UTC().Format(http.TimeFormat))
+	writeUserMetadataHeaders(w, manifestMeta)
 
 	w.WriteHeader(http.StatusOK)
 }
