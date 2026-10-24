@@ -485,6 +485,13 @@ func (e *Encryptor) EncryptV3(plaintext []byte, compress bool) (encrypted []byte
 	// For single-PUT v3, part number is 0
 	part := uint16(0)
 
+	// Derive the per-object crypto state (AES cipher, HMAC key) once instead
+	// of per block: EncryptBlockV3 would rebuild both for every block.
+	cryptor, err := NewV3BlockCryptor(e.dek, e.iv, e.blockSize)
+	if err != nil {
+		return nil, nil, fmt.Errorf("v3 block cryptor: %w", err)
+	}
+
 	// Encrypt each block independently
 	for i := uint32(0); i < blockCount; i++ {
 		start := int(i) * e.blockSize
@@ -496,7 +503,7 @@ func (e *Encryptor) EncryptV3(plaintext []byte, compress bool) (encrypted []byte
 		plaintextBlock := plaintext[start:end]
 
 		// Encrypt the block using v3 counter construction
-		encryptedBlock, blockHMAC, err := EncryptBlockV3(e.dek, e.iv, part, i, plaintextBlock, e.blockSize)
+		encryptedBlock, blockHMAC, err := cryptor.EncryptBlock(part, i, plaintextBlock)
 		if err != nil {
 			return nil, nil, fmt.Errorf("block %d encryption failed: %w", i, err)
 		}
@@ -541,6 +548,13 @@ func (e *Encryptor) EncryptV3Stream(plaintext io.Reader, ciphertext io.Writer, p
 	// For single-PUT v3, part number is 0
 	part := uint16(0)
 
+	// Derive the per-object crypto state (AES cipher, HMAC key) once instead
+	// of per block: EncryptBlockV3 would rebuild both for every block.
+	cryptor, err := NewV3BlockCryptor(e.dek, e.iv, e.blockSize)
+	if err != nil {
+		return nil, fmt.Errorf("v3 block cryptor: %w", err)
+	}
+
 	buf := make([]byte, e.blockSize)
 	totalWritten := int64(0)
 
@@ -557,7 +571,7 @@ func (e *Encryptor) EncryptV3Stream(plaintext io.Reader, ciphertext io.Writer, p
 		plaintextBlock := buf[:n]
 
 		// Encrypt the block using v3 counter construction
-		encryptedBlock, blockHMAC, err := EncryptBlockV3(e.dek, e.iv, part, blockIndex, plaintextBlock, e.blockSize)
+		encryptedBlock, blockHMAC, err := cryptor.EncryptBlock(part, blockIndex, plaintextBlock)
 		if err != nil {
 			return nil, fmt.Errorf("block %d encryption failed: %w", blockIndex, err)
 		}
@@ -612,6 +626,13 @@ func EncryptPartV3(dek, iv []byte, partNumber uint16, blockSize int, plaintext [
 
 	blockCount := ComputeBlockCount(int64(len(plaintext)), blockSize)
 
+	// Derive the per-object crypto state (AES cipher, HMAC key) once instead
+	// of per block: EncryptBlockV3 would rebuild both for every block.
+	cryptor, err := NewV3BlockCryptor(dek, iv, blockSize)
+	if err != nil {
+		return nil, nil, fmt.Errorf("v3 block cryptor: %w", err)
+	}
+
 	// Pre-allocate encrypted buffer with exact size (same as plaintext for AES-CTR)
 	encrypted = make([]byte, 0, len(plaintext))
 
@@ -629,7 +650,7 @@ func EncryptPartV3(dek, iv []byte, partNumber uint16, blockSize int, plaintext [
 		plaintextBlock := plaintext[start:end]
 
 		// Encrypt the block using v3 counter construction
-		encryptedBlock, blockHMAC, err := EncryptBlockV3(dek, iv, partNumber, blockIndex, plaintextBlock, blockSize)
+		encryptedBlock, blockHMAC, err := cryptor.EncryptBlock(partNumber, blockIndex, plaintextBlock)
 		if err != nil {
 			return nil, nil, fmt.Errorf("block %d encryption failed: %w", blockIndex, err)
 		}

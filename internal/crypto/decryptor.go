@@ -469,26 +469,18 @@ func Decompress(compressed []byte) ([]byte, error) {
 		return compressed, nil
 	}
 
-	decoder, err := zstd.NewReader(nil)
-	if err != nil {
-		return nil, &DecompressionError{
-			Err:        fmt.Errorf("failed to create zstd decoder: %w", err),
-			ErrType:    ErrTypeServer,
-			Cause:      "decoder_init_failed",
-		}
-	}
-	defer decoder.Close()
-
+	decoder := zstdDecoderPool.Get().(*zstd.Decoder)
 	decompressed, err := decoder.DecodeAll(compressed, nil)
 	if err != nil {
 		// Classify the error based on its content
-		errType := classifyDecompressionError(err)
+		zstdDecoderPool.Put(decoder)
 		return nil, &DecompressionError{
-			Err:        err,
-			ErrType:    errType,
-			Cause:      determineErrorCause(err),
+			Err:     err,
+			ErrType: classifyDecompressionError(err),
+			Cause:   determineErrorCause(err),
 		}
 	}
+	zstdDecoderPool.Put(decoder)
 
 	return decompressed, nil
 }
@@ -771,6 +763,11 @@ func (d *Decryptor) DecryptV3(encrypted []byte, part uint16, blockTable *BlockTa
 		return nil, fmt.Errorf("DecryptV3 requires version 3, got version %d", d.version)
 	}
 
+	// Verify through the per-object crypto state: the reusable HMAC state
+	// avoids an hmac.New per block, exactly as a V3BlockCryptor does for the
+	// static block paths.
+	cryptor := newV3BlockCryptor(d.block, d.hmacKey, d.iv)
+
 	blockCount := blockTable.EntryCount()
 	// Ciphertext length is the upper bound on plaintext before decompression,
 	// so seed the buffer with it and let append grow past it only for
@@ -790,7 +787,7 @@ func (d *Decryptor) DecryptV3(encrypted []byte, part uint16, blockTable *BlockTa
 		encryptedBlock := encrypted[encryptedOffset : encryptedOffset+int(blockLength)]
 
 		// Verify HMAC with v3 (part, block) semantics
-		if err := d.verifyV3BlockHMAC(encryptedBlock, part, uint32(blockIdx), entry.HMAC[:]); err != nil {
+		if err := cryptor.verifyBlockHMAC(part, uint32(blockIdx), encryptedBlock, entry.HMAC[:]); err != nil {
 			return nil, fmt.Errorf("block %d HMAC verification failed: %w", blockIdx, err)
 		}
 
@@ -818,30 +815,6 @@ func (d *Decryptor) DecryptV3(encrypted []byte, part uint16, blockTable *BlockTa
 	}
 
 	return plaintext, nil
-}
-
-// verifyV3BlockHMAC verifies the HMAC for a v3 encrypted block using (part, block) semantics.
-func (d *Decryptor) verifyV3BlockHMAC(encryptedBlock []byte, part uint16, block uint32, expected []byte) error {
-	mac := hmac.New(sha256.New, d.hmacKey)
-
-	// Include part number and block index (big-endian) from one stack buffer
-	// to match the allocation-free prefix in ComputeV3BlockHMAC.
-	var prefix [4]byte
-	binary.BigEndian.PutUint16(prefix[0:2], part)
-	mac.Write(prefix[0:2])
-	binary.BigEndian.PutUint32(prefix[0:4], block)
-	mac.Write(prefix[0:4])
-
-	// Include ciphertext
-	mac.Write(encryptedBlock)
-
-	computed := mac.Sum(nil)
-
-	if !hmac.Equal(computed, expected) {
-		return ErrHMACMismatch
-	}
-
-	return nil
 }
 
 // decryptBlockV3 decrypts a single block using v3 (part, block, aesBlock) counter semantics.

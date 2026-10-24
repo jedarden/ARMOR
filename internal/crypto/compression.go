@@ -4,8 +4,36 @@ package crypto
 import (
 	"fmt"
 	"io"
+	"sync"
 
 	"github.com/klauspost/compress/zstd"
+)
+
+// zstd codecs are expensive to build (the encoder allocates its window and
+// level tables; the decoder its own frame state), and every compressed block
+// in the ARMOR hot path goes through Compress/DecompressBlock/Decompress.
+// Pool both and reuse them across calls instead of constructing per call.
+// Pooled codecs are never closed: Close retires a codec permanently, and a
+// closed codec returned to the pool would poison every later borrower.
+var (
+	zstdEncoderPool = sync.Pool{
+		New: func() any {
+			encoder, err := zstd.NewWriter(nil)
+			if err != nil {
+				panic(fmt.Sprintf("crypto: zstd encoder construction failed: %v", err))
+			}
+			return encoder
+		},
+	}
+	zstdDecoderPool = sync.Pool{
+		New: func() any {
+			decoder, err := zstd.NewReader(nil)
+			if err != nil {
+				panic(fmt.Sprintf("crypto: zstd decoder construction failed: %v", err))
+			}
+			return decoder
+		},
+	}
 )
 
 // CompressionType specifies the compression algorithm used.
@@ -29,14 +57,11 @@ func Compress(plaintext []byte) ([]byte, bool, CompressionType, error) {
 		return plaintext, false, CompressionNone, nil
 	}
 
-	// Create zstd encoder with default compression level
-	encoder, err := zstd.NewWriter(nil)
-	if err != nil {
-		return nil, false, CompressionNone, fmt.Errorf("failed to create zstd encoder: %w", err)
-	}
-
-	// Compress the data
-	compressed := encoder.EncodeAll(plaintext, nil)
+	// Compress the data with a pooled encoder; the dst is sized to the
+	// plaintext so EncodeAll never regrows it for a compressible block.
+	encoder := zstdEncoderPool.Get().(*zstd.Encoder)
+	compressed := encoder.EncodeAll(plaintext, make([]byte, 0, len(plaintext)))
+	zstdEncoderPool.Put(encoder)
 
 	// Opportunistic pass-through: if compression didn't help, use original
 	if len(compressed) >= len(plaintext) {
@@ -125,17 +150,14 @@ func DecompressBlock(decryptedBlock []byte, isCompressed bool) ([]byte, error) {
 		return decryptedBlock, nil
 	}
 
-	// Attempt decompression
-	decoder, err := zstd.NewReader(nil)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create zstd decoder for block: %w", err)
-	}
-	defer decoder.Close()
-
+	// Attempt decompression with a pooled decoder
+	decoder := zstdDecoderPool.Get().(*zstd.Decoder)
 	decompressed, err := decoder.DecodeAll(decryptedBlock, nil)
 	if err != nil {
+		zstdDecoderPool.Put(decoder)
 		return nil, fmt.Errorf("block decompression failed: %w", err)
 	}
+	zstdDecoderPool.Put(decoder)
 
 	return decompressed, nil
 }

@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"fmt"
+	"hash"
 )
 
 // Version3 counter construction:
@@ -155,7 +156,126 @@ func validateV3BlockPayload(payload []byte) error {
 	return nil
 }
 
+// V3BlockCryptor is the per-object Version3 crypto context: the AES cipher,
+// the HKDF-derived HMAC key, and a reusable HMAC state, all keyed off one
+// DEK/IV pair. Constructing it once per object and reusing it across the
+// block loop replaces the per-block aes.NewCipher, HKDF derivation, and
+// hmac.New that the one-shot EncryptBlockV3/DecryptBlockV3 pay for every
+// 64 KiB block. It is NOT safe for concurrent use; the reusable HMAC state
+// is unguarded by design.
+type V3BlockCryptor struct {
+	blockCipher cipher.Block
+	hmacKey     []byte
+	iv          []byte
+	mac         hash.Hash
+}
+
+// NewV3BlockCryptor derives the per-object v3 key material once: the AES
+// cipher from the DEK and the HMAC key via HKDF. blockSize must be
+// <= V3MaxBlockSize.
+func NewV3BlockCryptor(dek, iv []byte, blockSize int) (*V3BlockCryptor, error) {
+	if err := validateV3BlockParams(dek, iv, blockSize); err != nil {
+		return nil, err
+	}
+	blockCipher, err := aes.NewCipher(dek)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create AES cipher: %w", err)
+	}
+	hmacKey, err := DeriveHMACKey(dek)
+	if err != nil {
+		return nil, fmt.Errorf("failed to derive HMAC key: %w", err)
+	}
+	return newV3BlockCryptor(blockCipher, hmacKey, iv), nil
+}
+
+// newV3BlockCryptor assembles a cryptor from already-derived state (the AES
+// cipher and HMAC key a Decryptor/Encryptor holds), skipping re-derivation.
+func newV3BlockCryptor(blockCipher cipher.Block, hmacKey, iv []byte) *V3BlockCryptor {
+	return &V3BlockCryptor{
+		blockCipher: blockCipher,
+		hmacKey:     hmacKey,
+		iv:          iv,
+		mac:         hmac.New(sha256.New, hmacKey),
+	}
+}
+
+// EncryptBlock encrypts one ARMOR block of the object with v3 counter
+// construction (see newV3CTR). The DEK/IV/blockSize were fixed when the
+// cryptor was built, so only part, block index, and the payload vary.
+// A plaintext longer than V3MaxBlockSize is rejected: the u16 aesBlock
+// counter field would wrap or carry into the part/block namespace and
+// reuse keystream.
+func (c *V3BlockCryptor) EncryptBlock(part uint16, block uint32, plaintext []byte) (ciphertext []byte, hmacValue []byte, err error) {
+	if err := validateV3BlockPayload(plaintext); err != nil {
+		return nil, nil, err
+	}
+
+	// Encrypt the whole ARMOR block with one CTR stream (see newV3CTR for
+	// why this is byte-identical to the historical per-16-byte construction).
+	ciphertext = make([]byte, len(plaintext))
+	newV3CTR(c.blockCipher, c.iv, part, block).XORKeyStream(ciphertext, plaintext)
+
+	hmacValue = c.computeBlockHMAC(part, block, ciphertext)
+
+	return ciphertext, hmacValue, nil
+}
+
+// DecryptBlock decrypts one ARMOR block of the object with v3 counter
+// construction. The block's HMAC is verified exactly once, before any
+// plaintext is released. A ciphertext longer than V3MaxBlockSize is
+// rejected before any keystream is generated: the u16 aesBlock counter
+// field would wrap or carry into the part/block namespace and decrypt with
+// reused keystream.
+func (c *V3BlockCryptor) DecryptBlock(part uint16, block uint32, ciphertext []byte, expectedHMAC []byte) (plaintext []byte, err error) {
+	if err := validateV3BlockPayload(ciphertext); err != nil {
+		return nil, err
+	}
+
+	if err := c.verifyBlockHMAC(part, block, ciphertext, expectedHMAC); err != nil {
+		return nil, fmt.Errorf("HMAC verification failed for part %d block %d: %w", part, block, err)
+	}
+
+	// Decrypt the whole ARMOR block with one CTR stream (see newV3CTR).
+	plaintext = make([]byte, len(ciphertext))
+	newV3CTR(c.blockCipher, c.iv, part, block).XORKeyStream(plaintext, ciphertext)
+
+	return plaintext, nil
+}
+
+// computeBlockHMAC computes HMAC-SHA256 over the v3 (part, block, ciphertext)
+// input using the cryptor's reusable HMAC state. Byte-identical to
+// ComputeV3BlockHMAC on the same key: same input order, same Sum.
+func (c *V3BlockCryptor) computeBlockHMAC(part uint16, block uint32, ciphertext []byte) []byte {
+	c.mac.Reset()
+
+	var prefix [4]byte
+	binary.BigEndian.PutUint16(prefix[0:2], part)
+	c.mac.Write(prefix[0:2])
+	binary.BigEndian.PutUint32(prefix[0:4], block)
+	c.mac.Write(prefix[0:4])
+
+	c.mac.Write(ciphertext)
+
+	return c.mac.Sum(nil)
+}
+
+// verifyBlockHMAC verifies a block HMAC with the reusable state, comparing
+// into a stack buffer so verification allocates nothing.
+func (c *V3BlockCryptor) verifyBlockHMAC(part uint16, block uint32, ciphertext, expected []byte) error {
+	if len(expected) != HMACSize {
+		return fmt.Errorf("expected HMAC must be %d bytes", HMACSize)
+	}
+
+	computed := c.computeBlockHMAC(part, block, ciphertext)
+	if !hmac.Equal(computed, expected) {
+		return ErrHMACMismatch
+	}
+	return nil
+}
+
 // EncryptBlockV3 encrypts a single ARMOR block with Version3 semantics.
+// It derives the cipher and HMAC key for this one call; callers looping over
+// an object's blocks should hold a V3BlockCryptor instead.
 //
 // Parameters:
 //   - dek: 32-byte data encryption key
@@ -172,35 +292,16 @@ func validateV3BlockPayload(payload []byte) error {
 //     is rejected: the u16 aesBlock counter field would wrap or carry into
 //     the part/block namespace and reuse keystream.
 func EncryptBlockV3(dek, iv []byte, part uint16, block uint32, plaintext []byte, blockSize int) (ciphertext []byte, hmacValue []byte, err error) {
-	if err := validateV3BlockParams(dek, iv, blockSize); err != nil {
+	cryptor, err := NewV3BlockCryptor(dek, iv, blockSize)
+	if err != nil {
 		return nil, nil, err
 	}
-	if err := validateV3BlockPayload(plaintext); err != nil {
-		return nil, nil, err
-	}
-
-	// Create AES cipher
-	blockCipher, err := aes.NewCipher(dek)
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to create AES cipher: %w", err)
-	}
-
-	// Encrypt the whole ARMOR block with one CTR stream (see newV3CTR for
-	// why this is byte-identical to the historical per-16-byte construction).
-	ciphertext = make([]byte, len(plaintext))
-	newV3CTR(blockCipher, iv, part, block).XORKeyStream(ciphertext, plaintext)
-
-	// Compute HMAC
-	hmacKey, err := DeriveHMACKey(dek)
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to derive HMAC key: %w", err)
-	}
-	hmacValue = ComputeV3BlockHMAC(hmacKey, part, block, ciphertext)
-
-	return ciphertext, hmacValue, nil
+	return cryptor.EncryptBlock(part, block, plaintext)
 }
 
 // DecryptBlockV3 decrypts a single ARMOR block with Version3 semantics.
+// It derives the cipher and HMAC key for this one call; callers looping over
+// an object's blocks should hold a V3BlockCryptor instead.
 //
 // Parameters:
 //   - dek: 32-byte data encryption key
@@ -218,31 +319,9 @@ func EncryptBlockV3(dek, iv []byte, part uint16, block uint32, plaintext []byte,
 //     generated: the u16 aesBlock counter field would wrap or carry into
 //     the part/block namespace and decrypt with reused keystream.
 func DecryptBlockV3(dek, iv []byte, part uint16, block uint32, ciphertext []byte, expectedHMAC []byte, blockSize int) (plaintext []byte, err error) {
-	if err := validateV3BlockParams(dek, iv, blockSize); err != nil {
+	cryptor, err := NewV3BlockCryptor(dek, iv, blockSize)
+	if err != nil {
 		return nil, err
 	}
-	if err := validateV3BlockPayload(ciphertext); err != nil {
-		return nil, err
-	}
-
-	// Verify HMAC first — no plaintext is released before authentication.
-	hmacKey, err := DeriveHMACKey(dek)
-	if err != nil {
-		return nil, fmt.Errorf("failed to derive HMAC key: %w", err)
-	}
-	if err := VerifyV3BlockHMAC(hmacKey, part, block, ciphertext, expectedHMAC); err != nil {
-		return nil, fmt.Errorf("HMAC verification failed for part %d block %d: %w", part, block, err)
-	}
-
-	// Create AES cipher
-	blockCipher, err := aes.NewCipher(dek)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create AES cipher: %w", err)
-	}
-
-	// Decrypt the whole ARMOR block with one CTR stream (see newV3CTR).
-	plaintext = make([]byte, len(ciphertext))
-	newV3CTR(blockCipher, iv, part, block).XORKeyStream(plaintext, ciphertext)
-
-	return plaintext, nil
+	return cryptor.DecryptBlock(part, block, ciphertext, expectedHMAC)
 }
