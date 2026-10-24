@@ -240,12 +240,13 @@ func (h *Handlers) fetchV3MultipartBlockRun(ctx context.Context, bucket, prefixe
 		return nil, fmt.Errorf("invalid part index: %d", run.PartIdx)
 	}
 
-	// Sum the previous parts' ciphertext lengths in int64: the concatenated
-	// ciphertext of a large multipart object exceeds 4GiB, which silently
-	// wraps a uint32 accumulator and addresses the wrong bytes.
-	var partOffset int64
-	for i := 0; i < run.PartIdx; i++ {
-		partOffset += sidecar.Sidecar.Parts[i].CiphertextLen
+	// The part's offset in the concatenated object comes from the sidecar's
+	// precomputed, overflow-checked cumulative ciphertext sums — int64, since
+	// a large multipart object's total exceeds 4GiB and a wrapping
+	// accumulator addresses the wrong bytes (armor-817d9d92).
+	partOffset, err := sidecar.GetPartCiphertextOffset(run.PartIdx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get part offset: %w", err)
 	}
 
 	// The run's ciphertext span within the part

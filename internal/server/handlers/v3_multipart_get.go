@@ -7,7 +7,9 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/jedarden/armor/internal/backend"
@@ -15,7 +17,22 @@ import (
 )
 
 // handleV3MultipartGet handles full GET requests for v3 multipart objects.
-// It streams parts in order, verifying HMACs and decrypting each block.
+//
+// The parts of a v3 multipart object are contiguous in the stored ciphertext,
+// so the whole object is fetched with ONE ranged request and decrypted block
+// by block as the bytes arrive. The backend's bounded pipelined range reader
+// (ARMOR_READ_CONCURRENCY window over ARMOR_READ_FETCH_SIZE sub-requests)
+// provides the read-ahead — across part boundaries too, since storage has no
+// part boundaries — while in-process memory stays at one ciphertext block plus
+// one plaintext block, never a whole part. Time-to-first-byte is the first
+// fetched chunk, not the first full part (armor-272299ca).
+//
+// Integrity and termination: DecryptBlockV3 verifies each block's HMAC against
+// the sidecar before any plaintext is released, and Content-Length is declared
+// from the sidecar up front. A backend error or HMAC mismatch after the
+// headers are sent therefore truncates the body against the declared length —
+// the client observes a broken transfer instead of a clean-EOF truncated
+// success, and no XML error body is appended to partial plaintext.
 func (h *Handlers) handleV3MultipartGet(w http.ResponseWriter, r *http.Request, bucket, key, prefixedKey string, decryptor *crypto.Decryptor, armorMeta *backend.ARMORMetadata, plaintextSize int64, lastModified time.Time) {
 	ctx := r.Context()
 
@@ -26,35 +43,114 @@ func (h *Handlers) handleV3MultipartGet(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 
-	// Set response headers for streaming
+	// Fetch the whole concatenated ciphertext. The part offsets in the sidecar
+	// were summed once with checked int64 addition at sidecar load, so the
+	// address is correct past 4GiB (armor-817d9d92) and a sidecar whose
+	// offsets overflow is rejected before any byte is served.
+	totalCiphertext, err := sidecar.TotalCiphertextSize()
+	if err != nil {
+		h.writeError(w, r, "InternalError", fmt.Sprintf("Invalid v3 sidecar: %v", err), 500)
+		return
+	}
+	body, err := h.backend.GetRange(ctx, bucket, prefixedKey, 0, totalCiphertext)
+	if err != nil {
+		h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to fetch v3 multipart object: %v", err), 500)
+		return
+	}
+
+	// Set response headers for streaming. Declaring Content-Length is what
+	// makes a later failure observable: net/http closes the connection on a
+	// short body instead of letting it read as a truncated success.
+	w.Header().Set("Content-Length", strconv.FormatInt(plaintextSize, 10))
 	w.Header().Set("Content-Type", armorMeta.ContentType)
 	w.Header().Set("ETag", fmt.Sprintf(`"%s"`, armorMeta.ETag))
+	w.Header().Set("Accept-Ranges", "bytes")
 	w.Header().Set("Last-Modified", lastModified.UTC().Format(http.TimeFormat))
+	w.Header().Set("X-Armor-Stream", "pipelined")
+	w.WriteHeader(http.StatusOK)
 
-	// Stream parts in order
+	pr, pw := io.Pipe()
+	// Unblocks the producer parked on a pw.Write if io.Copy stops early —
+	// a client disconnect must not strand the streaming goroutine (and with
+	// it the backend reader) forever.
+	defer pr.Close()
+
+	go func() {
+		// The streaming goroutine is the only reader of body, so it owns the
+		// close — including on the cancellation path, where it must observe
+		// the read failure before the resources go away.
+		defer body.Close()
+		if err := streamV3MultipartBlocks(pw, body, sidecar, decryptor, armorMeta.IV, armorMeta.BlockSize, plaintextSize); err != nil {
+			log.Printf("GET %s/%s: v3 multipart stream failed: %v", bucket, key, err)
+			pw.CloseWithError(err)
+			return
+		}
+		pw.Close()
+	}()
+
+	if _, err := io.Copy(w, pr); err != nil {
+		// Headers are already sent: the declared-but-unmet Content-Length is
+		// the client-observable failure. Log the cause for the operator.
+		log.Printf("GET %s/%s: v3 multipart plaintext streaming error: %v", bucket, key, err)
+	}
+}
+
+// streamV3MultipartBlocks walks the sidecar's (part, block) sequence in order,
+// reading each block's ciphertext from body, verifying its HMAC and decrypting
+// it with the part-scoped v3 counter namespace, and writing the plaintext to
+// out. Blocks are emitted only after verification; a read, verification, or
+// write failure is returned with the plaintext position it happened at.
+func streamV3MultipartBlocks(out io.Writer, body io.Reader, sidecar *backend.MultipartSidecarEntry, decryptor *crypto.Decryptor, iv []byte, blockSize int, plaintextSize int64) error {
+	var emitted int64
+
 	for partIdx := 0; partIdx < sidecar.PartCount(); partIdx++ {
 		part := sidecar.Sidecar.Parts[partIdx]
 
-		// Fetch this part's ciphertext from B2
-		partCiphertext, err := h.fetchPartCiphertext(ctx, bucket, prefixedKey, sidecar, partIdx)
-		if err != nil {
-			h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to fetch part %d: %v", part.N, err), 500)
-			return
-		}
+		for blockIdx := 0; blockIdx < len(part.Blocks); blockIdx++ {
+			blockLen, err := sidecar.GetBlockLength(partIdx, blockIdx)
+			if err != nil {
+				return fmt.Errorf("after %d of %d plaintext bytes: get block length (part %d, block %d): %w", emitted, plaintextSize, part.N, blockIdx, err)
+			}
+			expectedHMAC, err := sidecar.GetBlockHMAC(partIdx, blockIdx)
+			if err != nil {
+				return fmt.Errorf("after %d of %d plaintext bytes: get block HMAC (part %d, block %d): %w", emitted, plaintextSize, part.N, blockIdx, err)
+			}
+			isCompressed, err := sidecar.IsBlockCompressed(partIdx, blockIdx)
+			if err != nil {
+				return fmt.Errorf("after %d of %d plaintext bytes: get compression flag (part %d, block %d): %w", emitted, plaintextSize, part.N, blockIdx, err)
+			}
 
-		// Decrypt and verify this part
-		partPlaintext, err := h.decryptV3Part(ctx, partCiphertext, sidecar, partIdx, decryptor, armorMeta.IV, armorMeta.BlockSize)
-		if err != nil {
-			h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to decrypt part %d: %v", part.N, err), 500)
-			return
-		}
+			blockCiphertext := make([]byte, blockLen)
+			if _, err := io.ReadFull(body, blockCiphertext); err != nil {
+				return fmt.Errorf("after %d of %d plaintext bytes: read ciphertext for part %d block %d: %w", emitted, plaintextSize, part.N, blockIdx, err)
+			}
 
-		// Write this part's plaintext to the response
-		if _, err := w.Write(partPlaintext); err != nil {
-			// Client disconnect
-			return
+			// DecryptBlockV3 verifies the block HMAC first and decrypts only
+			// on a match, so unverified plaintext never reaches out. The
+			// counter namespace is (part, block-within-part).
+			plaintext, err := crypto.DecryptBlockV3(decryptor.DEK(), iv, uint16(part.N), uint32(blockIdx), blockCiphertext, expectedHMAC, blockSize)
+			if err != nil {
+				return fmt.Errorf("after %d of %d plaintext bytes: part %d block %d: %w", emitted, plaintextSize, part.N, blockIdx, err)
+			}
+
+			if isCompressed {
+				plaintext, err = crypto.DecompressBlock(plaintext, true)
+				if err != nil {
+					return fmt.Errorf("after %d of %d plaintext bytes: decompress part %d block %d: %w", emitted, plaintextSize, part.N, blockIdx, err)
+				}
+			}
+
+			if _, err := out.Write(plaintext); err != nil {
+				return fmt.Errorf("after %d of %d plaintext bytes: emit part %d block %d: %w", emitted, plaintextSize, part.N, blockIdx, err)
+			}
+			emitted += int64(len(plaintext))
 		}
 	}
+
+	if emitted != plaintextSize {
+		return fmt.Errorf("streamed %d plaintext bytes, sidecar declares %d", emitted, plaintextSize)
+	}
+	return nil
 }
 
 // loadV3MultipartSidecar loads the v3 multipart sidecar with caching.
@@ -85,104 +181,6 @@ func (h *Handlers) loadV3MultipartSidecar(ctx context.Context, bucket, key, pref
 	return h.multipartSidecarCache.Get(bucket, prefixedKey, etag), nil
 }
 
-// fetchPartCiphertext fetches the ciphertext for a specific part of a v3 multipart object.
-// The parts are concatenated in the final object, so we need to calculate the offset.
-func (h *Handlers) fetchPartCiphertext(ctx context.Context, bucket, prefixedKey string, sidecar *backend.MultipartSidecarEntry, partIdx int) ([]byte, error) {
-	if partIdx < 0 || partIdx >= sidecar.PartCount() {
-		return nil, fmt.Errorf("invalid part index: %d", partIdx)
-	}
-
-	part := sidecar.Sidecar.Parts[partIdx]
-
-	// Calculate the byte offset of this part in the concatenated ciphertext.
-	// For v3 multipart, B2 simply concatenates all parts. The sum is int64:
-	// a large multipart object's ciphertext exceeds 4GiB, which silently
-	// wraps a uint32 accumulator and fetches the wrong bytes (armor-817d9d92).
-	var partOffset int64
-	for i := 0; i < partIdx; i++ {
-		partOffset += sidecar.Sidecar.Parts[i].CiphertextLen
-	}
-
-	// Fetch this part's range from B2
-	partCiphertext, err := h.backend.GetRange(ctx, bucket, prefixedKey, partOffset, part.CiphertextLen)
-	if err != nil {
-		return nil, fmt.Errorf("failed to fetch part %d range: %w", part.N, err)
-	}
-	defer partCiphertext.Close()
-
-	ciphertext, err := io.ReadAll(partCiphertext)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read part %d ciphertext: %w", part.N, err)
-	}
-
-	return ciphertext, nil
-}
-
-// decryptV3Part decrypts and verifies a single v3 multipart part.
-// It splits the part into blocks, verifies each block's HMAC, decrypts with v3 counter construction,
-// and decompresses if needed.
-func (h *Handlers) decryptV3Part(ctx context.Context, partCiphertext []byte, sidecar *backend.MultipartSidecarEntry, partIdx int, decryptor *crypto.Decryptor, iv []byte, blockSize int) ([]byte, error) {
-	if partIdx < 0 || partIdx >= sidecar.PartCount() {
-		return nil, fmt.Errorf("invalid part index: %d", partIdx)
-	}
-
-	part := sidecar.Sidecar.Parts[partIdx]
-	partNum := part.N // 1-based part number for v3 counter construction
-
-	// Split the part into blocks and process each one
-	var plaintextBuilder []byte
-	ciphertextOffset := 0
-
-	for blockIdx := 0; blockIdx < len(part.Blocks); blockIdx++ {
-		// Get the block length from the sidecar
-		blockLen, err := sidecar.GetBlockLength(partIdx, blockIdx)
-		if err != nil {
-			return nil, fmt.Errorf("failed to get block %d length: %w", blockIdx, err)
-		}
-
-		// Extract this block from the ciphertext
-		if ciphertextOffset+int(blockLen) > len(partCiphertext) {
-			return nil, fmt.Errorf("block %d extends beyond part ciphertext", blockIdx)
-		}
-		blockCiphertext := partCiphertext[ciphertextOffset : ciphertextOffset+int(blockLen)]
-		ciphertextOffset += int(blockLen)
-
-		// Verify HMAC for this block
-		expectedHMAC, err := sidecar.GetBlockHMAC(partIdx, blockIdx)
-		if err != nil {
-			return nil, fmt.Errorf("failed to get block %d HMAC: %w", blockIdx, err)
-		}
-
-		if err := verifyV3BlockHMAC(blockCiphertext, expectedHMAC, decryptor.HMACKey(), partNum, uint32(blockIdx)); err != nil {
-			return nil, fmt.Errorf("block %d HMAC verification failed: %w", blockIdx, err)
-		}
-
-		// Decrypt this block using v3 counter construction
-		decryptedBlock, err := crypto.DecryptBlockV3(decryptor.DEK(), iv, uint16(partNum), uint32(blockIdx), blockCiphertext, expectedHMAC, blockSize)
-		if err != nil {
-			return nil, fmt.Errorf("block %d decryption failed: %w", blockIdx, err)
-		}
-
-		// Decompress if flagged
-		isCompressed, err := sidecar.IsBlockCompressed(partIdx, blockIdx)
-		if err != nil {
-			return nil, fmt.Errorf("failed to check compression flag for block %d: %w", blockIdx, err)
-		}
-
-		if isCompressed {
-			decryptedBlock, err = crypto.DecompressBlock(decryptedBlock, true)
-			if err != nil {
-				return nil, fmt.Errorf("block %d decompression failed: %w", blockIdx, err)
-			}
-		}
-
-		// Append to plaintext
-		plaintextBuilder = append(plaintextBuilder, decryptedBlock...)
-	}
-
-	return plaintextBuilder, nil
-}
-
 // verifyV3BlockHMAC verifies the HMAC for a v3 block.
 // V3 HMAC format: HMAC-SHA256(hmacKey, uint16(part) ‖ uint32(blockIdx) ‖ ciphertext)
 func verifyV3BlockHMAC(blockCiphertext, expectedHMAC, hmacKey []byte, partNum int, blockIdx uint32) error {
@@ -208,9 +206,4 @@ func verifyV3BlockHMAC(blockCiphertext, expectedHMAC, hmacKey []byte, partNum in
 	}
 
 	return nil
-}
-
-// getV3MultipartContentLength returns the total plaintext size for a v3 multipart object.
-func (h *Handlers) getV3MultipartContentLength(sidecar *backend.MultipartSidecarEntry) int64 {
-	return sidecar.TotalPlaintextSize()
 }

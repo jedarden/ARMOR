@@ -402,11 +402,14 @@ func TestSmallObjectFullGETRequestCountSinglePUTV3(t *testing.T) {
 // count for a full GET of a v3 multipart object: the manifest hit, one
 // ciphertext HEAD (armor-c3199f1c: the ADR-016 freshness head and the
 // ciphertext-size head were the same round trip and are now a single
-// authoritative HEAD), the HMAC sidecar load, and one range read per part.
+// authoritative HEAD), the HMAC sidecar load, and ONE range read covering
+// the whole concatenated ciphertext (armor-272299ca: storage has no part
+// boundaries, so the pipelined reader streams the object in a single ranged
+// request instead of one per-part fetch).
 // Multipart objects cannot be
 // small by construction (ADR-015 requires a uniform part size of at least
 // 5 MiB), so this uses the smallest legal two-part shape; what is pinned is
-// the fixed per-GET overhead of 4 calls plus one range per part.
+// the fixed per-GET overhead of 4 calls plus the single whole-object range.
 func TestSmallObjectFullGETRequestCountMultipartV3(t *testing.T) {
 	const bucket = "test-bucket"
 	const key = "small-multipart-v3.bin"
@@ -431,10 +434,10 @@ func TestSmallObjectFullGETRequestCountMultipartV3(t *testing.T) {
 
 	calls := cb.recordedCalls()
 	// 3 fixed calls (manifest hit, combined freshness/size HEAD, sidecar)
-	// plus one GET_RANGE per part.
-	const wantCount = 3 + 2
+	// plus one whole-object GET_RANGE (armor-272299ca).
+	const wantCount = 3 + 1
 	if len(calls) != wantCount {
-		t.Fatalf("v3 multipart: %d backend calls recorded, baseline is %d (manifest hit, combined freshness/size head, sidecar, one range per part): %s",
+		t.Fatalf("v3 multipart: %d backend calls recorded, baseline is %d (manifest hit, combined freshness/size head, sidecar, one whole-object range): %s",
 			len(calls), wantCount, formatCalls(calls))
 	}
 	if calls[0].Method != "GET" || calls[0].Key != bucket+"/"+key+".armor-manifest" || !calls[0].Hit {
@@ -446,9 +449,8 @@ func TestSmallObjectFullGETRequestCountMultipartV3(t *testing.T) {
 	if calls[2].Method != "GET_DIRECT" || !calls[2].Hit {
 		t.Fatalf("v3 multipart: call 3 should be the HMAC sidecar load, got %+v", calls[2])
 	}
-	for i, c := range calls[3:] {
-		if c.Method != "GET_RANGE" || c.Offset < 0 || c.Length <= 0 {
-			t.Fatalf("v3 multipart: call %d should be a part range read, got %+v", i+4, c)
-		}
+	data := calls[3]
+	if data.Method != "GET_RANGE" || data.Offset != 0 || data.Length <= 0 {
+		t.Fatalf("v3 multipart: call 4 should be the whole-object range read from offset 0, got %+v", data)
 	}
 }

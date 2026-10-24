@@ -28,7 +28,13 @@ type MultipartSidecarEntry struct {
 	BlockPrefixSums [][]int64
 	// Per-part cumulative ciphertext lengths per block. int64, not uint32:
 	// B2 allows parts up to 5GiB, so per-part ciphertext can exceed 2^32.
-	ExpiresAt time.Time
+	// Cumulative ciphertext offsets per part in the concatenated stored
+	// object: [0, len(part1), len(part1)+len(part2), ...], one entry per
+	// part plus the end-exclusive total. Built with checked addition — a
+	// sidecar whose offsets overflow int64 is rejected at load instead of
+	// silently addressing the wrong bytes (armor-817d9d92 class).
+	CiphertextPrefixSums []int64
+	ExpiresAt            time.Time
 }
 
 // NewMultipartSidecarCache creates a new v3 multipart sidecar cache.
@@ -76,7 +82,7 @@ func (c *MultipartSidecarCache) Set(bucket, key, etag string, sidecar *HMACTable
 	defer c.mu.Unlock()
 
 	// Build prefix sums
-	partPrefixSums, blockPrefixSums, err := buildPrefixSums(sidecar)
+	partPrefixSums, blockPrefixSums, ciphertextPrefixSums, err := buildPrefixSums(sidecar)
 	if err != nil {
 		return fmt.Errorf("failed to build prefix sums: %w", err)
 	}
@@ -87,11 +93,12 @@ func (c *MultipartSidecarCache) Set(bucket, key, etag string, sidecar *HMACTable
 	}
 
 	c.entries[cacheKey(bucket, key)] = &MultipartSidecarEntry{
-		Sidecar:         sidecar,
-		ETag:            etag,
-		PartPrefixSums:  partPrefixSums,
-		BlockPrefixSums: blockPrefixSums,
-		ExpiresAt:       time.Now().Add(c.ttl),
+		Sidecar:              sidecar,
+		ETag:                 etag,
+		PartPrefixSums:       partPrefixSums,
+		BlockPrefixSums:      blockPrefixSums,
+		CiphertextPrefixSums: ciphertextPrefixSums,
+		ExpiresAt:            time.Now().Add(c.ttl),
 	}
 
 	return nil
@@ -134,14 +141,16 @@ func (c *MultipartSidecarCache) evictOldest() {
 	}
 }
 
-// buildPrefixSums builds cumulative plaintext lengths per part and
-// cumulative ciphertext lengths per block for each part.
+// buildPrefixSums builds cumulative plaintext lengths per part, cumulative
+// ciphertext lengths per block for each part, and cumulative ciphertext
+// offsets per part in the concatenated stored object.
 // Returns:
 // - partPrefixSums: [0, len(part1), len(part1)+len(part2), ...] for offset→part mapping
 // - blockPrefixSums: per-part array of cumulative ciphertext lengths per block
-func buildPrefixSums(sidecar *HMACTableSidecarV3) ([]int64, [][]int64, error) {
+// - ciphertextPrefixSums: [0, off(part2), off(part3), ..., total] addressing the stored object
+func buildPrefixSums(sidecar *HMACTableSidecarV3) ([]int64, [][]int64, []int64, error) {
 	if len(sidecar.Parts) == 0 {
-		return nil, nil, fmt.Errorf("no parts in sidecar")
+		return nil, nil, nil, fmt.Errorf("no parts in sidecar")
 	}
 
 	// Build cumulative plaintext lengths per part
@@ -151,10 +160,29 @@ func buildPrefixSums(sidecar *HMACTableSidecarV3) ([]int64, [][]int64, error) {
 		partPrefixSums[i+1] = partPrefixSums[i] + part.PlaintextLen
 	}
 
+	// Build cumulative ciphertext offsets per part with checked int64
+	// addition: a wrap or a negative length would address the wrong bytes
+	// of the stored object, so the sidecar is rejected outright.
+	ciphertextPrefixSums := make([]int64, len(sidecar.Parts)+1)
+	ciphertextPrefixSums[0] = 0
+	for i, part := range sidecar.Parts {
+		if part.CiphertextLen < 0 {
+			return nil, nil, nil, fmt.Errorf("negative ciphertext length %d for part %d", part.CiphertextLen, part.N)
+		}
+		next := ciphertextPrefixSums[i] + part.CiphertextLen
+		if next < ciphertextPrefixSums[i] {
+			return nil, nil, nil, fmt.Errorf("cumulative ciphertext offset overflows int64 at part %d", part.N)
+		}
+		ciphertextPrefixSums[i+1] = next
+	}
+
 	// Build cumulative ciphertext lengths per block for each part
 	blockPrefixSums := make([][]int64, len(sidecar.Parts))
 	for partIdx, part := range sidecar.Parts {
 		if len(part.Blocks) == 0 {
+			if part.CiphertextLen != 0 {
+				return nil, nil, nil, fmt.Errorf("part %d declares %d ciphertext bytes but has no block entries", part.N, part.CiphertextLen)
+			}
 			continue
 		}
 
@@ -164,22 +192,29 @@ func buildPrefixSums(sidecar *HMACTableSidecarV3) ([]int64, [][]int64, error) {
 		for blockIdx, blockData := range part.Blocks {
 			// blockData is [hmac_base64, clen]
 			if len(blockData) < 2 {
-				return nil, nil, fmt.Errorf("invalid block data at part %d block %d", part.N, blockIdx)
+				return nil, nil, nil, fmt.Errorf("invalid block data at part %d block %d", part.N, blockIdx)
 			}
 
 			// Decode clen (may have compression flag in high bit)
 			clen, err := parseBlockLength(blockData[1])
 			if err != nil {
-				return nil, nil, fmt.Errorf("failed to parse block length at part %d block %d: %w", part.N, blockIdx, err)
+				return nil, nil, nil, fmt.Errorf("failed to parse block length at part %d block %d: %w", part.N, blockIdx, err)
 			}
 
 			prefixSums[blockIdx+1] = prefixSums[blockIdx] + int64(clen)
 		}
 
+		// The block entries describe the part's full ciphertext layout: if
+		// they disagree with the declared part length, the stored bytes a
+		// block range addresses are not the bytes the HMACs cover.
+		if prefixSums[len(prefixSums)-1] != part.CiphertextLen {
+			return nil, nil, nil, fmt.Errorf("part %d block lengths sum to %d, sidecar declares %d", part.N, prefixSums[len(prefixSums)-1], part.CiphertextLen)
+		}
+
 		blockPrefixSums[partIdx] = prefixSums
 	}
 
-	return partPrefixSums, blockPrefixSums, nil
+	return partPrefixSums, blockPrefixSums, ciphertextPrefixSums, nil
 }
 
 // NewMultipartSidecarEntry builds a MultipartSidecarEntry for an already
@@ -193,14 +228,15 @@ func buildPrefixSums(sidecar *HMACTableSidecarV3) ([]int64, [][]int64, error) {
 // partial table: skipping a malformed entry silently would decrypt to a
 // truncated plaintext with no signal (armor-86a90341).
 func NewMultipartSidecarEntry(sidecar *HMACTableSidecarV3) (*MultipartSidecarEntry, error) {
-	partPrefixSums, blockPrefixSums, err := buildPrefixSums(sidecar)
+	partPrefixSums, blockPrefixSums, ciphertextPrefixSums, err := buildPrefixSums(sidecar)
 	if err != nil {
 		return nil, err
 	}
 	return &MultipartSidecarEntry{
-		Sidecar:         sidecar,
-		PartPrefixSums:  partPrefixSums,
-		BlockPrefixSums: blockPrefixSums,
+		Sidecar:              sidecar,
+		PartPrefixSums:       partPrefixSums,
+		BlockPrefixSums:      blockPrefixSums,
+		CiphertextPrefixSums: ciphertextPrefixSums,
 	}, nil
 }
 
@@ -285,6 +321,25 @@ func (e *MultipartSidecarEntry) GetCiphertextOffset(partIdx int, blockIdx int) (
 	}
 
 	return prefixSums[blockIdx], nil
+}
+
+// GetPartCiphertextOffset returns the byte offset of a part's ciphertext in
+// the concatenated stored object. The sums were built once at sidecar load
+// with checked int64 addition, so readers never re-accumulate per-part
+// lengths (the repeated accumulation armor-817d9d92 corrected) and an
+// out-of-range part is an error rather than a wrapped address. partIdx may
+// be PartCount() to read the end-exclusive total.
+func (e *MultipartSidecarEntry) GetPartCiphertextOffset(partIdx int) (int64, error) {
+	if partIdx < 0 || partIdx >= len(e.CiphertextPrefixSums) {
+		return 0, fmt.Errorf("invalid part index: %d (sidecar has %d parts)", partIdx, e.PartCount())
+	}
+	return e.CiphertextPrefixSums[partIdx], nil
+}
+
+// TotalCiphertextSize returns the total ciphertext size across all parts,
+// as declared by the sidecar's checked per-part cumulative offsets.
+func (e *MultipartSidecarEntry) TotalCiphertextSize() (int64, error) {
+	return e.GetPartCiphertextOffset(e.PartCount())
 }
 
 // GetCiphertextSpan returns the half-open ciphertext byte span [start, end)
