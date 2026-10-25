@@ -11,6 +11,7 @@ package awsclicompat
 
 import (
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -32,6 +33,10 @@ type barmanConfig struct {
 	Server      string
 	ChunkSize   string
 }
+
+// walSegmentName matches a WAL segment file name: 8 hex characters each for
+// timeline, log, and segment number.
+var walSegmentName = regexp.MustCompile(`^[0-9A-F]{24}$`)
 
 func loadBarmanFixture(t *testing.T, endpoint, bucket string) barmanConfig {
 	t.Helper()
@@ -100,6 +105,55 @@ func pgCtlStartArgs(dataDir, logPath string, port int, socketDir string) []strin
 		"-o", fmt.Sprintf("-p %d -k %s", port, socketDir),
 		"-w", "start",
 	}
+}
+
+// mustStartPostgres starts a cluster via pgCtlStartArgs and, when pg_ctl
+// reports a failed startup, fails the test with the server's own log.  pg_ctl
+// only says "Examine the log output." — without this dump that log stays
+// inside an ephemeral CI pod and the failure is undiagnosable.
+func mustStartPostgres(t *testing.T, pgCtl, dataDir, logPath string, port int, socketDir string) {
+	t.Helper()
+	out, err := run(t, pgCtl, nil, pgCtlStartArgs(dataDir, logPath, port, socketDir)...)
+	if err != nil {
+		serverLog, readErr := os.ReadFile(logPath)
+		if readErr != nil {
+			t.Fatalf("pg_ctl start of %s failed: %v (server log %s unreadable: %v)\n%s", dataDir, err, logPath, readErr, out)
+		}
+		t.Fatalf("pg_ctl start of %s failed: %v\nserver log %s:\n%s", dataDir, err, logPath, serverLog)
+	}
+}
+
+// seedWALSegments copies the WAL segment files from srcWALDir to dstWALDir and
+// returns how many were copied.  Segments live at the top level of pg_wal;
+// subdirectories such as archive_status hold bookkeeping, not WAL.
+func seedWALSegments(srcWALDir, dstWALDir string) (int, error) {
+	entries, err := os.ReadDir(srcWALDir)
+	if err != nil {
+		return 0, err
+	}
+	seeded := 0
+	for _, entry := range entries {
+		if !entry.Type().IsRegular() || !walSegmentName.MatchString(entry.Name()) {
+			continue
+		}
+		src, err := os.Open(filepath.Join(srcWALDir, entry.Name()))
+		if err != nil {
+			return seeded, err
+		}
+		dst, err := os.OpenFile(filepath.Join(dstWALDir, entry.Name()), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+		if err != nil {
+			src.Close()
+			return seeded, err
+		}
+		_, err = io.Copy(dst, src)
+		src.Close()
+		dst.Close()
+		if err != nil {
+			return seeded, err
+		}
+		seeded++
+	}
+	return seeded, nil
 }
 
 // initdbArgs builds the initdb invocation for the temporary cluster.  The
@@ -199,7 +253,7 @@ func startCompatPostgres(t *testing.T, binDir string) (dataDir string, port int)
 	// pg_ctl otherwise lets the PostgreSQL server inherit its stdout/stderr.
 	// run captures both streams, so the daemon keeps its copy pipes open after
 	// pg_ctl exits and cmd.Run waits forever for EOF.
-	mustRun(t, pgCtl, nil, pgCtlStartArgs(dataDir, filepath.Join(filepath.Dir(dataDir), "postgres.log"), port, socketDir)...)
+	mustStartPostgres(t, pgCtl, dataDir, filepath.Join(filepath.Dir(dataDir), "postgres.log"), port, socketDir)
 	t.Cleanup(func() {
 		if out, err := run(t, pgCtl, nil, "-D", dataDir, "-m", "immediate", "-w", "stop"); err != nil {
 			t.Logf("stop temporary PostgreSQL: %v\n%s", err, out)
@@ -330,8 +384,23 @@ func TestBarmanCloud_BackupRestoreNonUniformParts(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(restoredDir, "pg_hba.conf"), []byte("local all all trust\nhost all all 127.0.0.1/32 trust\n"), 0o600); err != nil {
 		t.Fatalf("write restored PostgreSQL authentication configuration: %v", err)
 	}
-	mustRun(t, filepath.Join(binDir, "pg_ctl"), nil,
-		pgCtlStartArgs(restoredDir, filepath.Join(filepath.Dir(restoredDir), "postgres.log"), restorePort, restoreSocket)...)
+	// barman-cloud-backup excludes pg_wal contents from data.tar (EXCLUDE_LIST
+	// in barman's postgres_plumbing.py) and barman-cloud-restore materializes
+	// the base backup alone, so the restored cluster has no WAL at all and
+	// PostgreSQL exits during startup with "could not locate a valid checkpoint
+	// record".  Barman's documented recovery fetches those segments from a WAL
+	// archive via barman-cloud-wal-restore, which this harness does not run;
+	// the source cluster archives nothing and retains every segment since
+	// initdb, so seeding the restored pg_wal from it is the local equivalent of
+	// pg_basebackup --wal-method=stream.
+	seeded, err := seedWALSegments(filepath.Join(dataDir, "pg_wal"), filepath.Join(restoredDir, "pg_wal"))
+	if err != nil {
+		t.Fatalf("seed restored pg_wal from the source cluster: %v", err)
+	}
+	if seeded == 0 {
+		t.Fatal("source cluster pg_wal held no WAL segments to seed the restore")
+	}
+	mustStartPostgres(t, filepath.Join(binDir, "pg_ctl"), restoredDir, filepath.Join(filepath.Dir(restoredDir), "postgres.log"), restorePort, restoreSocket)
 	t.Cleanup(func() {
 		if out, err := run(t, filepath.Join(binDir, "pg_ctl"), nil, "-D", restoredDir, "-m", "immediate", "-w", "stop"); err != nil {
 			t.Logf("stop restored PostgreSQL: %v\n%s", err, out)
@@ -344,7 +413,4 @@ func TestBarmanCloud_BackupRestoreNonUniformParts(t *testing.T) {
 	}
 	t.Logf("barman-cloud backup/recovery OK: backup=%s data.tar=%d bytes, digest=%s", backupID, dataTarSize, got)
 
-	// Keep the source cluster referenced so the cleanup order is obvious to
-	// readers: both the source and the restored cluster are temporary only.
-	_ = dataDir
 }
