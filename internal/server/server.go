@@ -1820,6 +1820,21 @@ type countingReadCloser struct {
 	bytesRead int64
 }
 
+func (r *countingReadCloser) CanVerifyPayloadSHA256() bool {
+	provider, ok := r.ReadCloser.(interface{ CanVerifyPayloadSHA256() bool })
+	return ok && provider.CanVerifyPayloadSHA256()
+}
+
+func (r *countingReadCloser) VerifiedPayloadSHA256() ([sha256.Size]byte, bool) {
+	provider, ok := r.ReadCloser.(interface {
+		VerifiedPayloadSHA256() ([sha256.Size]byte, bool)
+	})
+	if !ok {
+		return [sha256.Size]byte{}, false
+	}
+	return provider.VerifiedPayloadSHA256()
+}
+
 func (r *countingReadCloser) Read(p []byte) (int, error) {
 	n, err := r.ReadCloser.Read(p)
 	r.bytesRead += int64(n)

@@ -77,7 +77,17 @@ type payloadHashVerifier struct {
 	rc       io.ReadCloser
 	hash     hash.Hash
 	expected string
+	digest   [sha256.Size]byte
 	err      error
+}
+
+func (v *payloadHashVerifier) CanVerifyPayloadSHA256() bool { return true }
+
+// VerifiedPayloadSHA256 is available only after the signed body has reached
+// EOF and matched its declared digest. UploadPart can then reuse the verifier's
+// SHA-256 instead of hashing the same bytes again.
+func (v *payloadHashVerifier) VerifiedPayloadSHA256() ([sha256.Size]byte, bool) {
+	return v.digest, v.err == io.EOF
 }
 
 // newPayloadHashVerifier wraps a request body whose signed
@@ -99,7 +109,8 @@ func (v *payloadHashVerifier) Read(p []byte) (int, error) {
 		v.hash.Write(p[:n])
 	}
 	if err == io.EOF {
-		if got := hex.EncodeToString(v.hash.Sum(nil)); got != v.expected {
+		v.hash.Sum(v.digest[:0])
+		if got := hex.EncodeToString(v.digest[:]); got != v.expected {
 			v.err = &handlers.ContentSHA256MismatchError{Expected: v.expected, Got: got}
 		} else {
 			v.err = io.EOF

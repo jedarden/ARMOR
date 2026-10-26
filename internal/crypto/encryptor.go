@@ -614,51 +614,42 @@ func (e *Encryptor) EncryptV3Stream(plaintext io.Reader, ciphertext io.Writer, p
 //   - hmacs: Concatenated HMACs for each block (32 bytes per block)
 //   - err: Error if encryption fails
 func EncryptPartV3(dek, iv []byte, partNumber uint16, blockSize int, plaintext []byte) (encrypted []byte, hmacs []byte, err error) {
-	if len(dek) != 32 {
-		return nil, nil, fmt.Errorf("DEK must be 32 bytes")
+	encrypted = make([]byte, len(plaintext))
+	hmacs, err = encryptPartV3Into(encrypted, dek, iv, partNumber, blockSize, plaintext)
+	if err != nil {
+		return nil, nil, err
 	}
-	if len(iv) != 16 {
-		return nil, nil, fmt.Errorf("IV must be 16 bytes")
-	}
-	if blockSize > V3MaxBlockSize {
-		return nil, nil, fmt.Errorf("block size %d exceeds Version3 maximum %d", blockSize, V3MaxBlockSize)
-	}
+	return encrypted, hmacs, nil
+}
 
-	blockCount := ComputeBlockCount(int64(len(plaintext)), blockSize)
+// EncryptPartV3InPlace replaces a part's plaintext with its ciphertext. The
+// caller must finish all plaintext checks, including its digest, before this
+// call and must keep the buffer alive until the backend upload completes.
+func EncryptPartV3InPlace(dek, iv []byte, partNumber uint16, blockSize int, part []byte) ([]byte, error) {
+	return encryptPartV3Into(part, dek, iv, partNumber, blockSize, part)
+}
 
-	// Derive the per-object crypto state (AES cipher, HMAC key) once instead
-	// of per block: EncryptBlockV3 would rebuild both for every block.
+func encryptPartV3Into(dst, dek, iv []byte, partNumber uint16, blockSize int, plaintext []byte) ([]byte, error) {
+	// Derive the AES cipher and HMAC key once per part, as before.
 	cryptor, err := NewV3BlockCryptor(dek, iv, blockSize)
 	if err != nil {
-		return nil, nil, fmt.Errorf("v3 block cryptor: %w", err)
+		return nil, fmt.Errorf("v3 block cryptor: %w", err)
 	}
-
-	// Pre-allocate encrypted buffer with exact size (same as plaintext for AES-CTR)
-	encrypted = make([]byte, 0, len(plaintext))
-
-	// Pre-allocate HMAC buffer (32 bytes per block)
-	hmacs = make([]byte, 0, blockCount*HMACSize)
-
-	// Encrypt each block independently
+	if blockSize <= 0 {
+		return nil, fmt.Errorf("block size must be positive")
+	}
+	blockCount := ComputeBlockCount(int64(len(plaintext)), blockSize)
+	hmacs := make([]byte, blockCount*HMACSize)
 	for blockIndex := uint32(0); blockIndex < blockCount; blockIndex++ {
 		start := int(blockIndex) * blockSize
 		end := start + blockSize
 		if end > len(plaintext) {
 			end = len(plaintext)
 		}
-
-		plaintextBlock := plaintext[start:end]
-
-		// Encrypt the block using v3 counter construction
-		encryptedBlock, blockHMAC, err := cryptor.EncryptBlock(partNumber, blockIndex, plaintextBlock)
-		if err != nil {
-			return nil, nil, fmt.Errorf("block %d encryption failed: %w", blockIndex, err)
+		macStart := int(blockIndex) * HMACSize
+		if err := cryptor.encryptBlockInto(dst[start:end], hmacs[macStart:macStart+HMACSize], partNumber, blockIndex, plaintext[start:end]); err != nil {
+			return nil, fmt.Errorf("block %d encryption failed: %w", blockIndex, err)
 		}
-
-		// Append encrypted block and HMAC
-		encrypted = append(encrypted, encryptedBlock...)
-		hmacs = append(hmacs, blockHMAC...)
 	}
-
-	return encrypted, hmacs, nil
+	return hmacs, nil
 }

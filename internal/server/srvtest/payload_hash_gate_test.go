@@ -11,6 +11,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/xml"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -18,6 +19,39 @@ import (
 	"strings"
 	"testing"
 )
+
+func TestSignedMultipartPartDigestAndReadback(t *testing.T) {
+	h := New(t)
+	key := "gate/signed-multipart.bin"
+	created := h.Do(http.MethodPost, "/"+h.Bucket+"/"+key+"?uploads", nil)
+	if created.Code != http.StatusOK {
+		t.Fatalf("create multipart: %d %s", created.Code, created.Body.String())
+	}
+	var upload struct {
+		UploadID string `xml:"UploadId"`
+	}
+	if err := xml.Unmarshal(created.Body.Bytes(), &upload); err != nil || upload.UploadID == "" {
+		t.Fatalf("decode upload ID: %v", err)
+	}
+	target := fmt.Sprintf("/%s/%s?partNumber=1&uploadId=%s", h.Bucket, key, upload.UploadID)
+	part := []byte("signed multipart part with a verified plaintext digest")
+	bad := doPayloadHashRequest(h, http.MethodPut, target, part, sha256Hex([]byte("different bytes")))
+	if bad.Code != http.StatusBadRequest || parseS3Error(h, bad).Code != "XAmzContentSHA256Mismatch" {
+		t.Fatalf("mismatched part accepted: %d %s", bad.Code, bad.Body.String())
+	}
+	good := doPayloadHashRequest(h, http.MethodPut, target, part, sha256Hex(part))
+	if good.Code != http.StatusOK {
+		t.Fatalf("signed part: %d %s", good.Code, good.Body.String())
+	}
+	completeBody := fmt.Sprintf("<CompleteMultipartUpload><Part><PartNumber>1</PartNumber><ETag>%s</ETag></Part></CompleteMultipartUpload>", good.Header().Get("ETag"))
+	completed := h.Do(http.MethodPost, "/"+h.Bucket+"/"+key+"?uploadId="+upload.UploadID, []byte(completeBody))
+	if completed.Code != http.StatusOK {
+		t.Fatalf("complete multipart: %d %s", completed.Code, completed.Body.String())
+	}
+	if got := signedGET(h, key); !bytes.Equal(got, part) {
+		t.Fatalf("multipart readback = %q, want %q", got, part)
+	}
+}
 
 // doPayloadHashRequest issues a request signed with an explicit
 // x-amz-content-sha256 value against the harness mux.

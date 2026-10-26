@@ -162,6 +162,36 @@ func TestPayloadHashVerifier(t *testing.T) {
 	})
 }
 
+func TestCountingBodyExposesOnlyVerifiedPayloadDigest(t *testing.T) {
+	body := []byte("multipart signed body")
+	digest := sha256.Sum256(body)
+	good := &countingReadCloser{ReadCloser: newPayloadHashVerifier(io.NopCloser(strings.NewReader(string(body))), hex.EncodeToString(digest[:]))}
+	if !good.CanVerifyPayloadSHA256() {
+		t.Fatal("signed body should expose a verified digest source")
+	}
+	if _, ok := good.VerifiedPayloadSHA256(); ok {
+		t.Fatal("digest was exposed before the body was verified")
+	}
+	if _, err := io.ReadAll(good); err != nil {
+		t.Fatal(err)
+	}
+	if got, ok := good.VerifiedPayloadSHA256(); !ok || got != digest {
+		t.Fatalf("verified digest = %x, ok=%v", got, ok)
+	}
+
+	bad := &countingReadCloser{ReadCloser: newPayloadHashVerifier(io.NopCloser(strings.NewReader(string(body))), strings.Repeat("0", 64))}
+	if _, err := io.ReadAll(bad); err == nil {
+		t.Fatal("mismatched body was accepted")
+	}
+	if _, ok := bad.VerifiedPayloadSHA256(); ok {
+		t.Fatal("mismatched digest was exposed as verified")
+	}
+	unsigned := &countingReadCloser{ReadCloser: io.NopCloser(strings.NewReader(string(body)))}
+	if unsigned.CanVerifyPayloadSHA256() {
+		t.Fatal("unsigned body claimed a verified digest")
+	}
+}
+
 type errReader struct{ err error }
 
 func (r errReader) Read([]byte) (int, error) { return 0, r.err }

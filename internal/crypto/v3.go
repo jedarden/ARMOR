@@ -213,11 +213,27 @@ func (c *V3BlockCryptor) EncryptBlock(part uint16, block uint32, plaintext []byt
 	// Encrypt the whole ARMOR block with one CTR stream (see newV3CTR for
 	// why this is byte-identical to the historical per-16-byte construction).
 	ciphertext = make([]byte, len(plaintext))
-	newV3CTR(c.blockCipher, c.iv, part, block).XORKeyStream(ciphertext, plaintext)
-
-	hmacValue = c.computeBlockHMAC(part, block, ciphertext)
+	hmacValue = make([]byte, HMACSize)
+	if err := c.encryptBlockInto(ciphertext, hmacValue, part, block, plaintext); err != nil {
+		return nil, nil, err
+	}
 
 	return ciphertext, hmacValue, nil
+}
+
+// encryptBlockInto permits exact overlap between dst and plaintext. The
+// caller must hash plaintext before calling it, because encryption overwrites
+// the input when the slices alias. macOut is filled without a per-block slice.
+func (c *V3BlockCryptor) encryptBlockInto(dst, macOut []byte, part uint16, block uint32, plaintext []byte) error {
+	if err := validateV3BlockPayload(plaintext); err != nil {
+		return err
+	}
+	if len(dst) != len(plaintext) || len(macOut) != HMACSize {
+		return fmt.Errorf("v3 block output sizes do not match input")
+	}
+	newV3CTR(c.blockCipher, c.iv, part, block).XORKeyStream(dst, plaintext)
+	c.computeBlockHMACInto(macOut, part, block, dst)
+	return nil
 }
 
 // DecryptBlock decrypts one ARMOR block of the object with v3 counter
@@ -246,6 +262,10 @@ func (c *V3BlockCryptor) DecryptBlock(part uint16, block uint32, ciphertext []by
 // input using the cryptor's reusable HMAC state. Byte-identical to
 // ComputeV3BlockHMAC on the same key: same input order, same Sum.
 func (c *V3BlockCryptor) computeBlockHMAC(part uint16, block uint32, ciphertext []byte) []byte {
+	return c.computeBlockHMACInto(nil, part, block, ciphertext)
+}
+
+func (c *V3BlockCryptor) computeBlockHMACInto(dst []byte, part uint16, block uint32, ciphertext []byte) []byte {
 	c.mac.Reset()
 
 	var prefix [4]byte
@@ -256,7 +276,7 @@ func (c *V3BlockCryptor) computeBlockHMAC(part uint16, block uint32, ciphertext 
 
 	c.mac.Write(ciphertext)
 
-	return c.mac.Sum(nil)
+	return c.mac.Sum(dst[:0])
 }
 
 // verifyBlockHMAC verifies a block HMAC with the reusable state, comparing
