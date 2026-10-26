@@ -8,6 +8,9 @@ credentials and an S3 endpoint; ARMOR holds the B2 credentials and master
 encryption key (MEK). Its source tests cover a scoped set of S3 operations,
 including single-PUT writes, reads, listing, and documented multipart cases.
 
+![ARMOR demo: an object is uploaded, stored encrypted on disk, and read back
+byte-identical](docs/images/armor-demo.gif)
+
 ## Install
 
 Install Docker with the Compose plugin, then clone this repository for its
@@ -19,15 +22,14 @@ cd ARMOR
 ```
 
 Select an image tag that has been published. The [release-status
-register](docs/release-status.md) is the evidence boundary: on its
-2026-10-16 status date the newest tags with published images are 0.1.1993
-and 0.1.1994, and the register records what each publication does and does
-not prove. The checkout's [`VERSION`](VERSION) and Compose default can be
-ahead of published images, so confirm there before trusting them. For the
-commands below, set the tag once:
+register](docs/release-status.md) is the evidence boundary: it records which
+tags have published images and what each publication does and does not
+prove. The checkout's [`VERSION`](VERSION) and the Compose default move
+together at release time, and Compose uses that default when
+`ARMOR_VERSION` is unset. For the commands below, set the tag once:
 
 ```bash
-export ARMOR_VERSION=0.1.1994
+export ARMOR_VERSION=0.1.2001
 docker pull ghcr.io/jedarden/armor:"$ARMOR_VERSION"
 ```
 
@@ -39,25 +41,52 @@ To build from source instead, use Go as specified by `go.mod` and `make build`;
 ## 60-second demo
 
 This profile stores data in a temporary filesystem and uses fixed demo
-credentials. It needs no B2 or Cloudflare account.
+credentials. It needs no B2 or Cloudflare account, and its `demo-bucket` is
+pre-created. The round trip below writes an object, shows that the stored
+bytes are ciphertext, and reads the object back byte-identical.
 
 ```bash
+echo "hello, ARMOR" > demo.txt
+
 docker compose --profile demo up -d armor-demo
-docker compose --profile demo ps
-docker run --rm --network container:$(docker compose --profile demo ps -q armor-demo) \
-  -e AWS_ACCESS_KEY_ID=armor -e AWS_SECRET_ACCESS_KEY=armor-demo-secret \
-  -e AWS_DEFAULT_REGION=us-east-1 amazon/aws-cli:2.29.0 \
-  --endpoint-url http://127.0.0.1:9000 s3 ls
+curl --fail --retry 30 --retry-connrefused --retry-delay 1 \
+  -so /dev/null http://127.0.0.1:9001/healthz
+
+aws() {
+  docker run --rm --network container:"$(docker compose --profile demo ps -q armor-demo)" \
+    -v "$PWD:/work" -w /work \
+    -e AWS_ACCESS_KEY_ID=armor -e AWS_SECRET_ACCESS_KEY=armor-demo-secret \
+    -e AWS_DEFAULT_REGION=us-east-1 amazon/aws-cli:2.29.0 \
+    --endpoint-url http://127.0.0.1:9000 s3 "$@"
+}
+
+aws ls                                # the pre-created demo-bucket
+aws cp demo.txt s3://demo-bucket/
+docker compose --profile demo cp armor-demo:/tmp ./demo-storage
+find ./demo-storage -type f -name demo.txt   # the object as stored
+if grep -rq "hello, ARMOR" ./demo-storage; then
+  echo "PLAINTEXT ON DISK — this would be a bug"
+else
+  echo "stored bytes are ciphertext"
+fi
+rm -rf ./demo-storage
+aws cp s3://demo-bucket/demo.txt demo-out.txt
+cmp demo.txt demo-out.txt && echo "round trip: byte-identical"
+
 docker compose --profile demo down
+rm -f demo.txt demo-out.txt
 ```
 
-The demo exposes port 9000 and sets a fixed demo admin token. Its temporary
-MEK is lost when the container stops, so this Compose profile is for disposable
-data. Run `go run ./cmd/armor demo -dir ./armor-demo-data` for the CLI demo. It
-prints generated dashboard credentials, an admin token, the dashboard URL, and
-S3 credentials. The command saves its MEK in a mode-600 file under that
-directory and reuses it after restarts. Its structured startup logs are JSON;
-the ready-to-paste AWS CLI configuration is printed as a plain text block.
+The `aws()` helper mounts the current directory so the AWS CLI container can
+read and write the demo object; it exists only for this demo. The demo exposes
+ports 9000 (S3) and 9001 (admin) and sets a fixed demo admin token. Its
+temporary MEK is lost when the container stops, so this Compose profile is for
+disposable data. Run `go run ./cmd/armor demo -dir ./armor-demo-data` for the
+CLI demo. It prints generated dashboard credentials, an admin token, the
+dashboard URL, and S3 credentials. The command saves its MEK in a mode-600
+file under that directory and reuses it after restarts. Its structured startup
+logs are JSON; the ready-to-paste AWS CLI configuration is printed as a plain
+text block.
 
 ## Production
 
@@ -111,7 +140,7 @@ your shell or set `ARMOR_VERSION` in `.env`.
    ```bash
    docker compose --profile production up -d armor-production
    docker compose --profile production exec -T armor-production /armor check
-   curl --fail http://127.0.0.1:9001/version
+   curl --fail http://127.0.0.1:9001/healthz
    ```
 
 Keep `.env` out of version control. The admin token enables key management and
