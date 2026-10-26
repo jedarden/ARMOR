@@ -357,7 +357,7 @@ func (m *MultipartStateManager) LoadPartV3(ctx context.Context, uploadID string,
 }
 
 // ListPartsV3 lists all parts for a v3 multipart upload by reading the part-<n>.json files.
-func (m *MultipartStateManager) ListPartsV3(ctx context.Context, uploadID string) (map[int]*PartDataV3, error) {
+func (m *MultipartStateManager) listPartsV3Serial(ctx context.Context, uploadID string) (map[int]*PartDataV3, error) {
 	prefix := m.internalPrefix() + fmt.Sprintf("multipart/%s/part-", uploadID)
 
 	listResult, err := m.backend.ListRaw(ctx, m.bucket, prefix, "", "", 1000)
