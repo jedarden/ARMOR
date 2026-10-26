@@ -20,6 +20,55 @@ Entries before 0.1.1958 were written by hand on the Forgejo releases and are
 reproduced here; entries from 0.1.1958 on were reconstructed from git history
 on 2026-09-18 (bead armor-43ec803f).
 
+## 0.1.2002 (2026-10-26)
+
+- docs(readme): 60-second demo round trip, published tag, demo GIF (armor-2f577d9f)
+- fix(compat): seed restored pg_wal and dump pg_ctl startup logs (armor-81ab7826)
+- perf(backend): pre-size readRangeBody buffer instead of io.ReadAll regrowth (armor-2e41d0c2)
+- perf(crypto): pool zstd codecs, reuse per-object cipher/HMAC state (armor-2e41d0c2)
+- perf(backend): one bounded-bytes LRU for the four metadata caches (armor-a4e5356d)
+- perf(handlers): ListObjectsV2 plaintext sizes from index/cache, bounded HEAD fan-out (armor-7d94c42d)
+- fix(server): bound /armor/audit with writer, untracked, max_entries, timeout (armor-38fb03d8)
+- fix(tests): assert what `aws s3 ls` actually prints (armor-5b4ed6f5)
+- perf(handlers): fetch small single-PUT objects in one ciphertext request (armor-98864f12)
+- fix(gates): run cli-contract-gate legs with -short so --fast is hermetic (armor-2c918e99)
+- fix(server): verify aws-chunked per-chunk signatures against the Authorization seed (armor-3b18e5bc)
+- fix(handlers): choose large-upload streaming from the per-object compression decision (armor-09da6b4b)
+- fix(tests): pass -v so barman-cloud-backup reports its backup id (armor-81ab7826)
+- docs(performance): record valid 2026-10-24 production B2/Cloudflare qualification (armor-68e3d5a9)
+- perf(handlers): overlap the ADR-016 manifest probe with the ciphertext HEAD on GetObject (armor-420c15a5)
+- docs(status): anchor range-reads active evidence on the open qualification and release beads (armor-272299ca)
+- fix(handlers): serve manifest metadata from HeadObject's fallback path (armor-c62898b8)
+- fix(handlers): stream v3 multipart full GETs through one pipelined range (armor-272299ca)
+- fix(tests): gate 7 GiB large-object migration tests behind ARMOR_LARGE_OBJECT_TESTS (armor-809557bb)
+- perf(reads): parquet-footer leg through the real-service harness (armor-c3199f1c)
+- feat(backend): retry transient Cloudflare/B2 read failures with bounded jittered backoff (armor-f1791426)
+- fix(tests): pin initdb superuser to postgres in the barman compat leg (armor-d3b6bc38)
+- perf(handlers): reuse request-local header and one freshness HEAD; generation-keyed v3 table cache (armor-c3199f1c)
+- feat(backend): size outbound HTTP idle pools from the read budget (armor-7ad0d7eb)
+- feat(handlers): coalesce v3 single-PUT range reads into one bounded span fetch (armor-5694713b)
+- feat(backend): direct-S3 Content-Range validation and fetch-window benchmark (armor-73564f97)
+- docs(alerting): use shared iad-kalshi Traefik endpoints (declarat-475d202c)
+- fix(srvtest): deterministic head-of-line hold in slow-secondary window test (armor-81ab7826)
+- fix(docker): ship docs/ in the image build context (armor-81ab7826)
+- fix(handlers): 412 for append-only explicit conditional PUT conflicts (armor-46009fe3)
+- docs(adr): clarify conditional retry verification and atomicity (armor-d7c45f46)
+- docs(adr): record conditional-PUT conflict contract for append-only WARP ingest retries
+- fix(drift): shallow-clone quiet checker sources (armor-53ac7ad7)
+- test(docsindex): include phantom vars in consumer parity (armor-53ac7ad7)
+- docs(dashboard): align access and API examples (armor-53ac7ad7)
+- test(server): stop reusing a mutated entry pointer under concurrent writes (armor-81acd635)
+- docs(drift+multipart+env): resolve contradictory operator docs (armor-53ac7ad7)
+- test(cutover): repair moved multipart manifests (armor-34c41122)
+- test(server): restore clean server and release gates (armor-34c41122)
+- docs(readme): match install tag claims to the release-status register (armor-977bc620)
+- test(compat): guard pg_ctl pipe redirection (armor-4a3a05ba)
+- wip(armor-4a3a05ba): prevent barman pg_ctl pipe hang
+- docs(rollout): record rs-manager verifier validation (armor-769e3d53)
+- wip(armor-769e3d53): record publication and partial live rollout evidence
+- wip(armor-769e3d53): record 0.1.1993 fleet roll in release status and plan banner
+- docs(release): record 0.1.1994 publication boundary (armor-5f0b4d23)
+
 ## 0.1.2001 (2026-10-25)
 
 - fix(compat): seed restored pg_wal and dump pg_ctl startup logs (armor-81ab7826)
