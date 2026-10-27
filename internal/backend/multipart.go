@@ -611,12 +611,34 @@ func ComputeBlockHMACs(data []byte, blockSize int, hmacKey []byte, startBlockInd
 
 // EncodeHMACToBase64 encodes a slice of HMACs to a single base64 string.
 func EncodeHMACToBase64(hmacs [][]byte) string {
-	// Concatenate all HMACs
-	total := make([]byte, 0, len(hmacs)*32)
+	// Stream the slices into the final encoded buffer. UploadPart already has
+	// the HMACs in separate block-sized slices; concatenating them first
+	// creates another full sidecar-sized allocation before base64 encoding.
+	total := 0
 	for _, h := range hmacs {
-		total = append(total, h...)
+		total += len(h)
 	}
-	return base64.StdEncoding.EncodeToString(total)
+	encoded := make([]byte, base64.StdEncoding.EncodedLen(total))
+	w := base64SliceWriter{dst: encoded}
+	encoder := base64.NewEncoder(base64.StdEncoding, &w)
+	for _, h := range hmacs {
+		_, _ = encoder.Write(h)
+	}
+	_ = encoder.Close()
+	return string(encoded[:w.n])
+}
+
+// base64SliceWriter lets base64.NewEncoder write directly into a
+// pre-sized result without a bytes.Buffer or an intermediate concatenated
+// HMAC byte slice.
+type base64SliceWriter struct {
+	dst []byte
+	n   int
+}
+
+func (w *base64SliceWriter) Write(p []byte) (int, error) {
+	w.n += copy(w.dst[w.n:], p)
+	return len(p), nil
 }
 
 // DecodeHMACFromBase64 decodes a base64 string to a slice of HMACs.
