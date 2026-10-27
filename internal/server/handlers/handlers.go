@@ -3873,12 +3873,18 @@ func (h *Handlers) UploadPart(w http.ResponseWriter, r *http.Request, bucket, ke
 		return
 	}
 
-	// Read plaintext part
-	plaintext, err := io.ReadAll(r.Body)
+	// Read once into a Content-Length-sized buffer and compute the part digest
+	// before v3 encrypts that same buffer in place.
+	plaintext, partSHA, releasePartBody, err := readUploadPartBody(r.Body, r.ContentLength)
 	if err != nil {
 		h.writeErrorCause(w, r, "InternalError", fmt.Sprintf("Failed to read body: %v", err), 500, err)
 		return
 	}
+	defer func() {
+		if releasePartBody != nil {
+			releasePartBody()
+		}
+	}()
 	plaintextSize := int64(len(plaintext))
 
 	// ADR-011: Detect non-uniform part pattern (e.g., Barman's chunk_size + N*512).
@@ -4036,11 +4042,12 @@ func (h *Handlers) UploadPart(w http.ResponseWriter, r *http.Request, bucket, ke
 	if formatVersion == 3 {
 		// V3 encrypts each part as an independent stream starting from block 0
 		// No ordering constraints, no size pinning, no cumulative offsets
-		encrypted, blockHMACsRaw, err = crypto.EncryptPartV3(dek, state.IV, uint16(partNumber), state.BlockSize, plaintext)
+		blockHMACsRaw, err = crypto.EncryptPartV3InPlace(dek, state.IV, uint16(partNumber), state.BlockSize, plaintext)
 		if err != nil {
 			h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to encrypt part with v3: %v", err), 500)
 			return
 		}
+		encrypted = plaintext
 	} else if state.NonUniformParts {
 		// ADR-011: Use cumulative offsets for non-uniform parts (e.g., Barman's chunk_size + N*512)
 		// Calculate cumulative offset for this part
@@ -4099,6 +4106,14 @@ func (h *Handlers) UploadPart(w http.ResponseWriter, r *http.Request, bucket, ke
 		}
 	}
 
+	// In v2, the ciphertext is separate, so the plaintext buffer can be
+	// returned before waiting for the backend. In v3, encrypted owns it.
+	if formatVersion != 3 {
+		releasePartBody()
+		releasePartBody = nil
+	}
+	plaintext = nil
+
 	// Upload encrypted part to B2. Prefixed for the same reason as
 	// CreateMultipartUpload above — the part must be addressed by the same
 	// storage key the upload was created under.
@@ -4116,8 +4131,8 @@ func (h *Handlers) UploadPart(w http.ResponseWriter, r *http.Request, bucket, ke
 		blockHMACs[i] = blockHMACsRaw[i*crypto.HMACSize : (i+1)*crypto.HMACSize]
 	}
 
-	// Compute plaintext SHA-256 for this part
-	partSHA := sha256.Sum256(plaintext)
+	// The plaintext SHA-256 was computed while reading, before in-place v3
+	// encryption changed the input buffer.
 	partSHAHex := hex.EncodeToString(partSHA[:])
 
 	if formatVersion == 3 {
