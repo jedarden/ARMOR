@@ -37,24 +37,32 @@ type Entry struct {
 	ETag            string    `json:"etag"`
 	LastModified    time.Time `json:"last_modified"`
 	CiphertextSize  int64     `json:"ciphertext_size,omitempty"` // v3 single-PUT readers need this to locate trailer block table
+	// UserMetadata carries the client-supplied x-amz-meta-* keys (ARMOR's
+	// reserved x-amz-meta-armor-* namespace excluded). Single-PUT objects
+	// have no per-key manifest object, so without this the manifest-index
+	// HeadObject fast path would answer every metadata HEAD with an empty
+	// set — the durable copy still lives on the stored object's metadata.
+	// An empty map marks a new entry whose request had no user metadata;
+	// nil marks a legacy delta that predates this field.
+	UserMetadata map[string]string `json:"user_metadata"`
 }
 
 // ChainEntry represents a provenance chain entry embedded in a manifest delta.
 // It contains the minimal chain information needed for verification.
 type ChainEntry struct {
-	Sequence       int64  `json:"sequence"`
-	ChainHash      string `json:"chain_hash"`
-	PrevChainHash  string `json:"prev_chain_hash"`
+	Sequence      int64  `json:"sequence"`
+	ChainHash     string `json:"chain_hash"`
+	PrevChainHash string `json:"prev_chain_hash"`
 }
 
 // Op is a single delta log entry. The field name "op" matches the wire format
 // documented in the plan.
 type Op struct {
-	Operation string       `json:"op"`              // "put" or "del"
-	Key       string       `json:"key"`             // "bucket/object-key"
-	Entry     *Entry       `json:"entry,omitempty"` // nil for "del"
+	Operation string      `json:"op"`              // "put" or "del"
+	Key       string      `json:"key"`             // "bucket/object-key"
+	Entry     *Entry      `json:"entry,omitempty"` // nil for "del"
 	Chain     *ChainEntry `json:"chain,omitempty"` // provenance entry for "put"
-	Ts        time.Time    `json:"ts"`
+	Ts        time.Time   `json:"ts"`
 }
 
 // Index is a concurrent in-memory map from "bucket/object-key" to Entry.

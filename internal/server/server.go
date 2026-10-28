@@ -539,7 +539,7 @@ type manifestRecorder struct {
 	writer *manifest.Writer
 }
 
-func (m *manifestRecorder) RecordPut(bucket, key string, size int64, sha256Hex string, iv, wrappedDEK []byte, mekFingerprint string, blockSize int, contentType, etag string, chainEntry *manifest.ChainEntry, ciphertextSize int64) {
+func (m *manifestRecorder) RecordPut(bucket, key string, size int64, sha256Hex string, iv, wrappedDEK []byte, mekFingerprint string, blockSize int, contentType, etag string, chainEntry *manifest.ChainEntry, ciphertextSize int64, userMetadata map[string]string) {
 	entry := &manifest.Entry{
 		PlaintextSize:   size,
 		PlaintextSHA256: sha256Hex,
@@ -551,6 +551,7 @@ func (m *manifestRecorder) RecordPut(bucket, key string, size int64, sha256Hex s
 		ETag:            etag,
 		LastModified:    time.Now().UTC(),
 		CiphertextSize:  ciphertextSize,
+		UserMetadata:    userMetadata,
 	}
 	m.idx.Put(bucket, key, entry)
 	m.writer.EnqueuePut(bucket, key, entry, chainEntry)
@@ -575,6 +576,7 @@ func (m *manifestRecorder) Lookup(bucket, key string) (*handlers.ManifestEntry, 
 		WrappedDEK:     entry.WrappedDEK,
 		BlockSize:      entry.BlockSize,
 		CiphertextSize: entry.CiphertextSize,
+		UserMetadata:   entry.UserMetadata,
 	}, true
 }
 

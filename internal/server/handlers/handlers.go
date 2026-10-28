@@ -68,6 +68,10 @@ type ManifestEntry struct {
 	WrappedDEK     []byte
 	BlockSize      int
 	CiphertextSize int64 // v3 single-PUT readers need this to locate trailer block table
+	// UserMetadata carries the client-supplied x-amz-meta-* keys so the
+	// HeadObject index fast path can serve them for single-PUT objects,
+	// which have no per-key manifest object to enrich from.
+	UserMetadata map[string]string
 }
 
 // ManifestRecorder records successful S3 write operations in the manifest
@@ -76,8 +80,10 @@ type ManifestEntry struct {
 type ManifestRecorder interface {
 	// RecordPut records a successful PutObject or CompleteMultipartUpload.
 	// chainEntry is the provenance chain entry to embed in the delta line.
-	// May be nil if provenance is disabled for this key.
-	RecordPut(bucket, key string, size int64, sha256Hex string, iv, wrappedDEK []byte, mekFingerprint string, blockSize int, contentType, etag string, chainEntry *manifest.ChainEntry, ciphertextSize int64)
+	// May be nil if provenance is disabled for this key. userMetadata is the
+	// client-supplied x-amz-meta-* subset (ARMOR's reserved namespace
+	// excluded) that HeadObject's index fast path serves back.
+	RecordPut(bucket, key string, size int64, sha256Hex string, iv, wrappedDEK []byte, mekFingerprint string, blockSize int, contentType, etag string, chainEntry *manifest.ChainEntry, ciphertextSize int64, userMetadata map[string]string)
 	// RecordDelete records a successful DeleteObject.
 	RecordDelete(bucket, key string)
 	// Lookup returns manifest metadata for bucket/key, or (nil, false) if not
@@ -486,6 +492,21 @@ func mergeUserMetadata(metadata map[string]string, r *http.Request) {
 	}
 }
 
+// clientMetadata returns the client-supplied entries of a stored metadata
+// map (lowercased x-amz-meta-* keys), keeping ARMOR's reserved
+// x-amz-meta-armor-* namespace private to the proxy — the map-shaped twin of
+// userMetadata's request-shaped filter.
+func clientMetadata(metadata map[string]string) map[string]string {
+	filtered := make(map[string]string, len(metadata))
+	for key, value := range metadata {
+		lowerKey := strings.ToLower(key)
+		if strings.HasPrefix(lowerKey, "x-amz-meta-") && !strings.HasPrefix(lowerKey, "x-amz-meta-armor-") {
+			filtered[lowerKey] = value
+		}
+	}
+	return filtered
+}
+
 func writeUserMetadataHeaders(w http.ResponseWriter, metadata map[string]string) {
 	for key, value := range metadata {
 		lowerKey := strings.ToLower(key)
@@ -801,7 +822,7 @@ func (h *Handlers) PutObject(w http.ResponseWriter, r *http.Request, bucket, key
 		if envelopeVersion == crypto.Version3 {
 			ciphertextSize = int64(len(envelope))
 		}
-		h.manifest.RecordPut(bucket, key, plaintextSize, hex.EncodeToString(plaintextSHA[:]), iv, wrappedDEK, mekFingerprint, h.config.BlockSize, contentType, etag, chainEntry, ciphertextSize)
+		h.manifest.RecordPut(bucket, key, plaintextSize, hex.EncodeToString(plaintextSHA[:]), iv, wrappedDEK, mekFingerprint, h.config.BlockSize, contentType, etag, chainEntry, ciphertextSize, userMetadata(r))
 	}
 
 	// Record provenance (fallback when manifest is disabled)
@@ -1141,7 +1162,7 @@ func (h *Handlers) putObjectStreaming(ctx context.Context, w http.ResponseWriter
 		if envelopeVersion == crypto.Version3 {
 			ciphertextSize = envelopeSize
 		}
-		h.manifest.RecordPut(bucket, key, plaintextSize, hex.EncodeToString(plaintextSHA[:]), iv, wrappedDEK, mekFingerprint, h.config.BlockSize, contentType, etag, chainEntry, ciphertextSize)
+		h.manifest.RecordPut(bucket, key, plaintextSize, hex.EncodeToString(plaintextSHA[:]), iv, wrappedDEK, mekFingerprint, h.config.BlockSize, contentType, etag, chainEntry, ciphertextSize, userMetadata(r))
 	}
 
 	// Record provenance (fallback when manifest is disabled)
@@ -1380,6 +1401,7 @@ func (h *Handlers) GetObject(w http.ResponseWriter, r *http.Request, bucket, key
 		w.Header().Set("Content-Type", info.ContentType)
 		w.Header().Set("ETag", fmt.Sprintf(`"%s"`, info.ETag))
 		w.Header().Set("Last-Modified", info.LastModified.UTC().Format(http.TimeFormat))
+		writeUserMetadataHeaders(w, info.Metadata)
 		w.WriteHeader(http.StatusOK)
 		_, err = io.Copy(w, body)
 		if err != nil {
@@ -1565,6 +1587,14 @@ func (h *Handlers) GetObject(w http.ResponseWriter, r *http.Request, bucket, key
 		}
 		return
 	}
+
+	// Serve the client-supplied metadata on every ARMOR GET (full and ranged
+	// alike); the dispatchers below write their own standard headers but no
+	// metadata, and S3 clients expect x-amz-meta-* on GetObject responses.
+	// info.Metadata is the authoritative source on both paths: the manifest
+	// path set it to the manifest object's headers, the legacy path to the
+	// stored ciphertext's.
+	writeUserMetadataHeaders(w, info.Metadata)
 
 	// Uniform part size P for multipart objects written since bf-1v2ehf
 	// (x-amz-meta-armor-part-size). The full-object stream path needs it to
@@ -2643,14 +2673,29 @@ func (h *Handlers) HeadObject(w http.ResponseWriter, r *http.Request, bucket, ke
 	prefixedKey := h.applyPrefix(key)
 
 	// Fast path: serve from the in-memory manifest index when available,
-	// avoiding a B2 HeadObject round-trip entirely. User metadata is enriched
-	// from the manifest object when one exists; when it doesn't, the index
-	// entry's headers are served as-is — never a backend Head, which would
-	// turn the metadata fast path back into the round trip it exists to skip.
+	// avoiding a B2 HeadObject round-trip for entries that carry user metadata.
+	// Older index entries predate that field and fall back to the stored object
+	// (or multipart manifest) so existing objects keep their S3 headers.
 	if h.manifest != nil {
 		if entry, ok := h.manifest.Lookup(bucket, key); ok {
-			if _, manifestMetadata, err := h.readManifest(ctx, bucket, key); err == nil {
+			if entry.UserMetadata != nil {
+				writeUserMetadataHeaders(w, entry.UserMetadata)
+			} else if _, manifestMetadata, err := h.readManifest(ctx, bucket, key); err == nil {
 				writeUserMetadataHeaders(w, manifestMetadata)
+			} else if backend.IsNotFound(err) {
+				// Legacy single-PUT entries have no per-key manifest. Their
+				// stored ciphertext still carries the client headers.
+				info, headErr := h.backend.Head(ctx, bucket, prefixedKey)
+				if headErr != nil {
+					code, _, status := backendFailureResponse(headErr)
+					h.writeBackendError(w, r, code, fmt.Sprintf("Failed to read object metadata: %v", headErr), status, headErr)
+					return
+				}
+				writeUserMetadataHeaders(w, info.Metadata)
+			} else {
+				code, _, status := backendFailureResponse(err)
+				h.writeBackendError(w, r, code, fmt.Sprintf("Failed to read manifest metadata: %v", err), status, err)
+				return
 			}
 			if status := checkConditionalRequest(r, entry.ETag, entry.LastModified); status != 0 {
 				if status == http.StatusNotModified {
@@ -4836,7 +4881,7 @@ func (h *Handlers) CompleteMultipartUpload(w http.ResponseWriter, r *http.Reques
 		}
 	}
 	if h.manifest != nil {
-		h.manifest.RecordPut(bucket, key, totalPlaintextSize, plaintextSHAHex, state.IV, state.WrappedDEK, state.MEKFingerprint, state.BlockSize, state.ContentType, etag, chainEntry, totalCiphertextSize)
+		h.manifest.RecordPut(bucket, key, totalPlaintextSize, plaintextSHAHex, state.IV, state.WrappedDEK, state.MEKFingerprint, state.BlockSize, state.ContentType, etag, chainEntry, totalCiphertextSize, clientMetadata(state.Metadata))
 	}
 
 	// Completion installed a new stored generation at this key; retire any

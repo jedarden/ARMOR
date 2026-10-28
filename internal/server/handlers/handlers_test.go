@@ -3859,7 +3859,7 @@ func newMockManifestRecorder() *mockManifestRecorder {
 	return &mockManifestRecorder{entries: make(map[string]*handlers.ManifestEntry)}
 }
 
-func (m *mockManifestRecorder) RecordPut(bucket, key string, size int64, sha256Hex string, iv, wrappedDEK []byte, mekFingerprint string, blockSize int, contentType, etag string, chainEntry *manifest.ChainEntry, ciphertextSize int64) {
+func (m *mockManifestRecorder) RecordPut(bucket, key string, size int64, sha256Hex string, iv, wrappedDEK []byte, mekFingerprint string, blockSize int, contentType, etag string, chainEntry *manifest.ChainEntry, ciphertextSize int64, userMetadata map[string]string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.entries[bucket+"/"+key] = &handlers.ManifestEntry{
@@ -3870,6 +3870,7 @@ func (m *mockManifestRecorder) RecordPut(bucket, key string, size int64, sha256H
 		IV:            iv,
 		WrappedDEK:    wrappedDEK,
 		BlockSize:     blockSize,
+		UserMetadata:  userMetadata,
 	}
 }
 
@@ -3918,6 +3919,7 @@ func TestHeadObjectManifestFastPath(t *testing.T) {
 		ContentType:   wantCType,
 		ETag:          wantETag,
 		LastModified:  time.Now(),
+		UserMetadata:  map[string]string{},
 	})
 
 	req := httptest.NewRequest(http.MethodHead, "/"+bucket+"/"+key, nil)

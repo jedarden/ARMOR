@@ -50,6 +50,7 @@ func TestWriterLoadRoundtrip(t *testing.T) {
 		ETag:            "etag-e1",
 		LastModified:    now,
 		CiphertextSize:  1064, // 64-byte header + 1000 bytes plaintext
+		UserMetadata:    map[string]string{"x-amz-meta-revision": "2"},
 	}
 	e2 := &manifest.Entry{
 		PlaintextSize:   2000,
@@ -61,6 +62,7 @@ func TestWriterLoadRoundtrip(t *testing.T) {
 		ETag:            "etag-e2",
 		LastModified:    now,
 		CiphertextSize:  2064, // 64-byte header + 2000 bytes plaintext
+		UserMetadata:    map[string]string{},
 	}
 
 	// Enqueue two puts and a put-then-delete for a third key.
@@ -107,6 +109,9 @@ func TestWriterLoadRoundtrip(t *testing.T) {
 	if got1.CiphertextSize != e1.CiphertextSize {
 		t.Errorf("file1 CiphertextSize: got %d, want %d", got1.CiphertextSize, e1.CiphertextSize)
 	}
+	if got := got1.UserMetadata["x-amz-meta-revision"]; got != "2" {
+		t.Errorf("file1 user metadata after delta replay = %q, want 2", got)
+	}
 
 	got2, ok := restored.Get(roundtripBucket, "data/file2.json")
 	if !ok {
@@ -114,6 +119,9 @@ func TestWriterLoadRoundtrip(t *testing.T) {
 	}
 	if got2.PlaintextSize != e2.PlaintextSize {
 		t.Errorf("file2 PlaintextSize: got %d, want %d", got2.PlaintextSize, e2.PlaintextSize)
+	}
+	if got2.UserMetadata == nil {
+		t.Error("file2 empty user metadata became legacy nil after delta replay")
 	}
 
 	if _, ok := restored.Get(roundtripBucket, "data/ephemeral.txt"); ok {
@@ -317,10 +325,10 @@ func TestDeltaReplayDeleteThenPut(t *testing.T) {
 // and CiphertextSize defaults to 0.
 func TestBackwardCompatibilityMissingCiphertextSize(t *testing.T) {
 	const (
-		bcPrefix     = ".armor/manifest"
-		bcWriter     = "bc-writer"
-		bcBucket     = "bucket"
-		bcTimestamp  = "2026-08-28T12:00:00Z"
+		bcPrefix    = ".armor/manifest"
+		bcWriter    = "bc-writer"
+		bcBucket    = "bucket"
+		bcTimestamp = "2026-08-28T12:00:00Z"
 	)
 
 	// Create a delta JSON entry without CiphertextSize (old format)
@@ -370,4 +378,3 @@ func TestBackwardCompatibilityMissingCiphertextSize(t *testing.T) {
 		t.Errorf("seq: want 1, got %d", restored.Seq())
 	}
 }
-
