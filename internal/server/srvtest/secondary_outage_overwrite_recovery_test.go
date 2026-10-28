@@ -60,6 +60,9 @@ func TestOverwriteDuringSecondaryOutageConvergesAfterRecovery(t *testing.T) {
 	if got := h.QueueMetrics.DroppedTotal.Load(); got != 0 {
 		t.Fatalf("DroppedTotal = %d during the faulted window, want 0 (the task must survive to recovery)", got)
 	}
+	pollFor(t, WaitTimeout, "overwrite retry recorded against the faulted secondary", func() bool {
+		return h.QueueMetrics.RetriesTotal.Load() > 0
+	})
 
 	// Recovery: clear the fault and wait for the retried task to converge.
 	h.Secondary.SetPutError(nil)
