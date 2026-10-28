@@ -4838,6 +4838,14 @@ func (h *Handlers) CompleteMultipartUpload(w http.ResponseWriter, r *http.Reques
 	// Completion installed a new stored generation at this key; retire any
 	// cached entry for the previous one (see the PUT paths above).
 	h.cache.Delete(bucket, key)
+	// A LIST may have filled its page cache after the early invalidation above
+	// but before writeManifest and RecordPut completed. Retire those pages
+	// again so a successful completion is visible on the next LIST. Include
+	// the manifest sibling for clients listing that exact prefix.
+	if h.listCache != nil {
+		h.listCache.InvalidateForWrite(bucket, key)
+		h.listCache.InvalidateForWrite(bucket, key+manifestSuffix)
+	}
 
 	// Record provenance (fallback when manifest is disabled)
 	if h.manifest == nil && h.provenance != nil && h.provenance.ShouldRecord(key) {
