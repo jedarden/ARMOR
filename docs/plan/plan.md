@@ -1780,13 +1780,17 @@ returns 500 (botocore's read timeout); PUTs over 10 MiB are spooled twice
 (plaintext, then ciphertext in `b2.go:207-221`), and the SDK hashes the whole
 body again for signing.
 
-Decisions: encrypt directly into one spool file (the fixed-size header is
-written last) and hand the `*os.File` to the backend; skip the SDK payload
-hash (`SwapComputePayloadSHA256ForUnsignedPayloadMiddleware`) after
-`armor-integration` confirms B2 accepts it; upload large PUTs as parallel B2
-multipart ranges from the spool file (stored bytes identical); measure
-dropping `Expect: 100-continue` and raising the SDK's 10 idle connections per
-host with `httptrace` before changing either. Separate correctness bugs found
+Current single-PUT decision (`armor-213bd392`): retain the plaintext spool
+needed to know the final v3 header hash and size. Serve the unchanged envelope
+through a bounded seekable encrypted reader over that spool, so B2's existing
+single `PutObject` request has a known Content-Length and can replay identical
+bytes on SDK retries without writing a full ciphertext spool. Encryption starts
+when the backend reads the body, and `If-None-Match: *` keeps the existing
+create-only path. Multipart upload scheduling and the ordinary writer contract
+remain separate work. Earlier candidates were a ciphertext spool, skipping the
+SDK payload hash after live B2 qualification, parallel B2 multipart ranges,
+and transport tuning with `httptrace`; none is implied by this single-PUT
+change. Separate correctness bugs found
 on the way (not performance, filed separately): >10 MiB PUTs return a
 SHA-based ETag rather than MD5 (rclone may reject), 0-byte PUTs fail with
 "cannot encode empty block table", SigV4 never checks the body against its

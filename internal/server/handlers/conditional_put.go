@@ -118,7 +118,3 @@ func (h *Handlers) writeAppendOnlyPutError(w http.ResponseWriter, r *http.Reques
 		h.writePutObjectError(w, r, err)
 	}
 }
-
-func putObjectExpectedRejection(err error) bool {
-	return errors.Is(err, backend.ErrPreconditionFailed) || errors.Is(err, backend.ErrConditionalPutUnsupported)
-}

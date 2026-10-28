@@ -900,6 +900,7 @@ func (h *Handlers) putObjectStreaming(ctx context.Context, w http.ResponseWriter
 	}
 	tmpPath := tmpFile.Name()
 	defer os.Remove(tmpPath) // Clean up on exit
+	defer tmpFile.Close()
 
 	// Compute SHA-256 while copying to temp file
 	plaintextHash := sha256.New()
@@ -909,6 +910,16 @@ func (h *Handlers) putObjectStreaming(ctx context.Context, w http.ResponseWriter
 	if err != nil {
 		tmpFile.Close()
 		h.writeErrorCause(w, r, "InternalError", fmt.Sprintf("Failed to read body: %v", err), 500, err)
+		return
+	}
+	if r.ContentLength >= 0 && plaintextSize != r.ContentLength {
+		tmpFile.Close()
+		h.writeError(w, r, "InvalidRequest", "Request body is shorter than Content-Length", 400)
+		return
+	}
+	if err := ctx.Err(); err != nil {
+		tmpFile.Close()
+		h.writeErrorCause(w, r, "InternalError", fmt.Sprintf("Upload canceled: %v", err), 500, err)
 		return
 	}
 
@@ -1003,69 +1014,15 @@ func (h *Handlers) putObjectStreaming(ctx context.Context, w http.ResponseWriter
 		envelopeSize = int64(len(headerBytes)) + plaintextSize + hmacTableSize
 	}
 
-	// Phase 3: Stream encrypt via io.Pipe
-	pr, pw := io.Pipe()
-
-	// Start encryption goroutine
-	encErr := make(chan error, 1)
-	go func() {
-		defer pw.Close()
-		defer close(encErr)
-
-		// Write header
-		if _, err := pw.Write(headerBytes); err != nil {
-			encErr <- fmt.Errorf("failed to write header: %w", err)
-			return
-		}
-
-		if envelopeVersion == crypto.Version3 {
-			// Stream encrypt with v3 and produce trailer block table
-			encryptor, err := crypto.NewEncryptorWithVersion(dek, iv, h.config.BlockSize, crypto.Version3)
-			if err != nil {
-				encErr <- fmt.Errorf("failed to create v3 encryptor: %w", err)
-				return
-			}
-
-			blockTable, err := encryptor.EncryptV3Stream(tmpFile, pw, plaintextSize, false) // Compression off per compress-rules bead
-			if err != nil {
-				encErr <- fmt.Errorf("v3 encryption failed: %w", err)
-				return
-			}
-
-			// Write trailer block table
-			trailerTable, err := blockTable.Encode()
-			if err != nil {
-				encErr <- fmt.Errorf("failed to encode block table: %w", err)
-				return
-			}
-
-			if _, err := pw.Write(trailerTable); err != nil {
-				encErr <- fmt.Errorf("failed to write trailer block table: %w", err)
-				return
-			}
-		} else {
-			// Stream encrypt with v2 (inline HMAC table)
-			encryptor, err := crypto.NewEncryptor(dek, iv, h.config.BlockSize)
-			if err != nil {
-				encErr <- fmt.Errorf("failed to create encryptor: %w", err)
-				return
-			}
-
-			hmacTable, err := encryptor.EncryptStream(tmpFile, pw, plaintextSize)
-			if err != nil {
-				encErr <- fmt.Errorf("encryption failed: %w", err)
-				return
-			}
-
-			// Write HMAC table
-			if _, err := pw.Write(hmacTable); err != nil {
-				encErr <- fmt.Errorf("failed to write HMAC table: %w", err)
-				return
-			}
-		}
-
-		encErr <- nil
-	}()
+	// Encrypt lazily as the backend reads. The seekable source lets the SDK
+	// provide Content-Length and replay exactly the same bytes on retries,
+	// without writing a second full-object ciphertext spool.
+	encrypted, err := crypto.NewReplayableEnvelopeReader(tmpFile, headerBytes, dek, iv, h.config.BlockSize, plaintextSize, uint8(envelopeVersion))
+	if err != nil {
+		tmpFile.Close()
+		h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to prepare encryption: %v", err), 500)
+		return
+	}
 
 	// Build metadata with version matching envelope format
 	contentType := r.Header.Get("Content-Type")
@@ -1096,24 +1053,24 @@ func (h *Handlers) putObjectStreaming(ctx context.Context, w http.ResponseWriter
 	}).ToMetadata()
 	mergeUserMetadata(meta, r)
 
-	// Upload to B2 with prefix applied using streaming reader
+	// Upload with prefix applied. Encryption starts with the backend read.
 	prefixedKey := h.applyPrefix(key)
 	backendPutStart := time.Now()
-	if err := h.storePutObject(ctx, bucket, prefixedKey, pr, envelopeSize, meta, createOnly); err != nil {
-		_ = pr.CloseWithError(err)
+	if err := h.storePutObject(ctx, bucket, prefixedKey, encrypted, envelopeSize, meta, createOnly); err != nil {
 		tmpFile.Close()
-		// Closing the reader releases the encryption goroutine even when the
-		// backend rejected the request before consuming its body.
-		encErrVal := <-encErr
-		if encErrVal != nil && !putObjectExpectedRejection(err) {
-			h.writeError(w, r, "InternalError", fmt.Sprintf("Encryption error: %v", encErrVal), 500)
-			return
-		}
 		if appendOnly {
 			h.writeAppendOnlyPutError(w, r, err, explicitCondition)
 		} else {
 			h.writePutObjectError(w, r, err)
 		}
+		return
+	}
+	if pos, seekErr := encrypted.Seek(0, io.SeekCurrent); seekErr != nil || pos != envelopeSize {
+		h.writeError(w, r, "InternalError", "Backend did not consume the complete encrypted object", 500)
+		return
+	}
+	if err := ctx.Err(); err != nil {
+		h.writeErrorCause(w, r, "InternalError", fmt.Sprintf("Upload canceled: %v", err), 500, err)
 		return
 	}
 	backendPutDuration := time.Since(backendPutStart)
@@ -1126,15 +1083,9 @@ func (h *Handlers) putObjectStreaming(ctx context.Context, w http.ResponseWriter
 	// Close temp file
 	tmpFile.Close()
 
-	// Check for encryption errors
-	if encErrVal := <-encErr; encErrVal != nil {
-		h.writeError(w, r, "InternalError", fmt.Sprintf("Encryption error: %v", encErrVal), 500)
-		return
-	}
-
 	// PUT latency instrumentation (armor-69dd394b): same split as the buffered
-	// path — see the comment there. On this path the backend PUT leg includes
-	// waiting on the concurrent encryption goroutine feeding the pipe reader.
+	// path — see the comment there. This backend PUT leg includes encryption
+	// as the backend consumes the replayable body.
 	recordProvenance := h.provenance != nil && h.provenance.ShouldRecord(key)
 	var provTimings *provenance.Timings
 	if recordProvenance {
