@@ -356,15 +356,30 @@ func (fs *FSBackend) list(ctx context.Context, bucket, prefix, delimiter, contin
 
 	var objects []ObjectInfo
 	commonPrefixMap := make(map[string]bool)
-	count := 0
+	var commonPrefixes []string
+	var lastToken string
+	pageFull := errors.New("list page full")
+	// A positive maxKeys bounds metadata reads as well as the response. Walk
+	// visits keys in a stable order, so the first extra visible entry proves
+	// truncation without loading metadata for the rest of the bucket.
+	addEntry := func(token string) error {
+		if maxKeys > 0 && len(objects)+len(commonPrefixes) >= maxKeys {
+			return pageFull
+		}
+		lastToken = token
+		return nil
+	}
 
-	err := filepath.Walk(bucketPath, func(path string, info os.FileInfo, err error) error {
+	err := filepath.WalkDir(bucketPath, func(path string, entry os.DirEntry, err error) error {
 		if err != nil {
+			return err
+		}
+		if err := ctx.Err(); err != nil {
 			return err
 		}
 
 		// Skip directories and metadata files
-		if info.IsDir() {
+		if entry.IsDir() {
 			// Skip .armor directory. Matched on the base name rather than a
 			// full path so it also prunes <prefix>.armor — the location the
 			// reserved namespace moves to under ADR-001 — and every internal
@@ -390,6 +405,11 @@ func (fs *FSBackend) list(ctx context.Context, bucket, prefix, delimiter, contin
 		if prefix != "" && !strings.HasPrefix(key, prefix) {
 			return nil
 		}
+		// For delimiter pages the token can name a common prefix. Skip its
+		// entire subtree so it is not repeated on the next page.
+		if key <= continuationToken || (delimiter == "/" && strings.HasSuffix(continuationToken, "/") && strings.HasPrefix(key, continuationToken)) {
+			return nil
+		}
 
 		// Skip .armor/ prefixed keys (at the bucket root, or under the ADR-001
 		// prefix when one is configured)
@@ -409,15 +429,28 @@ func (fs *FSBackend) list(ctx context.Context, bucket, prefix, delimiter, contin
 			if idx := strings.Index(afterPrefix, delimiter); idx >= 0 {
 				// This is a common prefix
 				commonPrefix := prefix + afterPrefix[:idx+1]
-				commonPrefixMap[commonPrefix] = true
+				if !commonPrefixMap[commonPrefix] {
+					if err := addEntry(commonPrefix); err != nil {
+						return err
+					}
+					commonPrefixMap[commonPrefix] = true
+					commonPrefixes = append(commonPrefixes, commonPrefix)
+				}
 				return nil
 			}
 		}
 
+		if err := addEntry(key); err != nil {
+			return err
+		}
 		// Load metadata for this object
 		meta, err := fs.loadMetadata(bucket, key)
 		if err != nil {
 			// Object exists but metadata is missing - create minimal info
+			info, err := entry.Info()
+			if err != nil {
+				return err
+			}
 			objInfo := ObjectInfo{
 				Key:          key,
 				Size:         info.Size(),
@@ -446,25 +479,24 @@ func (fs *FSBackend) list(ctx context.Context, bucket, prefix, delimiter, contin
 		}
 
 		objects = append(objects, objInfo)
-		count++
 
 		return nil
 	})
 
-	if err != nil {
+	truncated := errors.Is(err, pageFull)
+	if err != nil && !truncated {
 		return nil, fmt.Errorf("failed to walk directory: %w", err)
 	}
 
-	// Convert map to sorted slice
-	var commonPrefixes []string
-	for prefix := range commonPrefixMap {
-		commonPrefixes = append(commonPrefixes, prefix)
+	if !truncated {
+		lastToken = ""
 	}
 
 	return &ListResult{
 		Objects:        objects,
 		CommonPrefixes: commonPrefixes,
-		IsTruncated:    false,
+		IsTruncated:    truncated,
+		NextToken:      lastToken,
 	}, nil
 }
 

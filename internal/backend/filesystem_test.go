@@ -212,6 +212,75 @@ func TestFSBackend_List(t *testing.T) {
 	}
 }
 
+func TestFSBackend_ListPaginationAndWriteVisibility(t *testing.T) {
+	ctx := context.Background()
+	fs, err := NewFSBackend(FSConfig{BasePath: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	const bucket = "list-pages"
+	if err := fs.CreateBucket(ctx, bucket); err != nil {
+		t.Fatal(err)
+	}
+	put := func(key string) {
+		t.Helper()
+		if err := fs.Put(ctx, bucket, key, strings.NewReader("x"), 1, nil); err != nil {
+			t.Fatalf("put %s: %v", key, err)
+		}
+	}
+	for _, key := range []string{"p/00", "p/10", "p/sub/a", "p/sub/b", "p/zz", "q/00"} {
+		put(key)
+	}
+
+	first, err := fs.List(ctx, bucket, "p/", "", "", 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(first.Objects) != 2 || first.Objects[0].Key != "p/00" || first.Objects[1].Key != "p/10" ||
+		!first.IsTruncated || first.NextToken != "p/10" {
+		t.Fatalf("first page: %+v", first)
+	}
+
+	// A write through this backend must be visible on the next page.
+	put("p/15")
+	second, err := fs.List(ctx, bucket, "p/", "", first.NextToken, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(second.Objects) != 2 || second.Objects[0].Key != "p/15" || second.Objects[1].Key != "p/sub/a" ||
+		!second.IsTruncated || second.NextToken != "p/sub/a" {
+		t.Fatalf("second page after write: %+v", second)
+	}
+	third, err := fs.List(ctx, bucket, "p/", "", second.NextToken, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(third.Objects) != 2 || third.Objects[0].Key != "p/sub/b" || third.Objects[1].Key != "p/zz" ||
+		third.IsTruncated || third.NextToken != "" {
+		t.Fatalf("last page: %+v", third)
+	}
+
+	// A common prefix counts toward max-keys and its token skips its entire
+	// subtree on the next page.
+	var token string
+	for i, want := range []string{"p/00", "p/10", "p/15", "p/sub/", "p/zz"} {
+		page, err := fs.List(ctx, bucket, "p/", "/", token, 1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var got string
+		if len(page.Objects) == 1 && len(page.CommonPrefixes) == 0 {
+			got = page.Objects[0].Key
+		} else if len(page.Objects) == 0 && len(page.CommonPrefixes) == 1 {
+			got = page.CommonPrefixes[0]
+		}
+		if got != want || page.IsTruncated != (i < 4) {
+			t.Fatalf("delimiter page %d: got %q, result %+v; want %q", i, got, page, want)
+		}
+		token = page.NextToken
+	}
+}
+
 // TestFSBackend_MultipartUpload tests multipart upload operations.
 func TestFSBackend_MultipartUpload(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "armor-fs-test-*")
