@@ -126,6 +126,14 @@ type Config struct {
 	// ReadBackendLimit * SmallObjectFetchBytes.
 	SmallObjectFetchBytes int64
 
+	// UploadPartMemoryBudget bounds the aggregate plaintext bytes concurrent
+	// v3 UploadPart requests may hold in memory (armor-cb2b0731). Parts with
+	// a known Content-Length at or below the pooled part size are admitted
+	// against this budget before their bodies are read, so client-chosen
+	// upload concurrency cannot exhaust pod memory; unknown or larger part
+	// bodies spill to a temp file instead of waiting.
+	UploadPartMemoryBudget int64
+
 	// Read-retry policy for idempotent backend ranged GETs and HEADs
 	// (armor-f1791426). Attempts is the total number of tries on transient
 	// failures (5xx, 429, connection resets, truncated responses); the sleep
@@ -399,6 +407,14 @@ func Load() (*Config, error) {
 	cfg.SmallObjectFetchBytes = int64(getEnvInt("ARMOR_SMALL_OBJECT_FETCH_BYTES", 1<<20))
 	if cfg.SmallObjectFetchBytes < 0 {
 		errs = append(errs, fmt.Errorf("ARMOR_SMALL_OBJECT_FETCH_BYTES must be at least 0 (0 disables the single-fetch path)"))
+	}
+
+	// Aggregate v3 UploadPart memory budget (armor-cb2b0731). The default
+	// admits eight pooled 64 MiB parts — the iad-ci workload the budget was
+	// sized against — inside a 1 GiB pod.
+	cfg.UploadPartMemoryBudget = int64(getEnvInt("ARMOR_UPLOAD_PART_MEMORY_BUDGET", 536870912))
+	if cfg.UploadPartMemoryBudget < 1048576 {
+		errs = append(errs, fmt.Errorf("ARMOR_UPLOAD_PART_MEMORY_BUDGET must be at least 1048576 bytes (1 MiB)"))
 	}
 
 	// Read-retry policy (armor-f1791426). Retries stay inside the per-request

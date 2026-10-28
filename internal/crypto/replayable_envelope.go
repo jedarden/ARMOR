@@ -28,6 +28,12 @@ import (
 // as the forward pass encrypts each block and backfilled on demand if the
 // trailer region is read first. The plaintext source is not owned: the
 // caller closes it.
+//
+// The same struct also serves v3 multipart parts through
+// NewReplayablePartReader: a part stream is the ciphertext blocks alone —
+// no header, no trailer — encrypted with the (part, block) counter that
+// EncryptPartV3 uses, so the bytes match the buffered part path exactly
+// while encryption stays lazy under the backend's read (armor-cb2b0731).
 type ReplayableEnvelopeReader struct {
 	plaintext io.ReadSeeker
 
@@ -36,6 +42,12 @@ type ReplayableEnvelopeReader struct {
 	plaintextSize int64
 	blockCount    uint32
 	version       uint8
+
+	// partStream serves a v3 multipart part: block counters carry partNumber
+	// and the served stream stops after the ciphertext (no header, no
+	// trailer). The per-block HMACs are still recorded, for PartBlockHMACs.
+	partStream bool
+	partNumber uint16
 
 	enc     *Encryptor      // v2 per-segment encryption
 	cryptor *V3BlockCryptor // v3 per-block encryption
@@ -94,6 +106,41 @@ func NewReplayableEnvelopeReader(plaintext io.ReadSeeker, header []byte, dek, iv
 	return r, nil
 }
 
+// NewReplayablePartReader builds the replayable encrypted source for one v3
+// multipart part. plaintext must be a seekable spool of exactly plaintextSize
+// bytes; the served stream is the part's ciphertext alone (v3 part ciphertext
+// has the same length as its plaintext), encrypted with the (partNumber,
+// block) counter construction of EncryptPartV3. Because the source is
+// seekable, a backend SDK retry rewinds and replays byte-identical ciphertext.
+// Block HMACs are recorded as the stream is read and retrieved afterwards
+// with PartBlockHMACs; a block the backend never reached is backfilled from
+// the spool there.
+func NewReplayablePartReader(plaintext io.ReadSeeker, dek, iv []byte, blockSize int, plaintextSize int64, partNumber uint16) (*ReplayableEnvelopeReader, error) {
+	if partNumber < 1 {
+		return nil, fmt.Errorf("part number must be >= 1, got %d", partNumber)
+	}
+	if plaintext == nil || blockSize <= 0 || plaintextSize < 0 {
+		return nil, errors.New("invalid replayable part source or size")
+	}
+	cryptor, err := NewV3BlockCryptor(dek, iv, blockSize)
+	if err != nil {
+		return nil, fmt.Errorf("v3 block cryptor: %w", err)
+	}
+	// An empty part has no blocks; unlike a v3 envelope (whose trailer table
+	// cannot encode zero blocks), a part stream of zero length is well-formed
+	// and matches EncryptPartV3 on empty input.
+	return &ReplayableEnvelopeReader{
+		plaintext:     plaintext,
+		blockSize:     blockSize,
+		plaintextSize: plaintextSize,
+		blockCount:    ComputeBlockCount(plaintextSize, blockSize),
+		version:       Version3,
+		partStream:    true,
+		partNumber:    partNumber,
+		cryptor:       cryptor,
+	}, nil
+}
+
 // entrySize is the per-block trailer-table entry width for the version.
 func (r *ReplayableEnvelopeReader) entrySize() int {
 	if r.version == Version3 {
@@ -102,8 +149,12 @@ func (r *ReplayableEnvelopeReader) entrySize() int {
 	return HMACSize
 }
 
-// total is the exact stream length: header + ciphertext blocks + trailer.
+// total is the exact stream length: header + ciphertext blocks + trailer,
+// or for a part stream the ciphertext alone.
 func (r *ReplayableEnvelopeReader) total() int64 {
+	if r.partStream {
+		return r.plaintextSize
+	}
 	return int64(len(r.header)) + r.plaintextSize + int64(r.blockCount)*int64(r.entrySize())
 }
 
@@ -209,7 +260,7 @@ func (r *ReplayableEnvelopeReader) loadSegment(bi uint32) error {
 		r.recordEntry(bi, r.enc.computeBlockHMAC(blk, bi), 0)
 	case Version3:
 		blockHMAC := make([]byte, HMACSize)
-		if err := r.cryptor.encryptBlockInto(blk, blockHMAC, 0, bi, blk); err != nil {
+		if err := r.cryptor.encryptBlockInto(blk, blockHMAC, r.partNumber, bi, blk); err != nil {
 			return fmt.Errorf("block %d encryption: %w", bi, err)
 		}
 		r.recordEntry(bi, blockHMAC, uint32(len(blk)))
@@ -250,4 +301,24 @@ func (r *ReplayableEnvelopeReader) ensureTable() error {
 	}
 	r.tableDone = true
 	return nil
+}
+
+// PartBlockHMACs returns the per-block HMACs of a part stream, in block
+// order, after making sure every block's entry exists. A backend that
+// consumed the whole body has already produced them all; any block it did
+// not reach is re-encrypted from the spool here, deterministically. The
+// caller must keep the plaintext spool alive until after this call.
+func (r *ReplayableEnvelopeReader) PartBlockHMACs() ([][]byte, error) {
+	if !r.partStream {
+		return nil, errors.New("PartBlockHMACs requires a part stream")
+	}
+	if err := r.ensureTable(); err != nil {
+		return nil, err
+	}
+	hmacs := make([][]byte, int(r.blockCount))
+	for bi := 0; bi < int(r.blockCount); bi++ {
+		hmacs[bi] = make([]byte, HMACSize)
+		copy(hmacs[bi], r.entries[bi][:HMACSize])
+	}
+	return hmacs, nil
 }

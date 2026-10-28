@@ -304,3 +304,128 @@ func TestReplayableEnvelopeRejectsInvalidSourceAndShortSpool(t *testing.T) {
 		t.Fatal("short plaintext spool produced a complete encrypted envelope")
 	}
 }
+
+// TestReplayablePartReaderMatchesEncryptPartV3 pins the part stream to the
+// buffered multipart reference: the same (part, block) counters, ciphertext
+// bytes, per-block HMACs, byte-identical replay after a rewind, and backfill
+// of blocks a partial consumer never reached (armor-cb2b0731).
+func TestReplayablePartReaderMatchesEncryptPartV3(t *testing.T) {
+	dek, iv := replayableKeyMaterial()
+	const blockSize = 4096
+	cases := []struct {
+		size       int64
+		partNumber uint16
+	}{
+		{0, 1}, {1, 1}, {blockSize - 1, 2}, {blockSize, 3},
+		{3*blockSize + 7, 10000}, {2*blockSize + 512, 513},
+	}
+	for _, tc := range cases {
+		plaintext := make([]byte, tc.size)
+		for i := range plaintext {
+			plaintext[i] = byte(i*31 + int(tc.partNumber))
+		}
+		refCiphertext, refHMACs, err := EncryptPartV3(dek, iv, tc.partNumber, blockSize, plaintext)
+		if err != nil {
+			t.Fatalf("size %d part %d: reference encrypt: %v", tc.size, tc.partNumber, err)
+		}
+
+		spool := replayableSpool(t, plaintext)
+		reader, err := NewReplayablePartReader(spool, dek, iv, blockSize, tc.size, tc.partNumber)
+		if err != nil {
+			t.Fatalf("size %d part %d: %v", tc.size, tc.partNumber, err)
+		}
+		if got := reader.Len(); got != tc.size {
+			t.Fatalf("size %d part %d: Len()=%d want %d", tc.size, tc.partNumber, got, tc.size)
+		}
+		first, err := io.ReadAll(reader)
+		if err != nil {
+			t.Fatalf("size %d part %d: read: %v", tc.size, tc.partNumber, err)
+		}
+		if !bytes.Equal(first, refCiphertext) {
+			t.Fatalf("size %d part %d: ciphertext differs from EncryptPartV3", tc.size, tc.partNumber)
+		}
+
+		// A backend retry rewinds and must replay byte-identical ciphertext.
+		if _, err := reader.Seek(0, io.SeekStart); err != nil {
+			t.Fatalf("size %d part %d: seek: %v", tc.size, tc.partNumber, err)
+		}
+		second, err := io.ReadAll(reader)
+		if err != nil {
+			t.Fatalf("size %d part %d: replay read: %v", tc.size, tc.partNumber, err)
+		}
+		if !bytes.Equal(first, second) {
+			t.Fatalf("size %d part %d: replayed ciphertext differs from first pass", tc.size, tc.partNumber)
+		}
+
+		hmacs, err := reader.PartBlockHMACs()
+		if err != nil {
+			t.Fatalf("size %d part %d: PartBlockHMACs: %v", tc.size, tc.partNumber, err)
+		}
+		if len(hmacs) != len(refHMACs)/HMACSize {
+			t.Fatalf("size %d part %d: %d HMACs, want %d", tc.size, tc.partNumber, len(hmacs), len(refHMACs)/HMACSize)
+		}
+		for b, mac := range hmacs {
+			if !bytes.Equal(mac, refHMACs[b*HMACSize:(b+1)*HMACSize]) {
+				t.Fatalf("size %d part %d: block %d HMAC differs from reference", tc.size, tc.partNumber, b)
+			}
+		}
+	}
+}
+
+// TestReplayablePartReaderBackfillsUnreadBlocks verifies that a consumer
+// which stops mid-stream still yields the complete HMAC set — the missing
+// blocks are re-encrypted from the spool, deterministically.
+func TestReplayablePartReaderBackfillsUnreadBlocks(t *testing.T) {
+	dek, iv := replayableKeyMaterial()
+	const blockSize = 4096
+	plaintext := make([]byte, 5*blockSize+3)
+	for i := range plaintext {
+		plaintext[i] = byte(i)
+	}
+	_, refHMACs, err := EncryptPartV3(dek, iv, 7, blockSize, plaintext)
+	if err != nil {
+		t.Fatal(err)
+	}
+	spool := replayableSpool(t, plaintext)
+	reader, err := NewReplayablePartReader(spool, dek, iv, blockSize, int64(len(plaintext)), 7)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Consume only the first block and a half, like an interrupted transfer.
+	buf := make([]byte, blockSize+blockSize/2)
+	if _, err := io.ReadFull(reader, buf); err != nil {
+		t.Fatal(err)
+	}
+	hmacs, err := reader.PartBlockHMACs()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(hmacs) != len(refHMACs)/HMACSize {
+		t.Fatalf("backfill produced %d HMACs, want %d", len(hmacs), len(refHMACs)/HMACSize)
+	}
+	for b, mac := range hmacs {
+		if !bytes.Equal(mac, refHMACs[b*HMACSize:(b+1)*HMACSize]) {
+			t.Fatalf("backfilled block %d HMAC differs from reference", b)
+		}
+	}
+}
+
+// TestReplayablePartReaderRejectsInvalidArguments covers the constructor's
+// contract: no plaintext source, non-positive block size, negative size and
+// part number zero are rejected.
+func TestReplayablePartReaderRejectsInvalidArguments(t *testing.T) {
+	dek, iv := replayableKeyMaterial()
+	spool := replayableSpool(t, []byte{1, 2, 3})
+	if _, err := NewReplayablePartReader(nil, dek, iv, 4096, 3, 1); err == nil {
+		t.Fatal("nil source accepted")
+	}
+	if _, err := NewReplayablePartReader(spool, dek, iv, 0, 3, 1); err == nil {
+		t.Fatal("zero block size accepted")
+	}
+	if _, err := NewReplayablePartReader(spool, dek, iv, 4096, -1, 1); err == nil {
+		t.Fatal("negative size accepted")
+	}
+	if _, err := NewReplayablePartReader(spool, dek, iv, 4096, 3, 0); err == nil {
+		t.Fatal("part number 0 accepted")
+	}
+}

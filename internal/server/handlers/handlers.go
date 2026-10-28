@@ -129,6 +129,13 @@ type Handlers struct {
 	// buffered ciphertext never exceeds cap × SmallObjectFetchBytes. A request
 	// that finds the cap full takes the streaming path instead of waiting.
 	smallFetchBufs chan struct{}
+
+	// partBudget bounds the aggregate plaintext bytes concurrent v3
+	// UploadPart requests hold in memory (armor-cb2b0731). Initialized
+	// lazily so every construction path — including zero-valued configs in
+	// tests — gets the same default.
+	partBudgetOnce sync.Once
+	partBudget     *partMemoryBudget
 }
 
 const (
@@ -241,6 +248,25 @@ func New(cfg *config.Config, be backend.Backend, cache *backend.MetadataCache, f
 // WithProvenance adds provenance support to handlers.
 func (h *Handlers) WithProvenance(p ProvenanceRecorder) {
 	h.provenance = p
+}
+
+// defaultUploadPartMemoryBudget is the aggregate in-memory v3 UploadPart
+// plaintext budget when the config does not set one: eight pooled 64 MiB
+// parts, the iad-ci workload the budget was sized against (armor-cb2b0731).
+const defaultUploadPartMemoryBudget = 512 << 20
+
+// partMemoryBudget returns the server's aggregate v3 part memory budget,
+// creating it on first use from the configured total (zero-valued configs,
+// including direct Handlers construction in tests, take the default).
+func (h *Handlers) partMemoryBudget() *partMemoryBudget {
+	h.partBudgetOnce.Do(func() {
+		total := int64(defaultUploadPartMemoryBudget)
+		if h.config != nil && h.config.UploadPartMemoryBudget > 0 {
+			total = h.config.UploadPartMemoryBudget
+		}
+		h.partBudget = newPartMemoryBudget(total)
+	})
+	return h.partBudget
 }
 
 // recordProvenanceUpload records a per-object provenance entry after the
@@ -3869,19 +3895,41 @@ func (h *Handlers) UploadPart(w http.ResponseWriter, r *http.Request, bucket, ke
 		return
 	}
 
-	// Read once into a Content-Length-sized buffer and compute the part digest
-	// before v3 encrypts that same buffer in place.
-	plaintext, partSHA, releasePartBody, err := readUploadPartBody(r.Body, r.ContentLength)
-	if err != nil {
-		h.writeErrorCause(w, r, "InternalError", fmt.Sprintf("Failed to read body: %v", err), 500, err)
-		return
-	}
-	defer func() {
-		if releasePartBody != nil {
-			releasePartBody()
+	// V3 reads the body once into a bounded, seekable plaintext source: a
+	// pooled Content-Length-sized buffer admitted against the server's
+	// aggregate part memory budget, or a temp-file spool for unknown or
+	// over-budget lengths. The replayable part reader then encrypts lazily
+	// under the backend's read, so encryption overlaps the backend transfer
+	// and a backend retry replays byte-identical ciphertext (armor-cb2b0731).
+	// V2 keeps the buffered read: its offset-based encryption consumes the
+	// whole plaintext at once.
+	var plaintext []byte
+	var partSource *uploadPartSource
+	var releasePartBody func()
+	var partSHA [sha256.Size]byte
+	var plaintextSize int64
+	if formatVersion == 3 {
+		partSource, err = readUploadPartBodySeekable(ctx, r.Body, r.ContentLength, h.partMemoryBudget())
+		if err != nil {
+			h.writeErrorCause(w, r, "InternalError", fmt.Sprintf("Failed to read body: %v", err), 500, err)
+			return
 		}
-	}()
-	plaintextSize := int64(len(plaintext))
+		defer partSource.release()
+		plaintextSize = partSource.size
+		partSHA = partSource.digest
+	} else {
+		plaintext, partSHA, releasePartBody, err = readUploadPartBody(r.Body, r.ContentLength)
+		if err != nil {
+			h.writeErrorCause(w, r, "InternalError", fmt.Sprintf("Failed to read body: %v", err), 500, err)
+			return
+		}
+		defer func() {
+			if releasePartBody != nil {
+				releasePartBody()
+			}
+		}()
+		plaintextSize = int64(len(plaintext))
+	}
 
 	// ADR-011: Detect non-uniform part pattern (e.g., Barman's chunk_size + N*512).
 	// Only applies to formatVersion != 3 — v3 parts are independently encrypted
@@ -4034,16 +4082,45 @@ func (h *Handlers) UploadPart(w http.ResponseWriter, r *http.Request, bucket, ke
 
 	var encrypted []byte
 	var blockHMACsRaw []byte
+	var blockHMACs [][]byte
+	var etag string
+	var partCiphertextLen int64
 
 	if formatVersion == 3 {
 		// V3 encrypts each part as an independent stream starting from block 0
-		// No ordering constraints, no size pinning, no cumulative offsets
-		blockHMACsRaw, err = crypto.EncryptPartV3InPlace(dek, state.IV, uint16(partNumber), state.BlockSize, plaintext)
-		if err != nil {
-			h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to encrypt part with v3: %v", err), 500)
+		// with the (part, block) counter — no ordering constraints, no size
+		// pinning, no cumulative offsets. The replayable reader encrypts each
+		// block as the backend consumes it, recording its HMAC, so encryption
+		// overlaps the backend transfer and a backend retry rewinds and
+		// replays byte-identical ciphertext from the same plaintext source.
+		partReader, perr := crypto.NewReplayablePartReader(partSource.reader, dek, state.IV, state.BlockSize, plaintextSize, uint16(partNumber))
+		if perr != nil {
+			h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to encrypt part with v3: %v", perr), 500)
 			return
 		}
-		encrypted = plaintext
+		partCiphertextLen = partReader.Len()
+		var uerr error
+		etag, uerr = h.backend.UploadPart(ctx, bucket, h.applyPrefix(key), uploadID, int32(partNumber), partReader, partCiphertextLen)
+		if uerr != nil {
+			h.writeBackendError(w, r, "InternalError", fmt.Sprintf("Failed to upload part: %v", uerr), 500, uerr)
+			return
+		}
+		if pos, seekErr := partReader.Seek(0, io.SeekCurrent); seekErr != nil || pos != partCiphertextLen {
+			h.writeError(w, r, "InternalError", "Backend did not consume the complete encrypted part", 500)
+			return
+		}
+		if cerr := ctx.Err(); cerr != nil {
+			h.writeErrorCause(w, r, "InternalError", fmt.Sprintf("Upload canceled: %v", cerr), 500, cerr)
+			return
+		}
+		// Collect the per-block HMACs recorded during the transfer, backfilling
+		// from the plaintext source any block the backend never reached. The
+		// source stays alive until the handler returns, so this re-read is safe.
+		blockHMACs, perr = partReader.PartBlockHMACs()
+		if perr != nil {
+			h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to collect part block HMACs: %v", perr), 500)
+			return
+		}
 	} else if state.NonUniformParts {
 		// ADR-011: Use cumulative offsets for non-uniform parts (e.g., Barman's chunk_size + N*512)
 		// Calculate cumulative offset for this part
@@ -4103,28 +4180,33 @@ func (h *Handlers) UploadPart(w http.ResponseWriter, r *http.Request, bucket, ke
 	}
 
 	// In v2, the ciphertext is separate, so the plaintext buffer can be
-	// returned before waiting for the backend. In v3, encrypted owns it.
+	// returned before waiting for the backend. V3's plaintext source stays
+	// alive until the handler returns — the part reader and the HMAC
+	// backfill read from it.
 	if formatVersion != 3 {
 		releasePartBody()
 		releasePartBody = nil
 	}
 	plaintext = nil
 
-	// Upload encrypted part to B2. Prefixed for the same reason as
-	// CreateMultipartUpload above — the part must be addressed by the same
-	// storage key the upload was created under.
-	etag, err := h.backend.UploadPart(ctx, bucket, h.applyPrefix(key), uploadID, int32(partNumber), bytes.NewReader(encrypted), int64(len(encrypted)))
-	if err != nil {
-		h.writeBackendError(w, r, "InternalError", fmt.Sprintf("Failed to upload part: %v", err), 500, err)
-		return
-	}
+	// Upload encrypted part to B2 (v2; v3 uploaded from its replayable
+	// reader above). Prefixed for the same reason as CreateMultipartUpload
+	// above — the part must be addressed by the same storage key the upload
+	// was created under.
+	if formatVersion != 3 {
+		etag, err = h.backend.UploadPart(ctx, bucket, h.applyPrefix(key), uploadID, int32(partNumber), bytes.NewReader(encrypted), int64(len(encrypted)))
+		if err != nil {
+			h.writeBackendError(w, r, "InternalError", fmt.Sprintf("Failed to upload part: %v", err), 500, err)
+			return
+		}
 
-	// Split concatenated HMACs into individual HMACs for storage.
-	// EncryptWithStartingCounter returns HMACs as a flat byte slice.
-	blockCount := len(blockHMACsRaw) / crypto.HMACSize
-	blockHMACs := make([][]byte, blockCount)
-	for i := 0; i < blockCount; i++ {
-		blockHMACs[i] = blockHMACsRaw[i*crypto.HMACSize : (i+1)*crypto.HMACSize]
+		// Split concatenated HMACs into individual HMACs for storage.
+		// EncryptWithStartingCounter returns HMACs as a flat byte slice.
+		blockCount := len(blockHMACsRaw) / crypto.HMACSize
+		blockHMACs = make([][]byte, blockCount)
+		for i := 0; i < blockCount; i++ {
+			blockHMACs[i] = blockHMACsRaw[i*crypto.HMACSize : (i+1)*crypto.HMACSize]
+		}
 	}
 
 	// The plaintext SHA-256 was computed while reading, before in-place v3
@@ -4137,7 +4219,7 @@ func (h *Handlers) UploadPart(w http.ResponseWriter, r *http.Request, bucket, ke
 		partData := &backend.PartDataV3{
 			PartNumber:       int(partNumber),
 			PlaintextLen:     plaintextSize,
-			CiphertextLen:    int64(len(encrypted)),
+			CiphertextLen:    partCiphertextLen,
 			BlockHMACsBase64: backend.EncodeHMACToBase64(blockHMACs),
 			PlaintextSHAHex:  partSHAHex,
 		}

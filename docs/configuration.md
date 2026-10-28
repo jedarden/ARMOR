@@ -125,6 +125,12 @@ for the ACL syntax.
 | `ARMOR_LIST_CACHE_TTL` | No | `60` | List-result cache TTL in seconds |
 | `ARMOR_LIST_HEAD_FANOUT` | No | `16` | Maximum concurrent backend HEADs one ListObjectsV2 page issues to resolve plaintext sizes for keys missing from the manifest index and metadata cache; at least 1. B2 rate-limits per-key metadata calls, so a full 1000-key page stays bounded |
 
+## Multipart uploads
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `ARMOR_UPLOAD_PART_MEMORY_BUDGET` | No | `536870912` | Aggregate plaintext bytes concurrent v3 UploadPart requests may hold in memory. Parts with a known Content-Length at or below the pooled 64 MiB part size are admitted against this budget before their bodies are read, so raising a client's upload concurrency cannot exhaust pod memory — requests beyond the budget leave their bodies unread (TCP backpressure) until an admitted part finishes. Unknown-length or larger part bodies never touch the budget: they spill to a temp file, so their resident memory is the copy buffer. A part larger than the whole budget is admitted alone and may transiently exceed it by up to one part. Must be at least `1048576` bytes (1 MiB) |
+
 ## Manifest index
 
 The manifest index caches envelope metadata (IV, wrapped DEK) so reads do not

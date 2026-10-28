@@ -322,6 +322,11 @@ func (m *mockBackend) CreateMultipartUpload(ctx context.Context, bucket, key str
 }
 
 func (m *mockBackend) UploadPart(ctx context.Context, bucket, key, uploadID string, partNumber int32, body io.Reader, size int64) (string, error) {
+	// The real backends consume the whole part body, and the handler verifies
+	// exactly that after the upload, so the mock must drain it too.
+	if _, err := io.Copy(io.Discard, body); err != nil {
+		return "", err
+	}
 	return fmt.Sprintf("etag-%d", partNumber), nil
 }
 
