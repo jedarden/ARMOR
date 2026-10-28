@@ -3999,6 +3999,7 @@ func TestHeadObjectManifestAllHeaders(t *testing.T) {
 		ContentType:   "application/parquet",
 		ETag:          "deadbeef01",
 		LastModified:  modTime,
+		UserMetadata:  map[string]string{},
 	})
 
 	req := httptest.NewRequest(http.MethodHead, "/test-bucket/headers/object.parquet", nil)
@@ -4048,6 +4049,7 @@ func TestHeadObjectManifestCacheHitNotModified(t *testing.T) {
 		ContentType:   "application/octet-stream",
 		ETag:          etag,
 		LastModified:  time.Now().UTC(),
+		UserMetadata:  map[string]string{},
 	})
 
 	// Client sends If-None-Match matching the manifest ETag.

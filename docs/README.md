@@ -132,6 +132,8 @@ Contextual notes and temporary documentation:
 - **[Test Suites](../tests/README.md)** — Every suite under `tests/`: what it covers, the command that runs it, prerequisites, and which CI steps run it
 - **[Integration Tests](../tests/integration/README.md)** — Real B2 + Cloudflare integration test suite
 - **[AWS CLI Compatibility Tests](../tests/aws-cli-compatibility/README.md)** — AWS CLI and rclone compatibility verification
+- **[Demo Recording](images/armor-demo.tape)** — Source recording for the quick-start terminal walkthrough
+- **[Demo Animation](images/armor-demo.gif)** — Rendered quick-start terminal walkthrough
 - **[Multipart Client-Concurrency Compatibility Matrix](multipart-client-compatibility.md)** — What AWS CLI (serial and default concurrency), SDK transfer managers, rclone, litestream, and barman experience per write format; reconciles the unmodified-client claim with ADR-003 §4's superseded sequential-only era
 - **[Multipart 5 GiB Boundary Tests](testing/multipart-5gb-boundary-tests.md)** — 5 GiB multipart boundary test coverage
 - **[Performance Runbook](performance/README.md)** — Reproducible, bounded read/write throughput baselines (`tests/performance`); supersedes the one-off ADR-013 figures
