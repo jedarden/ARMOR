@@ -159,11 +159,9 @@ func TestLoadFetchErrorCancelsOutstandingFetches(t *testing.T) {
 				return nil, ctx.Err()
 			}
 		}
-		select {
-		case <-ctx.Done():
-			canceled.Add(1)
-			return nil, ctx.Err()
-		}
+		<-ctx.Done()
+		canceled.Add(1)
+		return nil, ctx.Err()
 	}
 
 	idx := New()
@@ -207,11 +205,9 @@ func TestLoadCancellationCancelsFetches(t *testing.T) {
 		if started.Add(1) >= 2 {
 			startedTwiceOnce.Do(func() { close(startedTwice) })
 		}
-		select {
-		case <-ctx.Done():
-			canceled.Add(1)
-			return nil, ctx.Err()
-		}
+		<-ctx.Done()
+		canceled.Add(1)
+		return nil, ctx.Err()
 	}
 
 	loadDone := make(chan error, 1)
