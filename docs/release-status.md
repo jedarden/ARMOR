@@ -1,6 +1,6 @@
 # Release status and known limitations
 
-**Status date:** 2026-10-16 · **Source version:** see [`VERSION`](../VERSION)
+**Status date:** 2026-10-29 · **Source version:** see [`VERSION`](../VERSION)
 
 This page is the evidence boundary for operator documentation. `repository-tested`
 means the current tree has focused passing tests, not proof of a published image
@@ -25,6 +25,34 @@ non-draft releases after the image appeared. GitOps commits `810b34733` and
 `b24dab46c` carry the Python-header and conservative-sensor fixes. These
 artifact checks do not prove a green end-to-end client gate or fleet rollout.
 The table identifies the last specific image proof where one is recorded.
+
+**`v0.1.2004`** (`armor-fdab65fe`) is the latest fully published, compat-green
+release. Revision `76117a5045bafb9580504eb149f61d37aee2a08a` carries the Barman
+pipe fixes (`f90e2a82`, `bb09ced0`) plus every accumulated fix through the
+lint cleanup. CI run `armor-build-g2sfr` passed every real-client
+compatibility leg — aws-cli, rclone, boto3, DuckDB, litestream, and
+barman-cloud (VictoriaLogs pod `armor-build-g2sfr-compat-suite-test-3288697442`,
+final `PASS` at 2026-10-29T11:54:04Z) — but the workflow's GitHub status still
+reads `failure`: its only red node was `publish-release`, which could not
+fetch its script because in-cluster Forgejo was mid-OOM-restart and the public
+fallback hit a stale webhook token (403). The publisher backfill ran manually
+with operator-sourced tokens after a `--dry-run` confirmed exactly three
+mutations — the Forgejo tag, the Forgejo release, and the mirrored GitHub
+tag/release — and `git ls-remote --tags origin` plus both release APIs confirm
+the tag and non-draft releases exist. `docker manifest inspect -v` independently
+confirms every digest against the published release notes:
+`ronaldraygun/armor:0.1.2004` `sha256:f39dbcaca179968764324127f15c98233970e5eaae90aaaacacc1a3a517466ab`,
+`ronaldraygun/armor-restore-verifier:0.1.2004` `sha256:572046ce8f6ab1024ee0614db1235afed95288462eec6735d4f41a0e0724f1f6`,
+`ronaldraygun/armor-fleet:0.1.2004` `sha256:9df3c871e2d33c15440b100cbb1dc56e9b42c6da8d87a82786efacb3456a35e6`,
+`ghcr.io/jedarden/armor:0.1.2004` `sha256:a31e567babcc012e26efe6e225721a7ea4ce69b5325116c21754ca8171abd942`.
+Declarative-config `22ac3fe76` added a retry to the `publish-release` step so
+a future Forgejo restart window does not need a manual backfill. `0.1.2003`
+and `0.1.2005` were cut (VERSION-only deltas) but never built: `0.1.2005`'s
+`armor-build-p5c9k` failed `golangci-lint` on a single-case `select` in
+`internal/manifest/loader_concurrency_test.go` (fixed on `main` in
+`2d98d437`); no image was ever pushed for either version, and they have no
+tag or release. Consumers should pin by the `0.1.2004` digests above, not by
+tag alone.
 
 ## Current release posture
 
@@ -52,6 +80,16 @@ The table identifies the last specific image proof where one is recorded.
 
 ## Known limitations
 
+- **`0.1.2002` was tagged but never released.** `armor-build-manual-9v4rg`
+  resolved and built the correct release commit
+  `f2be11e911a2ebe3012bd5e72d7f63327bfada12`
+  (`resolve-version`: "releasing VERSION=0.1.2002 from f2be11e9…"), and
+  kaniko pushed the registry tag before the compatibility gate ran; the
+  compat leg then failed on user-metadata handling (fixed by `2d2b679e` and
+  `c36637f3`). No `v0.1.2002` tag or Forgejo/GitHub release exists. Treat
+  `0.1.2002` images as artifacts of a failed gate, not a release: do not
+  deploy them. See the `v0.1.2004` record above for the next published
+  version.
 - **Release proof is version-specific.** A passing test on `main` does not
   upgrade an older fleet image. Record the image tag/digest, test object shape,
   MEK/ring fingerprints, and the focused command when accepting a rollout.
