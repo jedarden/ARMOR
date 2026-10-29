@@ -13,8 +13,6 @@ import (
 	"fmt"
 	"hash"
 	"io"
-	"strconv"
-	"strings"
 	"time"
 )
 
@@ -354,68 +352,6 @@ func (m *MultipartStateManager) LoadPartV3(ctx context.Context, uploadID string,
 	}
 
 	return &partData, nil
-}
-
-// ListPartsV3 lists all parts for a v3 multipart upload by reading the part-<n>.json files.
-func (m *MultipartStateManager) listPartsV3Serial(ctx context.Context, uploadID string) (map[int]*PartDataV3, error) {
-	prefix := m.internalPrefix() + fmt.Sprintf("multipart/%s/part-", uploadID)
-
-	listResult, err := m.backend.ListRaw(ctx, m.bucket, prefix, "", "", 1000)
-	if err != nil {
-		return nil, fmt.Errorf("failed to list parts: %w", err)
-	}
-
-	parts := make(map[int]*PartDataV3)
-
-	// Load each part file
-	for _, obj := range listResult.Objects {
-		// Extract part number from key: .armor/multipart/<id>/part-<n>.json
-		// Key format: .armor/multipart/{uploadID}/part-{partNumber}.json
-		partStr := obj.Key[len(prefix):]
-		partStr = strings.TrimPrefix(partStr, "part-")
-		if idx := strings.LastIndex(partStr, ".json"); idx != -1 {
-			partStr = partStr[:idx]
-		}
-		partNumber, err := strconv.Atoi(partStr)
-		if err != nil {
-			continue // Skip malformed keys
-		}
-
-		partData, err := m.LoadPartV3(ctx, uploadID, partNumber)
-		if err != nil {
-			continue // Skip parts that fail to load
-		}
-
-		parts[partNumber] = partData
-	}
-
-	// Also check if there are more objects
-	for listResult.IsTruncated {
-		listResult, err = m.backend.ListRaw(ctx, m.bucket, prefix, "", listResult.NextToken, 1000)
-		if err != nil {
-			break
-		}
-		for _, obj := range listResult.Objects {
-			partStr := obj.Key[len(prefix):]
-			partStr = strings.TrimPrefix(partStr, "part-")
-			if idx := strings.LastIndex(partStr, ".json"); idx != -1 {
-				partStr = partStr[:idx]
-			}
-			partNumber, err := strconv.Atoi(partStr)
-			if err != nil {
-				continue
-			}
-
-			partData, err := m.LoadPartV3(ctx, uploadID, partNumber)
-			if err != nil {
-				continue
-			}
-
-			parts[partNumber] = partData
-		}
-	}
-
-	return parts, nil
 }
 
 // HMACTableSidecar represents the HMAC table stored as a sidecar object.
