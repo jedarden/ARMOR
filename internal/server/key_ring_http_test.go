@@ -144,10 +144,10 @@ func startKeyRingServer(t *testing.T) *keyRingFixture {
 	if err != nil {
 		t.Fatalf("create ARMOR server: %v", err)
 	}
-	// NewWithBackend leaves the manifest nil on purpose (the S3 data plane
+	// NewWithBackend leaves the manifest unset on purpose (the S3 data plane
 	// does not need it); the ring census is precisely the admin feature
 	// that does.
-	armorServer.manifest = idx
+	armorServer.SetManifestIndex(idx)
 
 	f.srv = httptest.NewServer(armorServer.AdminHandler())
 	t.Cleanup(f.srv.Close)

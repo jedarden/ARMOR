@@ -7,6 +7,7 @@ import (
 	"github.com/jedarden/armor/internal/config"
 	"github.com/jedarden/armor/internal/keymanager"
 	"github.com/jedarden/armor/internal/logging"
+	"github.com/jedarden/armor/internal/manifest"
 	"github.com/jedarden/armor/internal/metrics"
 	"github.com/jedarden/armor/internal/presign"
 	"github.com/jedarden/armor/internal/replication"
@@ -57,6 +58,15 @@ func NewWithBackend(cfg *config.Config, be backend.Backend) (*Server, error) {
 // the share endpoint round-trip.
 func (s *Server) SetPresigner(presigner *presign.Signer) {
 	s.presigner = presigner
+}
+
+// SetManifestIndex wires a manifest index into the server after construction.
+// Intended for test use only (production builds the manifest subsystem inside
+// New, with the cold load running in the background); it publishes an
+// already-loaded state so the admin surfaces that read the index see it. Must
+// be called before Handler()/AdminHandler().
+func (s *Server) SetManifestIndex(idx *manifest.Index) {
+	s.manifestSys = resolvedManifestSystem(manifestState{status: manifestLoaded, idx: idx})
 }
 
 // SetSecondaryBackend wires an ADR-006 secondary backend into the server after

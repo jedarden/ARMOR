@@ -250,11 +250,11 @@ func TestReadyzManifestWriter(t *testing.T) {
 	defer writer.Stop()
 
 	s := &Server{
-		config:         &config.Config{Bucket: "test-bucket"},
-		backend:        cb,
-		manifestWriter: writer,
-		logger:         logging.New("test"),
-		metrics:        metrics.DefaultMetrics,
+		config:      &config.Config{Bucket: "test-bucket"},
+		backend:     cb,
+		manifestSys: resolvedManifestSystem(manifestState{status: manifestLoaded, idx: idx, writer: writer}),
+		logger:      logging.New("test"),
+		metrics:     metrics.DefaultMetrics,
 	}
 
 	// Initially, no flush has occurred — should be 503
@@ -329,11 +329,11 @@ func TestReadyzManifestWriterStale(t *testing.T) {
 	defer writer.Stop()
 
 	s := &Server{
-		config:         &config.Config{Bucket: "test-bucket"},
-		backend:        cb,
-		manifestWriter: writer,
-		logger:         logging.New("test"),
-		metrics:        metrics.DefaultMetrics,
+		config:      &config.Config{Bucket: "test-bucket"},
+		backend:     cb,
+		manifestSys: resolvedManifestSystem(manifestState{status: manifestLoaded, idx: idx, writer: writer}),
+		logger:      logging.New("test"),
+		metrics:     metrics.DefaultMetrics,
 	}
 
 	// Trigger a flush by enqueuing operations

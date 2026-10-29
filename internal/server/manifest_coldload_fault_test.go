@@ -159,7 +159,7 @@ func TestColdLoadFaultPreservesPersistedDeltas(t *testing.T) {
 
 	// Cold load fails AFTER discovery: listing works, every body fetch fails.
 	faulty := &faultBackend{Backend: fs, fetchErr: errors.New("injected transient fetch failure")}
-	st := startManifestSystem(coldLoadFaultConfig(root), logging.New("test"), faulty)
+	st := startManifestSystem(context.Background(), coldLoadFaultConfig(root), logging.New("test"), faulty)
 
 	if st.degradedReason == "" {
 		t.Fatal("degraded reason empty after failed cold load")
@@ -175,7 +175,7 @@ func TestColdLoadFaultPreservesPersistedDeltas(t *testing.T) {
 	}
 
 	// A new object write through the production recorder, then a flush.
-	rec := &manifestRecorder{idx: st.idx, writer: st.writer}
+	rec := &manifestRecorder{sys: resolvedManifestSystem(*st.state())}
 	rec.RecordPut("b", "obj-4", 44, "sha", nil, nil, "fp", 65536, "", "etag-4", nil, 44, nil)
 	st.writer.Stop()
 
@@ -207,7 +207,7 @@ func TestColdLoadFaultPreservesPersistedDeltas(t *testing.T) {
 	// The bead's second acceptance leg: the next successful load replays
 	// everything — seeded and recovery-era deltas alike — and the sequence
 	// continues uniquely.
-	recovered := startManifestSystem(coldLoadFaultConfig(root), logging.New("test"), fs)
+	recovered := startManifestSystem(context.Background(), coldLoadFaultConfig(root), logging.New("test"), fs)
 	if recovered.degradedReason != "" {
 		t.Fatalf("reload still degraded: %s", recovered.degradedReason)
 	}
@@ -251,7 +251,7 @@ func TestColdLoadFaultWithoutFloorPausesPublication(t *testing.T) {
 	seedPersistedDeltas(t, fs, 2)
 
 	faulty := &faultBackend{Backend: fs, listErr: errors.New("injected discovery failure")}
-	st := startManifestSystem(coldLoadFaultConfig(root), logging.New("test"), faulty)
+	st := startManifestSystem(context.Background(), coldLoadFaultConfig(root), logging.New("test"), faulty)
 
 	if st.writer != nil {
 		t.Fatal("writer started without a recovered sequence floor — its first flush could overwrite a persisted delta")
@@ -271,9 +271,8 @@ func TestColdLoadFaultWithoutFloorPausesPublication(t *testing.T) {
 
 	// The readiness surface carries the mode, not just the failure.
 	s := &Server{
-		manifestDegradedReason: st.degradedReason,
-		manifestDegradedNote:   st.degradedNote,
-		canaryDisabled:         true,
+		manifestSys:    resolvedManifestSystem(*st.state()),
+		canaryDisabled: true,
 	}
 	rec := httptest.NewRecorder()
 	s.readyz(rec, httptest.NewRequest(http.MethodGet, "/readyz", nil))
@@ -305,7 +304,7 @@ func TestColdLoadFreshStoreStillPublishes(t *testing.T) {
 		t.Fatalf("NewFSBackend: %v", err)
 	}
 
-	st := startManifestSystem(coldLoadFaultConfig(root), logging.New("test"), fs)
+	st := startManifestSystem(context.Background(), coldLoadFaultConfig(root), logging.New("test"), fs)
 	if st.degradedReason != "" {
 		t.Fatalf("fresh store reported degraded: %s", st.degradedReason)
 	}
@@ -313,7 +312,7 @@ func TestColdLoadFreshStoreStillPublishes(t *testing.T) {
 		t.Fatal("fresh store must run both the manifest writer and compactor")
 	}
 
-	rec := &manifestRecorder{idx: st.idx, writer: st.writer}
+	rec := &manifestRecorder{sys: resolvedManifestSystem(*st.state())}
 	rec.RecordPut("b", "obj-1", 11, "sha", nil, nil, "fp", 65536, "", "etag-1", nil, 11, nil)
 	st.writer.Stop()
 

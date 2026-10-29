@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jedarden/armor/internal/config"
 	"github.com/jedarden/armor/internal/manifest"
@@ -78,12 +79,17 @@ func newManifestTenantServer(t *testing.T, root, tenantPrefix, writerID, manifes
 	if err != nil {
 		t.Fatalf("New() for tenant %q: %v", tenantPrefix, err)
 	}
-	if srv.manifestWriter == nil {
+	// The cold load runs in the background (plan §9.6); settle it before the
+	// assertions so a still-loading index cannot flake them.
+	if status := srv.WaitForManifestLoad(30 * time.Second); status != manifestLoaded {
+		t.Fatalf("tenant %q manifest load settled as %q, want %q", tenantPrefix, status, manifestLoaded)
+	}
+	if srv.manifestWriter() == nil {
 		t.Fatalf("tenant %q has no manifest writer", tenantPrefix)
 	}
 
 	// Stop drains and flushes whatever is still enqueued.
-	t.Cleanup(srv.manifestWriter.Stop)
+	t.Cleanup(srv.StopManifestWriter)
 	return srv
 }
 
@@ -91,7 +97,7 @@ func newManifestTenantServer(t *testing.T, root, tenantPrefix, writerID, manifes
 // it as a delta object before returning.
 func flushTenantManifest(t *testing.T, srv *Server) {
 	t.Helper()
-	srv.manifestWriter.Stop()
+	srv.StopManifestWriter()
 }
 
 // TestManifestPrefixIsolatesTenantsInOneBucket is the ADR-001 shared-bucket
@@ -105,7 +111,7 @@ func TestManifestPrefixIsolatesTenantsInOneBucket(t *testing.T) {
 
 	// Tenant p records an upload and flushes it as a delta object.
 	tenantP := newManifestTenantServer(t, root, "p/", "writer-p", "")
-	tenantP.manifestWriter.EnqueuePut("shared-bucket", "ledger/row-1", &manifest.Entry{
+	tenantP.manifestWriter().EnqueuePut("shared-bucket", "ledger/row-1", &manifest.Entry{
 		PlaintextSize: 10,
 		BlockSize:     65536,
 	}, nil)
@@ -113,14 +119,14 @@ func TestManifestPrefixIsolatesTenantsInOneBucket(t *testing.T) {
 
 	// A second p/ instance must find that delta under p/.armor/manifest/.
 	againP := newManifestTenantServer(t, root, "p/", "writer-p-2", "")
-	if got := againP.manifest.Len(); got != 1 {
+	if got := againP.manifestIndex().Len(); got != 1 {
 		t.Errorf("second p/ instance loaded %d manifest entries, want 1; store holds:%s",
 			got, listStoreKeys(t, root))
 	}
 
 	// A q/ instance in the same bucket must load none of them.
 	tenantQ := newManifestTenantServer(t, root, "q/", "writer-q", "")
-	if got := tenantQ.manifest.Len(); got != 0 {
+	if got := tenantQ.manifestIndex().Len(); got != 0 {
 		t.Errorf("q/ instance loaded %d manifest entries from p/'s deltas, want 0", got)
 	}
 
@@ -177,7 +183,7 @@ func TestManifestPrefixConfinement(t *testing.T) {
 	// p/deeper/manifest/<writer>/ and be loadable by the next p/ instance
 	// configured identically.
 	tenantP := newManifestTenantServer(t, root, "p/", "writer-p", "deeper/manifest")
-	tenantP.manifestWriter.EnqueuePut("shared-bucket", "ledger/row-1", &manifest.Entry{
+	tenantP.manifestWriter().EnqueuePut("shared-bucket", "ledger/row-1", &manifest.Entry{
 		PlaintextSize: 10,
 		BlockSize:     65536,
 	}, nil)
@@ -193,7 +199,7 @@ func TestManifestPrefixConfinement(t *testing.T) {
 	}
 
 	againP := newManifestTenantServer(t, root, "p/", "writer-p-2", "deeper/manifest")
-	if got := againP.manifest.Len(); got != 1 {
+	if got := againP.manifestIndex().Len(); got != 1 {
 		t.Errorf("relocated p/ instance loaded %d manifest entries, want 1; store holds:%s",
 			got, listStoreKeys(t, root))
 	}

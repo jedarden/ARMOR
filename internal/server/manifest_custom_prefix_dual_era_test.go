@@ -410,12 +410,12 @@ func TestManifestCustomPrefixDualEraBucketRegression(t *testing.T) {
 		// cross-tenant contamination; keys are client-visible) — and the
 		// custom value changes nothing about that rule, because the
 		// custom tree does not exist yet.
-		if got := f.armed.manifest.Len(); got != 0 {
+		if got := f.armed.manifestIndex().Len(); got != 0 {
 			t.Errorf("armed instance loaded %d manifest entries from a store holding only root-era deltas, want 0; store holds:%s",
 				got, listStoreKeys(t, f.root))
 		}
 		for _, key := range []string{eraALegacy, eraAMulti} {
-			if _, ok := f.armed.manifest.Get(f.bucket, key); ok {
+			if _, ok := f.armed.manifestIndex().Get(f.bucket, key); ok {
 				t.Errorf("legacy key %s resolved through the armed manifest index — root-era state was ingested", key)
 			}
 		}
@@ -552,17 +552,17 @@ func TestManifestCustomPrefixDualEraBucketRegression(t *testing.T) {
 		// the custom tree — persistence of the relocation — and still zero
 		// ingestion of the root tree sitting beside it.
 		f.again = f.serverAt(customManifestTenant, "custom-era-b-2", customManifestRelocation)
-		if got := f.again.manifest.Len(); got != 2 {
+		if got := f.again.manifestIndex().Len(); got != 2 {
 			t.Errorf("restarted era-B instance loaded %d manifest entries, want exactly its own 2; store holds:%s",
 				got, listStoreKeys(t, f.root))
 		}
 		for _, key := range []string{eraBNew, eraBMulti} {
-			if _, ok := f.again.manifest.Get(f.bucket, key); !ok {
+			if _, ok := f.again.manifestIndex().Get(f.bucket, key); !ok {
 				t.Errorf("restarted era-B instance did not load %s from the custom tree", key)
 			}
 		}
 		for _, key := range []string{eraALegacy, eraAMulti} {
-			if _, ok := f.again.manifest.Get(f.bucket, key); ok {
+			if _, ok := f.again.manifestIndex().Get(f.bucket, key); ok {
 				t.Errorf("restarted era-B instance resolved legacy key %s — root deltas were ingested", key)
 			}
 		}
@@ -575,12 +575,12 @@ func TestManifestCustomPrefixDualEraBucketRegression(t *testing.T) {
 		// ingesting the relocated tree would be exactly the cross-config
 		// mixing the relocation rule exists to prevent.
 		f.sib = f.serverAt(customManifestTenant, "custom-era-sib", "")
-		if got := f.sib.manifest.Len(); got != 0 {
+		if got := f.sib.manifestIndex().Len(); got != 0 {
 			t.Errorf("default-prefix sibling loaded %d manifest entries from the relocated tree, want 0; store holds:%s",
 				got, listStoreKeys(t, f.root))
 		}
 		for _, key := range []string{eraBNew, eraBMulti, eraALegacy, eraAMulti} {
-			if _, ok := f.sib.manifest.Get(f.bucket, key); ok {
+			if _, ok := f.sib.manifestIndex().Get(f.bucket, key); ok {
 				t.Errorf("default-prefix sibling resolved %s — it must load neither the relocated tree nor the root one", key)
 			}
 		}

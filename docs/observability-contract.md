@@ -77,14 +77,17 @@ Backend ranged GETs and HEADs retry transient failures — 5xx (Cloudflare
 promised length — with bounded jittered backoff inside the per-request read
 deadline (`ARMOR_READ_RETRY_ATTEMPTS`/`_BACKOFF`/`_MAX_BACKOFF`). A block is
 never re-fetched once any of its bytes reached the client, and the manifest
-startup load retried under the same policy before falling back to an empty
-index. The fallback does not reset the delta sequence (plan §9.6): it lists
+cold load — which runs in the background after the listeners bind (plan
+§9.6), with index misses falling back to B2 meanwhile — retries under the
+same policy before falling back to an empty index. The fallback does not
+reset the delta sequence: it lists
 the current writer's shard — key names alone encode the sequence — and
 resumes publishing above that recovered floor with compaction paused while
 the index is incomplete; when even that list fails, delta publication stays
 off entirely (reads and writes continue through the B2 fallback) until a
 restart loads successfully. `/readyz` reports which mode the pod is in via
-`manifest_degraded` and the reason text.
+`manifest_status` (`loading`, `loaded`, `degraded`, `disabled`), the
+`manifest_degraded` flag, and the reason text.
 `armor_backend_retries_total{reason,outcome}` records each retry
 sequence: `reason` is the failure class (`http_5xx`, `http_429`,
 `connection_reset`, `truncated_body`, `network`); `outcome` is `success` (a
@@ -183,12 +186,17 @@ When the canary monitor is running, it is authoritative for ARMOR readiness:
 **small-object** status is not `healthy`. The response carries
 `ready`, `canary_age_s` (seconds since the small-object `last_check`),
 `multipart_canary_healthy` (boolean projection of `multipart_healthy_status`),
-`manifest_flushed_s`, and `reason`. Note that `multipart_canary_healthy` is
+`manifest_flushed_s`, `manifest_status`, and `reason`. Note that
+`multipart_canary_healthy` is
 **reported but not gating** in `/readyz` — a multipart regression is visible
 in the response body and in Prometheus (below) without failing the pod's
 readiness probe, because the multipart check's 1h cadence makes it a poor
 probe signal. With the canary disabled (`status=unknown` case), `/readyz`
-falls back to the manifest writer's flush recency.
+falls back to the manifest writer's flush recency; while the background
+manifest cold load is still running, `manifest_status` is `loading` and that
+fallback reports 503 ("Not ready - manifest cold load in progress") because
+no flush signal exists yet — S3 traffic is already being served through the
+B2 fallback.
 
 ## Canary metric series
 

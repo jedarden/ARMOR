@@ -469,7 +469,7 @@ func TestPrefixCutoverRollbackInsidePauseWindow(t *testing.T) {
 		// The armed index comes up empty (the root deltas are not its
 		// history) and the legacy keys 404 — the gap that triggers the
 		// rollback decision.
-		if got := armed.manifest.Len(); got != 0 {
+		if got := armed.manifestIndex().Len(); got != 0 {
 			t.Errorf("armed instance loaded %d manifest entries from a root-era store, want 0; store holds:%s",
 				got, listStoreKeys(t, f.root))
 		}
@@ -495,12 +495,12 @@ func TestPrefixCutoverRollbackInsidePauseWindow(t *testing.T) {
 
 		// The index is the root manifest, whole: both era-A entries
 		// resolve, and nothing from the composed namespace was ingested.
-		if got := rb.manifest.Len(); got != 2 {
+		if got := rb.manifestIndex().Len(); got != 2 {
 			t.Errorf("rolled-back index loaded %d entries, want the era-A 2; store holds:%s",
 				got, listStoreKeys(t, f.root))
 		}
 		for _, key := range []string{legacySingle, legacyMulti} {
-			if _, ok := rb.manifest.Get(f.bucket, key); !ok {
+			if _, ok := rb.manifestIndex().Get(f.bucket, key); !ok {
 				t.Errorf("rolled-back index lost era-A key %s", key)
 			}
 		}
@@ -562,11 +562,11 @@ func TestPrefixCutoverRollbackInsidePauseWindow(t *testing.T) {
 		// A restart loads the root tree: both era-A keys and the resumed
 		// one, still nothing composed.
 		again := f.serverAt("", "rb-resumed-2")
-		if got := again.manifest.Len(); got != 3 {
+		if got := again.manifestIndex().Len(); got != 3 {
 			t.Errorf("restarted index loaded %d entries, want 3; store holds:%s",
 				got, listStoreKeys(t, f.root))
 		}
-		if _, ok := again.manifest.Get(f.bucket, resumedKey); !ok {
+		if _, ok := again.manifestIndex().Get(f.bucket, resumedKey); !ok {
 			t.Errorf("restarted index missing the resumed key %s", resumedKey)
 		}
 	})
@@ -706,17 +706,17 @@ func TestPrefixCutoverRollbackAfterPostCutoverWrites(t *testing.T) {
 		// the root tree era A left behind. The composed deltas sit beside
 		// it describing two of the four serving keys — dead history, and
 		// provably nobody's index.
-		if got := rb.manifest.Len(); got != 2 {
+		if got := rb.manifestIndex().Len(); got != 2 {
 			t.Errorf("rolled-back index loaded %d entries, want exactly the era-A 2 (no composed merge); store holds:%s",
 				got, listStoreKeys(t, f.root))
 		}
 		for _, key := range []string{legacySingle, legacyMulti} {
-			if _, ok := rb.manifest.Get(f.bucket, key); !ok {
+			if _, ok := rb.manifestIndex().Get(f.bucket, key); !ok {
 				t.Errorf("rolled-back index lost era-A key %s", key)
 			}
 		}
 		for _, key := range []string{newSingle, newMulti} {
-			if _, ok := rb.manifest.Get(f.bucket, key); ok {
+			if _, ok := rb.manifestIndex().Get(f.bucket, key); ok {
 				t.Errorf("rolled-back index resolved %s from the abandoned composed deltas", key)
 			}
 		}
@@ -846,14 +846,14 @@ func TestPrefixCutoverRollbackAfterPostCutoverWrites(t *testing.T) {
 			"root manifest deltas for the resumed deployment")
 
 		again := f.serverAt("", "rb-resumed-2")
-		if got := again.manifest.Len(); got != 3 {
+		if got := again.manifestIndex().Len(); got != 3 {
 			t.Errorf("restarted index loaded %d entries, want 3 (era A's 2 plus the resumed write); store holds:%s",
 				got, listStoreKeys(t, f.root))
 		}
-		if _, ok := again.manifest.Get(f.bucket, newSingle); !ok {
+		if _, ok := again.manifestIndex().Get(f.bucket, newSingle); !ok {
 			t.Errorf("restarted index missing the resumed key %s", newSingle)
 		}
-		if _, ok := again.manifest.Get(f.bucket, newMulti); ok {
+		if _, ok := again.manifestIndex().Get(f.bucket, newMulti); ok {
 			t.Errorf("restarted index resolved %s — the composed delta was ingested after all", newMulti)
 		}
 	})

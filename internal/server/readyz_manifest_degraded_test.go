@@ -6,12 +6,18 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/jedarden/armor/internal/manifest"
 )
 
 // /readyz surfaces a startup manifest load that fell back to an empty index
 // after retries, without changing readiness by itself (armor-f1791426).
 func TestReadyzReportsManifestDegradation(t *testing.T) {
-	s := &Server{manifestDegradedReason: "manifest discovery list: cloudflare returned status 522"}
+	s := &Server{manifestSys: resolvedManifestSystem(manifestState{
+		status:         manifestDegraded,
+		idx:            manifest.New(),
+		degradedReason: "manifest discovery list: cloudflare returned status 522",
+	})}
 	rec := httptest.NewRecorder()
 	s.readyz(rec, httptest.NewRequest(http.MethodGet, "/readyz", nil))
 

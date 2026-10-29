@@ -29,8 +29,8 @@ func TestManifestSnapshotPlacesUnderTenantPrefix(t *testing.T) {
 	// (what the compactor will snapshot) plus EnqueuePut for persistence —
 	// the writer is a persistence queue and never touches the index itself.
 	entry := &manifest.Entry{PlaintextSize: 10, BlockSize: 65536}
-	tenantP.manifest.Put("shared-bucket", "ledger/row-1", entry)
-	tenantP.manifestWriter.EnqueuePut("shared-bucket", "ledger/row-1", entry, nil)
+	tenantP.manifestIndex().Put("shared-bucket", "ledger/row-1", entry)
+	tenantP.manifestWriter().EnqueuePut("shared-bucket", "ledger/row-1", entry, nil)
 	flushTenantManifest(t, tenantP)
 
 	snapshotPath := filepath.Join(root, "shared-bucket", "p", ".armor", "manifest", "writer-s", "snapshot.json.gz")
@@ -53,7 +53,7 @@ func TestManifestSnapshotPlacesUnderTenantPrefix(t *testing.T) {
 
 	// A second p/ instance must load the entry from the snapshot alone.
 	againP := newManifestTenantServer(t, root, "p/", "writer-s-2", "")
-	if got := againP.manifest.Len(); got != 1 {
+	if got := againP.manifestIndex().Len(); got != 1 {
 		t.Errorf("second p/ instance loaded %d manifest entries, want 1 (from the snapshot); store holds:%s",
 			got, listStoreKeys(t, root))
 	}

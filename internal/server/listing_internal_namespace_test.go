@@ -27,6 +27,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 
 	"github.com/jedarden/armor/internal/config"
+	"time"
 )
 
 // newListingTestServer builds a server over a fresh filesystem store with the
@@ -103,7 +104,12 @@ func newListingTestServer(t *testing.T, root, tenantPrefix, writerID, accessKey,
 	if err != nil {
 		t.Fatalf("New(): %v", err)
 	}
-	if srv.manifestWriter == nil {
+	// The cold load runs in the background (plan §9.6); settle it before
+	// asserting on the writer.
+	if status := srv.WaitForManifestLoad(30 * time.Second); status != manifestLoaded {
+		t.Fatalf("manifest load settled as %q, want %q", status, manifestLoaded)
+	}
+	if srv.manifestWriter() == nil {
 		t.Fatal("manifest writer is nil — internal objects would never be written")
 	}
 

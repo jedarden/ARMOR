@@ -1706,7 +1706,7 @@ GET, HEAD and LIST (LIST: cap the per-key HEAD fan-out at 16, filter
 `.armor-manifest` companions, skip `<prefix>.armor/` with `StartAfter`).
 Target: ~3 round trips before first byte.
 
-#### 9.6 Listener first, loader fixed (P1)
+#### 9.6 Listener first, loader fixed (P1; part tracked: `armor-3b7595b6`)
 
 Findings: the manifest cold load runs before the listener binds (bounded
 480 s). iad-ci hit that bound on all 19 starts since 09-18 and then served

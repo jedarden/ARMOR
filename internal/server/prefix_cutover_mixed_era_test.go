@@ -631,12 +631,12 @@ func TestPrefixCutoverMixedEraBucketRegression(t *testing.T) {
 		f.armed = f.serverAt(mixedEraPrefix, "era-armed")
 		f.armedAPI = f.apiFor(f.armed)
 
-		if got := f.armed.manifest.Len(); got != 0 {
+		if got := f.armed.manifestIndex().Len(); got != 0 {
 			t.Errorf("armed instance loaded %d manifest entries from a store holding only root-era deltas, want 0; store holds:%s",
 				got, listStoreKeys(t, f.root))
 		}
 		for _, key := range []string{legacySingle, legacyMulti} {
-			if _, ok := f.armed.manifest.Get(f.bucket, key); ok {
+			if _, ok := f.armed.manifestIndex().Get(f.bucket, key); ok {
 				t.Errorf("legacy key %s resolved through the armed manifest index — root-era state was ingested", key)
 			}
 		}
@@ -891,12 +891,12 @@ func TestPrefixCutoverMixedEraBucketRegression(t *testing.T) {
 		// fine — the manifest is an optimization, not the source of truth,
 		// and the root deltas are nobody's index now.
 		for _, key := range []string{newSingle, newMulti} {
-			if _, ok := f.armed.manifest.Get(f.bucket, key); !ok {
+			if _, ok := f.armed.manifestIndex().Get(f.bucket, key); !ok {
 				t.Errorf("armed index missing its own post-cutover key %s", key)
 			}
 		}
 		for _, key := range []string{legacySingle, legacyMulti} {
-			if _, ok := f.armed.manifest.Get(f.bucket, key); ok {
+			if _, ok := f.armed.manifestIndex().Get(f.bucket, key); ok {
 				t.Errorf("legacy key %s entered the armed manifest index", key)
 			}
 		}
@@ -905,17 +905,17 @@ func TestPrefixCutoverMixedEraBucketRegression(t *testing.T) {
 		// persistence of the composed tree, and still zero ingestion of the
 		// root tree sitting beside it.
 		again := f.serverAt(mixedEraPrefix, "era-armed-2")
-		if got := again.manifest.Len(); got != 2 {
+		if got := again.manifestIndex().Len(); got != 2 {
 			t.Errorf("restarted armed instance loaded %d manifest entries, want exactly its own 2; store holds:%s",
 				got, listStoreKeys(t, f.root))
 		}
 		for _, key := range []string{newSingle, newMulti} {
-			if _, ok := again.manifest.Get(f.bucket, key); !ok {
+			if _, ok := again.manifestIndex().Get(f.bucket, key); !ok {
 				t.Errorf("restarted armed instance did not load %s from the composed deltas", key)
 			}
 		}
 		for _, key := range []string{legacySingle, legacyMulti} {
-			if _, ok := again.manifest.Get(f.bucket, key); ok {
+			if _, ok := again.manifestIndex().Get(f.bucket, key); ok {
 				t.Errorf("restarted armed instance resolved legacy key %s — root deltas were ingested", key)
 			}
 		}
@@ -1001,7 +1001,7 @@ func TestPrefixCutoverMixedEraBucketRegression(t *testing.T) {
 		q := f.serverAt("q/", "era-q")
 		qAPI := f.apiFor(q)
 
-		if got := q.manifest.Len(); got != 0 {
+		if got := q.manifestIndex().Len(); got != 0 {
 			t.Errorf("q/ instance loaded %d manifest entries from p/'s deltas, want 0", got)
 		}
 		for _, key := range []string{legacySingle, legacyMulti, newSingle, newMulti} {

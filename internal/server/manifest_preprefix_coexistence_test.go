@@ -76,36 +76,36 @@ func TestPrefixedLoadIgnoresPrePrefixRootManifest(t *testing.T) {
 	// A p/ instance starting cold: the root delta exists, the composed
 	// location does not, so the index must come up empty.
 	tenantP := newManifestTenantServer(t, root, "p/", "writer-p", "")
-	if got := tenantP.manifest.Len(); got != 0 {
+	if got := tenantP.manifestIndex().Len(); got != 0 {
 		t.Errorf("prefixed instance loaded %d entries from a store holding only a root legacy delta, want 0; store holds:%s",
 			got, listStoreKeys(t, root))
 	}
-	if _, ok := tenantP.manifest.Get(bucket, legacyKey); ok {
+	if _, ok := tenantP.manifestIndex().Get(bucket, legacyKey); ok {
 		t.Errorf("pre-prefix root delta leaked into the prefixed index: %s is resolvable", legacyKey)
 	}
 
 	// The same instance records an ordinary upload and flushes it as a delta
 	// under p/.armor/manifest/. A second p/ instance must load exactly that —
 	// the legacy root object sitting next to it changes nothing.
-	tenantP.manifestWriter.EnqueuePut(bucket, ownKey, &manifest.Entry{
+	tenantP.manifestWriter().EnqueuePut(bucket, ownKey, &manifest.Entry{
 		PlaintextSize: ownSize,
 		BlockSize:     65536,
 	}, nil)
 	flushTenantManifest(t, tenantP)
 
 	againP := newManifestTenantServer(t, root, "p/", "writer-p-2", "")
-	if got := againP.manifest.Len(); got != 1 {
+	if got := againP.manifestIndex().Len(); got != 1 {
 		t.Errorf("second p/ instance loaded %d entries, want exactly its own; store holds:%s",
 			got, listStoreKeys(t, root))
 	}
-	e, ok := againP.manifest.Get(bucket, ownKey)
+	e, ok := againP.manifestIndex().Get(bucket, ownKey)
 	if !ok {
 		t.Fatalf("second p/ instance did not load its own delta for %s", ownKey)
 	}
 	if e.PlaintextSize != ownSize {
 		t.Errorf("loaded %s with plaintext size %d, want %d — a root delta resolved this key", ownKey, e.PlaintextSize, ownSize)
 	}
-	if _, ok := againP.manifest.Get(bucket, legacyKey); ok {
+	if _, ok := againP.manifestIndex().Get(bucket, legacyKey); ok {
 		t.Errorf("pre-prefix root delta leaked into the second prefixed instance: %s is resolvable", legacyKey)
 	}
 }
@@ -125,7 +125,7 @@ func TestUnprefixedManifestStaysAtBucketRoot(t *testing.T) {
 	root := t.TempDir()
 
 	legacy := newManifestTenantServer(t, root, "", "legacy-writer", "")
-	legacy.manifestWriter.EnqueuePut(bucket, ownKey, &manifest.Entry{
+	legacy.manifestWriter().EnqueuePut(bucket, ownKey, &manifest.Entry{
 		PlaintextSize: ownSize,
 		BlockSize:     65536,
 	}, nil)
@@ -143,11 +143,11 @@ func TestUnprefixedManifestStaysAtBucketRoot(t *testing.T) {
 	}
 
 	restarted := newManifestTenantServer(t, root, "", "legacy-writer-2", "")
-	if got := restarted.manifest.Len(); got != 1 {
+	if got := restarted.manifestIndex().Len(); got != 1 {
 		t.Errorf("restarted unprefixed instance loaded %d entries, want 1; store holds:%s",
 			got, listStoreKeys(t, root))
 	}
-	if _, ok := restarted.manifest.Get(bucket, ownKey); !ok {
+	if _, ok := restarted.manifestIndex().Get(bucket, ownKey); !ok {
 		t.Errorf("restarted unprefixed instance did not load %s from the root manifest", ownKey)
 	}
 }
