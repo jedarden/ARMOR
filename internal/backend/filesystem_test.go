@@ -3,12 +3,40 @@ package backend
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"strings"
 	"testing"
 )
+
+func TestIsMissingInFlightPutTemp(t *testing.T) {
+	notFound := &os.PathError{Op: "lstat", Path: "/bucket/.armor-put-123.tmp", Err: os.ErrNotExist}
+	wrappedNotFound := fmt.Errorf("walk entry: %w", notFound)
+	otherErr := errors.New("permission denied")
+
+	tests := []struct {
+		name string
+		path string
+		err  error
+		want bool
+	}{
+		{name: "lstat missing staging file", path: "/bucket/.armor-put-123.tmp", err: notFound, want: true},
+		{name: "wrapped lstat missing staging file", path: "/bucket/.armor-put-123.tmp", err: wrappedNotFound, want: true},
+		{name: "missing non-staging file", path: "/bucket/object", err: notFound, want: false},
+		{name: "missing similar suffix", path: "/bucket/.armor-put-123.tmp.backup", err: notFound, want: false},
+		{name: "non-missing staging file", path: "/bucket/.armor-put-123.tmp", err: otherErr, want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isMissingInFlightPutTemp(tt.path, tt.err); got != tt.want {
+				t.Fatalf("isMissingInFlightPutTemp(%q, %v) = %v, want %v", tt.path, tt.err, got, tt.want)
+			}
+		})
+	}
+}
 
 // TestFSBackend_PutGet tests basic Put and Get operations.
 func TestFSBackend_PutGet(t *testing.T) {

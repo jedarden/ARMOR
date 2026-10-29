@@ -351,6 +351,16 @@ func (fs *FSBackend) ListRaw(ctx context.Context, bucket, prefix, delimiter, con
 	return fs.list(ctx, bucket, prefix, delimiter, continuationToken, maxKeys, true)
 }
 
+// isMissingInFlightPutTemp reports whether a walk error is the expected
+// result of a staging file being renamed or removed while the directory is
+// being listed. The name check is intentionally narrow so ListRaw continues
+// to surface missing objects and metadata for every other path.
+func isMissingInFlightPutTemp(path string, err error) bool {
+	name := filepath.Base(path)
+	return errors.Is(err, os.ErrNotExist) &&
+		strings.HasPrefix(name, ".armor-put-") && strings.HasSuffix(name, ".tmp")
+}
+
 func (fs *FSBackend) list(ctx context.Context, bucket, prefix, delimiter, continuationToken string, maxKeys int, includeInternal bool) (*ListResult, error) {
 	bucketPath := fs.bucketPath(bucket)
 
@@ -372,6 +382,9 @@ func (fs *FSBackend) list(ctx context.Context, bucket, prefix, delimiter, contin
 
 	err := filepath.WalkDir(bucketPath, func(path string, entry os.DirEntry, err error) error {
 		if err != nil {
+			if isMissingInFlightPutTemp(path, err) {
+				return nil
+			}
 			return err
 		}
 		if err := ctx.Err(); err != nil {
@@ -449,6 +462,9 @@ func (fs *FSBackend) list(ctx context.Context, bucket, prefix, delimiter, contin
 			// Object exists but metadata is missing - create minimal info
 			info, err := entry.Info()
 			if err != nil {
+				if isMissingInFlightPutTemp(path, err) {
+					return nil
+				}
 				return err
 			}
 			objInfo := ObjectInfo{
