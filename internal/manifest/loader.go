@@ -2,7 +2,9 @@ package manifest
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"os"
 	"sort"
 	"strings"
 )
@@ -44,6 +46,16 @@ func Load(
 	// Step 1: Discover all manifest objects under "{prefix}/".
 	allKeys, err := listAllKeys(ctx, prefix+"/", list)
 	if err != nil {
+		// A store that does not exist yet holds nothing to discover: the
+		// filesystem backend fails the bucket walk with ENOENT where B2
+		// simply lists an empty bucket. That is the documented first-startup
+		// case, not a load failure — and crucially it is decided here, on
+		// the discovery error only, so a delta that vanishes between list
+		// and fetch (ENOENT on a fetch) still fails the load and lands in
+		// the caller's sequence-floor fallback.
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
 		return fmt.Errorf("manifest discovery list: %w", err)
 	}
 	if len(allKeys) == 0 {
@@ -72,6 +84,34 @@ func Load(
 	}
 
 	return nil
+}
+
+// RecoverSeqFloor lists only the current writer's shard and returns the
+// highest persisted delta sequence number (0 when the shard holds no deltas).
+// It is the cold-load failure fallback: delta key names alone encode the
+// sequence, so a successful list recovers a safe high-water mark for the
+// writer without fetching a single delta body. A returned error means no
+// floor could be established and the caller must not publish deltas —
+// restarting the sequence at 1 would overwrite persisted
+// delta-0000000001.jsonl and friends (plan §9.6).
+func RecoverSeqFloor(ctx context.Context, prefix, writerID string, list Lister) (uint64, error) {
+	allKeys, err := listAllKeys(ctx, WriterPrefix(prefix, writerID), list)
+	if err != nil {
+		// Same empty-store classification as Load: no store means no
+		// persisted delta anywhere, so 0 is a safe floor and the writer may
+		// publish — this is the first-startup case, not an unsafe recovery.
+		if errors.Is(err, os.ErrNotExist) {
+			return 0, nil
+		}
+		return 0, fmt.Errorf("seq-floor discovery list: %w", err)
+	}
+	var floor uint64
+	for _, key := range allKeys {
+		if seq, ok := DeltaSeqFromKey(prefix, writerID, key); ok && seq > floor {
+			floor = seq
+		}
+	}
+	return floor, nil
 }
 
 // listAllKeys pages through all object keys under prefix using list.

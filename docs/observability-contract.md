@@ -78,7 +78,14 @@ promised length — with bounded jittered backoff inside the per-request read
 deadline (`ARMOR_READ_RETRY_ATTEMPTS`/`_BACKOFF`/`_MAX_BACKOFF`). A block is
 never re-fetched once any of its bytes reached the client, and the manifest
 startup load retried under the same policy before falling back to an empty
-index. `armor_backend_retries_total{reason,outcome}` records each retry
+index. The fallback does not reset the delta sequence (plan §9.6): it lists
+the current writer's shard — key names alone encode the sequence — and
+resumes publishing above that recovered floor with compaction paused while
+the index is incomplete; when even that list fails, delta publication stays
+off entirely (reads and writes continue through the B2 fallback) until a
+restart loads successfully. `/readyz` reports which mode the pod is in via
+`manifest_degraded` and the reason text.
+`armor_backend_retries_total{reason,outcome}` records each retry
 sequence: `reason` is the failure class (`http_5xx`, `http_429`,
 `connection_reset`, `truncated_body`, `network`); `outcome` is `success` (a
 later attempt saved the read), `exhausted` (the bound was reached and the

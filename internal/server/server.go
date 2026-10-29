@@ -91,6 +91,13 @@ type Server struct {
 	// and surfaced by /readyz (armor-f1791426).
 	manifestDegradedReason string
 
+	// manifestDegradedNote names the degraded mode the pod is in — deltas
+	// published above a recovered sequence floor with compaction paused, or
+	// delta publication paused outright when no floor could be recovered
+	// (armor-b1745d47). "" when the load succeeded; noteManifestDegraded
+	// falls back to a generic note when only the reason is set.
+	manifestDegradedNote string
+
 	// Metrics and request tracking
 	metrics        *metrics.Metrics
 	requestTracker *metrics.RequestTracker
@@ -281,153 +288,10 @@ func New(cfg *config.Config) (*Server, error) {
 	dash := dashboard.NewWithAuth(primaryBackend, cfg.Bucket, metrics.DefaultMetrics,
 		cfg.DashboardUser, cfg.DashboardPass, cfg.DashboardToken, dashboardCred, serverBaseURL, cfg.PresignEnabled).WithKeyPrefix(cfg.Prefix)
 
-	// Load manifest index from B2 (startup load).
-	// The manifest is a performance optimisation — errors are logged as warnings
-	// and do not prevent startup.
-	var manifestIdx *manifest.Index
-	// Set when the startup load fails even after retries and the pod falls
-	// back to an empty index (armor-f1791426); surfaced by /readyz.
-	var manifestLoadDegraded string
-	if cfg.ManifestEnabled {
-		manifestIdx = manifest.New()
-		// ListRaw bypasses the .armor/ filter so manifest keys are discoverable.
-		lister := func(ctx context.Context, prefix, token string) ([]string, string, error) {
-			result, lerr := primaryBackend.ListRaw(ctx, cfg.Bucket, prefix, "", token, 1000)
-			if lerr != nil {
-				return nil, "", lerr
-			}
-			keys := make([]string, len(result.Objects))
-			for i, obj := range result.Objects {
-				keys[i] = obj.Key
-			}
-			return keys, result.NextToken, nil
-		}
-		// Fetch snapshot and delta blobs via Cloudflare for free egress and edge
-		// caching. Fall back to direct B2 if no Cloudflare domain is configured.
-		fetcher := func(ctx context.Context, key string) ([]byte, error) {
-			var body io.ReadCloser
-			var ferr error
-			if cfg.CFDomain != "" {
-				body, _, ferr = primaryBackend.Get(ctx, cfg.Bucket, key)
-			} else {
-				body, _, ferr = primaryBackend.GetDirect(ctx, cfg.Bucket, key)
-			}
-			if ferr != nil {
-				return nil, ferr
-			}
-			defer body.Close()
-			return io.ReadAll(body)
-		}
-		loadStart := time.Now()
-		// Progress marker before the load: until the listener binds, pod logs
-		// are the only window into startup, and a load stuck on slow backend
-		// fetches previously produced silence that was indistinguishable from
-		// a hung process.
-		logger.WithFields(map[string]interface{}{
-			"timeout": time.Duration(cfg.ManifestLoadTimeout) * time.Second,
-		}).Info("manifest startup load starting")
-		// Bound the load so it cannot hold startup hostage: the load runs
-		// before the listener binds, so a slow cold load (B2 client timeout is
-		// 30 minutes per request) can outlast the deployment's startupProbe
-		// budget and crash-loop the pod. The load is a performance
-		// optimisation — timing out lands in the same non-fatal fallback as a
-		// load error below, and the async writer keeps persisting new deltas.
-		var loadCtx context.Context
-		var cancelLoad context.CancelFunc
-		if cfg.ManifestLoadTimeout > 0 {
-			loadCtx, cancelLoad = context.WithTimeout(context.Background(), time.Duration(cfg.ManifestLoadTimeout)*time.Second)
-		} else {
-			loadCtx, cancelLoad = context.WithCancel(context.Background())
-		}
-		defer cancelLoad()
-		// Retry the whole load under the same bounded read-retry policy as
-		// backend fetches (armor-f1791426): a transient Cloudflare 52x during
-		// startup previously landed the pod straight in the empty-index
-		// fallback, where it stays until restart. Each attempt loads into a
-		// fresh index so a failed attempt cannot half-fill the merged one.
-		if _, loadErr := backend.DoWithRetry(loadCtx, backend.RetryPolicy{
-			Attempts:   cfg.ReadRetryAttempts,
-			Backoff:    cfg.ReadRetryBackoff,
-			MaxBackoff: cfg.ReadRetryMaxBackoff,
-		}, func() error {
-			fresh := manifest.New()
-			if err := manifest.Load(loadCtx, fresh, cfg.ManifestPrefix, cfg.WriterID, lister, fetcher); err != nil {
-				return err
-			}
-			manifestIdx = fresh
-			return nil
-		}); loadErr != nil {
-			logger.WithFields(map[string]interface{}{
-				"error":    loadErr.Error(),
-				"duration": time.Since(loadStart).String(),
-			}).Warn("manifest startup load failed — continuing with empty manifest index")
-			manifestIdx = manifest.New() // reset to empty on error
-			manifestLoadDegraded = loadErr.Error()
-		} else {
-			logger.WithFields(map[string]interface{}{
-				"entries":  manifestIdx.Len(),
-				"seq":      manifestIdx.Seq(),
-				"duration": time.Since(loadStart).String(),
-			}).Info("manifest index loaded")
-		}
-	}
-
-	// Create and start the manifest writer (async delta persistence to B2).
-	// Uploads go direct to B2 (free ingress); no Cloudflare path needed here.
-	var manifestWriter *manifest.Writer
-	var manifestCompactor *manifest.Compactor
-	if manifestIdx != nil {
-		uploader := func(ctx context.Context, key string, data []byte) error {
-			return primaryBackend.Put(ctx, cfg.Bucket, key, bytes.NewReader(data), int64(len(data)), nil)
-		}
-		// Chain-head writer uploads .armor/chain-head/<writer> after each batch
-		chainHeadWriter := func(ctx context.Context, key string, data []byte) error {
-			return primaryBackend.Put(ctx, cfg.Bucket, key, bytes.NewReader(data), int64(len(data)), nil)
-		}
-		manifestWriter = manifest.NewWriterWithChain(manifestIdx, cfg.ManifestPrefix, cfg.WriterID, uploader, chainHeadWriter, 0)
-
-		// Create compactor that lists and batch-deletes via the B2 backend.
-		listerForCompactor := func(ctx context.Context, prefix, token string) ([]string, string, error) {
-			result, lerr := primaryBackend.ListRaw(ctx, cfg.Bucket, prefix, "", token, 1000)
-			if lerr != nil {
-				return nil, "", lerr
-			}
-			keys := make([]string, len(result.Objects))
-			for i, obj := range result.Objects {
-				keys[i] = obj.Key
-			}
-			return keys, result.NextToken, nil
-		}
-		deleter := func(ctx context.Context, keys []string) error {
-			return primaryBackend.DeleteObjects(ctx, cfg.Bucket, keys)
-		}
-		compactionInterval := time.Duration(cfg.ManifestCompactionInterval) * time.Second
-
-		// Create a logger writer adapter that bridges the structured logger to
-		// the standard library logger interface expected by the compactor.
-		loggerWriter := &loggerWriter{logger: logger}
-		compactorLogger := log.New(loggerWriter, "[manifest-compactor] ", log.LstdFlags|log.Lmsgprefix)
-
-		manifestCompactor = manifest.NewCompactor(
-			manifestIdx,
-			cfg.ManifestPrefix,
-			cfg.WriterID,
-			uploader,
-			listerForCompactor,
-			deleter,
-			compactionInterval,
-			cfg.ManifestCompactionThreshold,
-			compactorLogger,
-			metrics.DefaultMetrics,
-		)
-
-		// Wire writer → compactor: after each delta flush, notify compactor.
-		manifestWriter.SetOnFlush(manifestCompactor.NotifyDelta)
-
-		manifestWriter.Start(context.Background())
-		manifestCompactor.Start(context.Background())
-		logger.Info("manifest writer and compactor started")
-	}
+	// Load the manifest index from B2 and start the delta writer/compactor.
+	// The manifest is a performance optimisation — load errors are logged as
+	// warnings and do not prevent startup (see startManifestSystem).
+	mstart := startManifestSystem(cfg, logger, primaryBackend)
 
 	// Create and start the replication queue if secondary backend is configured (ADR-006)
 	var replicationQueue *replication.ReplicationQueue
@@ -505,16 +369,237 @@ func New(cfg *config.Config) (*Server, error) {
 		presigner:              presigner,
 		b2keys:                 b2keysClient,
 		dashboard:              dash,
-		manifest:               manifestIdx,
-		manifestWriter:         manifestWriter,
-		manifestCompactor:      manifestCompactor,
+		manifest:               mstart.idx,
+		manifestWriter:         mstart.writer,
+		manifestCompactor:      mstart.compactor,
 		replicationQueue:       replicationQueue,
 		authFileWatcher:        watcher,
 		metrics:                metrics.DefaultMetrics,
-		manifestDegradedReason: manifestLoadDegraded,
+		manifestDegradedReason: mstart.degradedReason,
+		manifestDegradedNote:   mstart.degradedNote,
 		requestTracker:         metrics.DefaultRequestTracker,
 		logger:                 logger,
 	}, nil
+}
+
+// manifestStartup is the outcome of the manifest startup sequence in
+// startManifestSystem.
+type manifestStartup struct {
+	// idx is the in-memory manifest index; nil only when the manifest is
+	// disabled (ARMOR_MANIFEST_ENABLED=false).
+	idx *manifest.Index
+	// writer asynchronously persists deltas; nil when the manifest is
+	// disabled or when delta publication is unsafe (no sequence floor).
+	writer *manifest.Writer
+	// compactor periodically folds deltas into a snapshot; nil when the
+	// manifest is disabled, when publication is unsafe, or when the startup
+	// index is incomplete (a compaction pass on an index that missed the
+	// persisted shards would overwrite the good snapshot and delete deltas
+	// whose entries were never loaded).
+	compactor *manifest.Compactor
+	// degradedReason records the cold-load error when the pod fell back
+	// (armor-f1791426); "" when the load succeeded.
+	degradedReason string
+	// degradedNote is the /readyz note describing which degraded mode the
+	// pod is in; "" when the load succeeded.
+	degradedNote string
+}
+
+// startManifestSystem performs the manifest startup sequence against
+// primaryBackend: load the index from B2 (with retries), then start the
+// delta writer and compactor as the load outcome allows.
+//
+// The manifest is a performance optimisation, so a failed load never prevents
+// startup — but the fallback must not reset the delta sequence (plan §9.6).
+// An index that loads empty and restarts its writer at sequence 1 would PUT
+// delta-0000000001.jsonl over a persisted delta of the same name after a
+// transient load failure. The fallback therefore lists the current writer's
+// shard — key names alone encode the sequence, so a list recovers a safe
+// high-water mark without fetching a single delta body — and resumes
+// publishing above that floor with compaction paused (the index content is
+// still incomplete until a successful load). When even that list fails, no
+// floor exists: delta publication stays off entirely and reads/writes go
+// through the existing B2 fallback until a restart loads successfully.
+func startManifestSystem(cfg *config.Config, logger *logging.Logger, primaryBackend backend.Backend) *manifestStartup {
+	s := &manifestStartup{}
+	if !cfg.ManifestEnabled {
+		return s
+	}
+	s.idx = manifest.New()
+	// ListRaw bypasses the .armor/ filter so manifest keys are discoverable.
+	lister := func(ctx context.Context, prefix, token string) ([]string, string, error) {
+		result, lerr := primaryBackend.ListRaw(ctx, cfg.Bucket, prefix, "", token, 1000)
+		if lerr != nil {
+			return nil, "", lerr
+		}
+		keys := make([]string, len(result.Objects))
+		for i, obj := range result.Objects {
+			keys[i] = obj.Key
+		}
+		return keys, result.NextToken, nil
+	}
+	// Fetch snapshot and delta blobs via Cloudflare for free egress and edge
+	// caching. Fall back to direct B2 if no Cloudflare domain is configured.
+	fetcher := func(ctx context.Context, key string) ([]byte, error) {
+		var body io.ReadCloser
+		var ferr error
+		if cfg.CFDomain != "" {
+			body, _, ferr = primaryBackend.Get(ctx, cfg.Bucket, key)
+		} else {
+			body, _, ferr = primaryBackend.GetDirect(ctx, cfg.Bucket, key)
+		}
+		if ferr != nil {
+			return nil, ferr
+		}
+		defer body.Close()
+		return io.ReadAll(body)
+	}
+	loadStart := time.Now()
+	// Progress marker before the load: until the listener binds, pod logs
+	// are the only window into startup, and a load stuck on slow backend
+	// fetches previously produced silence that was indistinguishable from
+	// a hung process.
+	logger.WithFields(map[string]interface{}{
+		"timeout": time.Duration(cfg.ManifestLoadTimeout) * time.Second,
+	}).Info("manifest startup load starting")
+	// Bound the load so it cannot hold startup hostage: the load runs
+	// before the listener binds, so a slow cold load (B2 client timeout is
+	// 30 minutes per request) can outlast the deployment's startupProbe
+	// budget and crash-loop the pod. The load is a performance
+	// optimisation — timing out lands in the same non-fatal fallback as a
+	// load error below, and the async writer keeps persisting new deltas.
+	loadCtx, cancelLoad := manifestLoadContext(cfg)
+	defer cancelLoad()
+	// Retry the whole load under the same bounded read-retry policy as
+	// backend fetches (armor-f1791426): a transient Cloudflare 52x during
+	// startup previously landed the pod straight in the empty-index
+	// fallback, where it stays until restart. Each attempt loads into a
+	// fresh index so a failed attempt cannot half-fill the merged one.
+	retryPolicy := backend.RetryPolicy{
+		Attempts:   cfg.ReadRetryAttempts,
+		Backoff:    cfg.ReadRetryBackoff,
+		MaxBackoff: cfg.ReadRetryMaxBackoff,
+	}
+	loaded := false
+	if _, loadErr := backend.DoWithRetry(loadCtx, retryPolicy, func() error {
+		fresh := manifest.New()
+		if err := manifest.Load(loadCtx, fresh, cfg.ManifestPrefix, cfg.WriterID, lister, fetcher); err != nil {
+			return err
+		}
+		s.idx = fresh
+		return nil
+	}); loadErr != nil {
+		logger.WithFields(map[string]interface{}{
+			"error":    loadErr.Error(),
+			"duration": time.Since(loadStart).String(),
+		}).Warn("manifest startup load failed — recovering delta sequence floor")
+		s.degradedReason = loadErr.Error()
+		// Fresh budget: a timeout that killed the load must not also kill
+		// the floor recovery, and the recovery list is one cheap call.
+		floorCtx, cancelFloor := manifestLoadContext(cfg)
+		defer cancelFloor()
+		var floor uint64
+		if _, floorErr := backend.DoWithRetry(floorCtx, retryPolicy, func() error {
+			f, err := manifest.RecoverSeqFloor(floorCtx, cfg.ManifestPrefix, cfg.WriterID, lister)
+			floor = f
+			return err
+		}); floorErr != nil {
+			// No floor: any delta this pod wrote could overwrite a
+			// persisted one. Publication stays off; reads and writes go
+			// through the B2 fallback until a restart loads successfully.
+			logger.WithFields(map[string]interface{}{
+				"error": floorErr.Error(),
+			}).Warn("delta sequence floor unrecoverable — manifest delta publication paused")
+			s.degradedNote = "manifest startup load failed after retries — serving with an empty index; delta sequence floor unrecoverable, delta publication paused"
+			return s
+		}
+		s.idx.SetSeq(floor)
+		s.degradedNote = fmt.Sprintf("manifest startup load failed after retries — serving with an empty index; delta sequence recovered at %d, compaction paused", floor)
+		logger.WithFields(map[string]interface{}{
+			"seq_floor": floor,
+		}).Info("delta sequence floor recovered — publishing deltas above it with compaction paused")
+	} else {
+		loaded = true
+		logger.WithFields(map[string]interface{}{
+			"entries":  s.idx.Len(),
+			"seq":      s.idx.Seq(),
+			"duration": time.Since(loadStart).String(),
+		}).Info("manifest index loaded")
+	}
+
+	// Create and start the manifest writer (async delta persistence to B2).
+	// Uploads go direct to B2 (free ingress); no Cloudflare path needed here.
+	uploader := func(ctx context.Context, key string, data []byte) error {
+		return primaryBackend.Put(ctx, cfg.Bucket, key, bytes.NewReader(data), int64(len(data)), nil)
+	}
+	// Chain-head writer uploads .armor/chain-head/<writer> after each batch
+	chainHeadWriter := func(ctx context.Context, key string, data []byte) error {
+		return primaryBackend.Put(ctx, cfg.Bucket, key, bytes.NewReader(data), int64(len(data)), nil)
+	}
+	s.writer = manifest.NewWriterWithChain(s.idx, cfg.ManifestPrefix, cfg.WriterID, uploader, chainHeadWriter, 0)
+
+	if loaded {
+		// Compactor lists and batch-deletes via the B2 backend. It runs only
+		// on a fully loaded index: compacting the empty fallback index would
+		// upload a snapshot missing every pre-failure entry and then delete
+		// the deltas that carried them.
+		listerForCompactor := func(ctx context.Context, prefix, token string) ([]string, string, error) {
+			result, lerr := primaryBackend.ListRaw(ctx, cfg.Bucket, prefix, "", token, 1000)
+			if lerr != nil {
+				return nil, "", lerr
+			}
+			keys := make([]string, len(result.Objects))
+			for i, obj := range result.Objects {
+				keys[i] = obj.Key
+			}
+			return keys, result.NextToken, nil
+		}
+		deleter := func(ctx context.Context, keys []string) error {
+			return primaryBackend.DeleteObjects(ctx, cfg.Bucket, keys)
+		}
+		compactionInterval := time.Duration(cfg.ManifestCompactionInterval) * time.Second
+
+		// Create a logger writer adapter that bridges the structured logger to
+		// the standard library logger interface expected by the compactor.
+		loggerWriter := &loggerWriter{logger: logger}
+		compactorLogger := log.New(loggerWriter, "[manifest-compactor] ", log.LstdFlags|log.Lmsgprefix)
+
+		s.compactor = manifest.NewCompactor(
+			s.idx,
+			cfg.ManifestPrefix,
+			cfg.WriterID,
+			uploader,
+			listerForCompactor,
+			deleter,
+			compactionInterval,
+			cfg.ManifestCompactionThreshold,
+			compactorLogger,
+			metrics.DefaultMetrics,
+		)
+
+		// Wire writer → compactor: after each delta flush, notify compactor.
+		s.writer.SetOnFlush(s.compactor.NotifyDelta)
+	}
+
+	s.writer.Start(context.Background())
+	if s.compactor != nil {
+		s.compactor.Start(context.Background())
+	}
+	if loaded {
+		logger.Info("manifest writer and compactor started")
+	} else {
+		logger.Info("manifest writer started (compaction paused — startup index incomplete)")
+	}
+	return s
+}
+
+// manifestLoadContext returns the context for one startup manifest pass,
+// bounded by ARMOR_MANIFEST_LOAD_TIMEOUT (0 = unbounded).
+func manifestLoadContext(cfg *config.Config) (context.Context, context.CancelFunc) {
+	if cfg.ManifestLoadTimeout > 0 {
+		return context.WithTimeout(context.Background(), time.Duration(cfg.ManifestLoadTimeout)*time.Second)
+	}
+	return context.WithCancel(context.Background())
 }
 
 // readCanaryObject invokes the production GetObject implementation for an
@@ -842,11 +927,17 @@ type readyzResponse struct {
 // noteManifestDegraded sets the degraded flag and appends the startup
 // fallback notice to the reason when this pod's manifest load fell back to an
 // empty index after retries (armor-f1791426). Degradation is diagnostic: it
-// does not change readiness by itself.
+// does not change readiness by itself. The note names the degraded mode
+// (armor-b1745d47): publishing deltas above a recovered sequence floor with
+// compaction paused, or delta publication paused outright.
 func (s *Server) noteManifestDegraded(resp readyzResponse) readyzResponse {
 	if s.manifestDegradedReason != "" {
 		resp.ManifestDegraded = true
-		resp.Reason += "; manifest startup load failed after retries — serving with an empty index"
+		note := s.manifestDegradedNote
+		if note == "" {
+			note = "manifest startup load failed after retries — serving with an empty index"
+		}
+		resp.Reason += "; " + note
 	}
 	return resp
 }
