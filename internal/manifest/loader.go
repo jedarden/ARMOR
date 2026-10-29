@@ -7,7 +7,14 @@ import (
 	"os"
 	"sort"
 	"strings"
+
+	"golang.org/x/sync/errgroup"
 )
+
+// manifestLoadConcurrency bounds the number of snapshot and delta bodies that
+// a cold load fetches at once. The replay remains ordered below, so this only
+// overlaps I/O and does not change manifest semantics.
+const manifestLoadConcurrency = 16
 
 // Lister enumerates manifest object keys under a given prefix (paginated).
 // prefix is the full B2 object-key prefix (e.g. ".armor/manifest/").
@@ -65,21 +72,54 @@ func Load(
 	// Step 2: Group by writer shard.
 	writerKeys := groupByWriter(prefix, allKeys)
 
-	// Step 3+4+5: Load each shard, merge into idx.
-	for writerID, keys := range writerKeys {
-		workerIdx := New()
-		maxSeq, err := loadWriterShard(ctx, workerIdx, prefix, writerID, keys, fetch)
-		if err != nil {
-			return fmt.Errorf("load writer shard %q: %w", writerID, err)
+	// Step 3: Load all shards concurrently, with one shared fetch bound. Each
+	// shard replays into a private index so completion order cannot affect the
+	// final merge.
+	writerIDs := make([]string, 0, len(writerKeys))
+	for writerID := range writerKeys {
+		writerIDs = append(writerIDs, writerID)
+	}
+	sort.Strings(writerIDs)
+	type shardResult struct {
+		idx    *Index
+		maxSeq uint64
+	}
+	results := make([]shardResult, len(writerIDs))
+	fetchSlots := make(chan struct{}, manifestLoadConcurrency)
+	boundedFetch := func(fetchCtx context.Context, key string) ([]byte, error) {
+		select {
+		case fetchSlots <- struct{}{}:
+		case <-fetchCtx.Done():
+			return nil, fetchCtx.Err()
 		}
+		defer func() { <-fetchSlots }()
+		return fetch(fetchCtx, key)
+	}
 
-		// Merge this writer's entries into the unified index.
-		idx.Merge(workerIdx.All())
+	g, loadCtx := errgroup.WithContext(ctx)
+	for i, writerID := range writerIDs {
+		i, writerID := i, writerID
+		g.Go(func() error {
+			workerIdx := New()
+			maxSeq, err := loadWriterShard(loadCtx, workerIdx, prefix, writerID, writerKeys[writerID], boundedFetch)
+			if err != nil {
+				return fmt.Errorf("load writer shard %q: %w", writerID, err)
+			}
+			results[i] = shardResult{idx: workerIdx, maxSeq: maxSeq}
+			return nil
+		})
+	}
+	if err := g.Wait(); err != nil {
+		return err
+	}
 
-		// Set the seq counter only from the current writer's shard so that new
-		// delta files written by this instance have unique sequence numbers.
-		if writerID == currentWriter && maxSeq > idx.Seq() {
-			idx.SetSeq(maxSeq)
+	// Step 4+5: Merge shards in stable writer order and set the current
+	// writer's sequence floor only from that writer's replay.
+	for i, writerID := range writerIDs {
+		result := results[i]
+		idx.Merge(result.idx.All())
+		if writerID == currentWriter && result.maxSeq > idx.Seq() {
+			idx.SetSeq(result.maxSeq)
 		}
 	}
 
@@ -175,28 +215,36 @@ func loadWriterShard(
 	// lexicographic order identical to numeric order.
 	sort.Strings(deltaKeys)
 
-	// Load snapshot first so delta replay builds on top of it.
+	// Fetch the complete shard concurrently, but retain the snapshot-then-delta
+	// order in fetchKeys so replay below is deterministic regardless of fetch
+	// completion order. No body is applied until every fetch succeeds, which
+	// keeps the destination index unchanged on a cold-load fetch failure.
+	fetchKeys := make([]string, 0, len(deltaKeys)+1)
 	if hasSnapshot {
-		data, ferr := fetch(ctx, snapshotKey)
-		if ferr != nil {
-			return 0, fmt.Errorf("fetch snapshot: %w", ferr)
-		}
-		if uerr := workerIdx.UnmarshalSnapshot(data); uerr != nil {
-			return 0, fmt.Errorf("parse snapshot: %w", uerr)
-		}
+		fetchKeys = append(fetchKeys, snapshotKey)
+	}
+	fetchKeys = append(fetchKeys, deltaKeys...)
+	fetched, ferr := fetchManifestObjects(ctx, fetchKeys, fetch)
+	if ferr != nil {
+		return maxSeq, formatManifestFetchError(fetchKeys, snapshotKey, ferr)
 	}
 
-	// Replay each delta in sequence order.
-	for _, dk := range deltaKeys {
+	// Replay the snapshot first so delta records build on top of it.
+	fetchOffset := 0
+	if hasSnapshot {
+		if uerr := workerIdx.UnmarshalSnapshot(fetched[fetchOffset]); uerr != nil {
+			return 0, fmt.Errorf("parse snapshot: %w", uerr)
+		}
+		fetchOffset++
+	}
+
+	// Replay each delta in sequence order, not completion order.
+	for i, dk := range deltaKeys {
 		seq, ok := DeltaSeqFromKey(prefix, writerID, dk)
 		if !ok {
 			continue
 		}
-		data, ferr := fetch(ctx, dk)
-		if ferr != nil {
-			return maxSeq, fmt.Errorf("fetch delta %q: %w", dk, ferr)
-		}
-		if uerr := workerIdx.UnmarshalDelta(data); uerr != nil {
+		if uerr := workerIdx.UnmarshalDelta(fetched[fetchOffset+i]); uerr != nil {
 			return maxSeq, fmt.Errorf("parse delta %q: %w", dk, uerr)
 		}
 		if seq > maxSeq {
@@ -205,4 +253,86 @@ func loadWriterShard(
 	}
 
 	return maxSeq, nil
+}
+
+type manifestFetchFailure struct {
+	index int
+	err   error
+}
+
+func (e *manifestFetchFailure) Error() string {
+	return e.err.Error()
+}
+
+func (e *manifestFetchFailure) Unwrap() error {
+	return e.err
+}
+
+// fetchManifestObjects fetches keys into slots matching their input order.
+// The workers only populate slots; callers are responsible for replaying those
+// slots in order after all fetches finish.
+func fetchManifestObjects(ctx context.Context, keys []string, fetch Fetcher) ([][]byte, error) {
+	fetched := make([][]byte, len(keys))
+	if len(keys) == 0 {
+		return fetched, nil
+	}
+
+	workerCount := manifestLoadConcurrency
+	if len(keys) < workerCount {
+		workerCount = len(keys)
+	}
+
+	jobs := make(chan int)
+	g, fetchCtx := errgroup.WithContext(ctx)
+
+	// Dispatch through the same cancellation-aware group so an early fetch
+	// failure stops work that has not started yet.
+	g.Go(func() error {
+		defer close(jobs)
+		for i := range keys {
+			select {
+			case jobs <- i:
+			case <-fetchCtx.Done():
+				return fetchCtx.Err()
+			}
+		}
+		return nil
+	})
+
+	for worker := 0; worker < workerCount; worker++ {
+		g.Go(func() error {
+			for {
+				select {
+				case <-fetchCtx.Done():
+					return fetchCtx.Err()
+				case i, ok := <-jobs:
+					if !ok {
+						return nil
+					}
+					data, err := fetch(fetchCtx, keys[i])
+					if err != nil {
+						return &manifestFetchFailure{index: i, err: err}
+					}
+					fetched[i] = data
+				}
+			}
+		})
+	}
+
+	if err := g.Wait(); err != nil {
+		return nil, err
+	}
+	return fetched, nil
+}
+
+func formatManifestFetchError(keys []string, snapshotKey string, err error) error {
+	var failure *manifestFetchFailure
+	if errors.As(err, &failure) && failure.index >= 0 && failure.index < len(keys) {
+		key := keys[failure.index]
+		if key == snapshotKey {
+			return fmt.Errorf("fetch snapshot: %w", failure.err)
+		}
+		return fmt.Errorf("fetch delta %q: %w", key, failure.err)
+	}
+	return fmt.Errorf("fetch manifest objects: %w", err)
 }
