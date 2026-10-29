@@ -143,7 +143,7 @@ any of these set. The gates:
 go build ./...                       # must pass on every commit
 go vet ./...
 go test ./... -short                 # unit suite; integration tests skip without credentials
-scripts/definition-of-done.sh --fast # hermetic local gate: build + vet + script tests + CLI contract (-short); no network, no browser; per-stage timings
+scripts/definition-of-done.sh --fast # hermetic local gate: build + vet + lint (golangci-lint when on PATH) + script tests + CLI contract (-short); no network, no browser; per-stage timings
 scripts/definition-of-done.sh        # full gate: --fast plus `go test ./... -short` and per-page Agentation browser mounts (dashboard, demo, fleet); `make dod-full`
 scripts/cli-contract-gate.sh         # executable CLI/companion contract parity gate
 scripts/release-gate.sh              # the gate CI and the Dockerfile run (crypto, backend, canary, handlers, config, cmd, image contract, publisher contract tests)
@@ -159,8 +159,20 @@ make help                            # the rest of the targets
   definition of done, the release gate, and `make docker`. A local `go`
   newer than the directive is fine — `make build` runs `toolchain-check`,
   which warns (never fails) on a mismatch.
+- Both lanes of the definition of done lint: when `golangci-lint` is on PATH
+  they run `golangci-lint run --timeout 15m ./...` — the exact command, and
+  the v2.13.x major.minor, that armor-build's `lint` step pins — and when it
+  is not they print a WARN naming the gap, never a silent skip, so sandbox
+  workers without the binary stay green while codinghome/lab catch lint-red
+  code before the push. `scripts/cut-release.sh` runs the same gate before
+  writing `VERSION` and refuses to cut on a missing binary, a major.minor
+  drift from the pin, or a red run (`--dry-run` lints too; there is no skip
+  flag): `resolve-version` pins the VERSION commit, so a cut that fails
+  CI's lint burns the version number (0.1.2003, 0.1.2005). Bump the
+  declarative-config image pin and the two script pins together.
 - The definition of done for any code change is `scripts/definition-of-done.sh`
-  green. CI (`armor-build` in iad-ci) additionally runs golangci-lint, the race
+  green. CI (`armor-build` in iad-ci) additionally runs golangci-lint
+  (mirrored locally by the lint stage above), the race
   release gate, an integration-suite compile, the Docker builds, a registry
   existence check for every image, and the real-client compatibility suite
   (AWS CLI, rclone, boto3, DuckDB/httpfs, litestream, and barman-cloud)
@@ -255,6 +267,10 @@ The short form:
    `VERSION`, bumps the `compose.yaml` `ARMOR_VERSION` defaults to match, and
    writes a `CHANGELOG.md` entry generated from the commits since the
    previous tag — one `release: armor <version>` commit, which it pushes.
+   Before writing anything it lints the tree with golangci-lint (v2.13.x,
+   the major.minor armor-build's lint step pins; same command) and refuses
+   to cut when the binary is missing, its version drifts from the pin, or
+   the run is red — `--dry-run` lints too, and there is no skip flag.
    `scripts/compose-version-parity.sh` (definition of done, release gate,
    `make docker`) fails any tree where the defaults lag `VERSION`.
 3. CI does everything else: builds and publishes `ronaldraygun/armor`,

@@ -15,7 +15,10 @@
 # gate (scripts/documentation-status-gate.sh), the executable CLI and
 # companion-binary contract gate (scripts/cli-contract-gate.sh — its go
 # test legs run with -short, so the browser-mount smokes inside cmd/ skip),
-# the Go build and vet, and the Python scripts test suite: the suites
+# the Go build and vet, the golangci-lint stage (the same
+# `run --timeout 15m ./...` armor-build's lint step runs — a WARN naming
+# the gap where the binary is absent, never a silent skip), and the Python
+# scripts test suite: the suites
 # enumerated in tests/gate-suites.txt, the single edit point for the gate
 # inventory (tests/test_gate_inventory.py holds every documented surface
 # to that file and to the invocation below).
@@ -28,11 +31,16 @@
 # two things --fast must not need — and deliberately fails, never silently
 # skips, without them, because an unverified mount is what this gate
 # exists to catch. CI (iad-ci armor-build) runs the containerized
-# build/lint legs; this script is the local gate.
+# build/lint legs; this script is the local gate, and its lint stage
+# mirrors CI's command so a lint-red tree is caught before the push —
+# scripts/cut-release.sh hard-refuses without a green lint pass.
 #
 # Each stage prints its duration after it finishes and the run prints a
 # total, so wall-clock regressions are visible (the --fast lane targets
-# < 90 s on codinghome). The pytest entry point is `python3 -m pytest`
+# < 90 s on codinghome — the lint stage is the one exception: a warm
+# golangci-lint cache costs about a second, a cold one minutes, which is
+# exactly the regression its own timing line makes visible). The pytest
+# entry point is `python3 -m pytest`
 # rather than the `pytest` shim, whose shebang is stale on NixOS hosts.
 set -uo pipefail
 
@@ -82,6 +90,39 @@ run ./scripts/documentation-status-gate.sh
 run ./scripts/cli-contract-gate.sh
 run "$GO" build "${go_build_flags[@]}" ./...
 run "$GO" vet "${go_build_flags[@]}" ./...
+
+# Lint stage — the same command armor-build's lint step runs
+# (declarative-config pins golangci/golangci-lint v2.13.x; the local
+# binary must answer to that major.minor). Absent binary → WARN, not red:
+# sandbox workers without it are not blocked, while codinghome and lab —
+# where cuts happen, and where scripts/cut-release.sh refuses to cut
+# without a lint pass — catch lint-red code locally.
+GOLANGCI_LINT="${GOLANGCI_LINT:-golangci-lint}"
+LINT_PIN="2.13"
+lint_stage_started=$(date +%s%N)
+if command -v "$GOLANGCI_LINT" >/dev/null 2>&1; then
+  LINT_VERSION="$("$GOLANGCI_LINT" version 2>&1 || true)"
+  echo "== lint: $LINT_VERSION"
+  case "$LINT_VERSION" in
+    *" version ${LINT_PIN}."*) ;;
+    *)
+      echo "WARN: golangci-lint v${LINT_PIN}.x is the major.minor armor-build's lint"
+      echo "WARN: step pins; this binary reports: ${LINT_VERSION:-<no version output>}"
+      echo "WARN: the local verdict may diverge from CI's"
+      ;;
+  esac
+  run "$GOLANGCI_LINT" run --timeout 15m ./...
+else
+  echo "+ $GOLANGCI_LINT run --timeout 15m ./..."
+  echo "WARN: golangci-lint not found on PATH (looked for '$GOLANGCI_LINT') — the lint stage did not run here"
+  echo "WARN: CI (armor-build) still lints every release push; install golangci-lint"
+  echo "WARN: v${LINT_PIN}.x to close the gap locally"
+  lint_stage_elapsed=$(( ($(date +%s%N) - lint_stage_started) / 1000000 ))
+  total_ms=$((total_ms + lint_stage_elapsed))
+  printf '[%d.%01ds] %s (WARN: binary unavailable)\n' \
+    $((lint_stage_elapsed / 1000)) $(((lint_stage_elapsed % 1000) / 100)) \
+    "$GOLANGCI_LINT run --timeout 15m ./..."
+fi
 
 gate_suites=()
 if [ -f "$gate_suites_file" ]; then

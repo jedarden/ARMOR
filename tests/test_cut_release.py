@@ -16,7 +16,11 @@ tag (bead-checkpoint and release commits filtered, maintenance fallback
 when nothing is left), malformed and non-newer versions are refused, the
 repository state gates (staged index, off-main) refuse without a commit,
 --dry-run touches nothing, and re-cutting the same version is refused
-rather than duplicated. Every invocation uses --no-push or --dry-run; the
+rather than duplicated. The lint gate — the lesson of 0.1.2003 and
+0.1.2005, where CI's golangci-lint step sank cuts on code already on
+main — refuses a cut (a dry run included) when golangci-lint is missing,
+drifts from the pinned major.minor, or reports findings, before anything
+is written. Every invocation uses --no-push or --dry-run; the
 push is armor-build's half of the workflow, not the script's.
 
 Run: python3 -m pytest tests/test_cut_release.py -q
@@ -99,6 +103,27 @@ def seed_changelog():
 """
 
 
+def write_lint_stub(root):
+    """The GOLANGCI_LINT seam for the fixtures: `version` answers the pin
+    check with the pinned major.minor, `run` records its invocation to
+    $LINT_RUN_LOG and replays $LINT_FINDINGS with exit code $LINT_RUN_RC.
+    The real binary cannot run inside a fixture (no go.mod) and the suite
+    must not depend on host tooling."""
+    stub = root / "scripts" / "lint-stub.sh"
+    stub.write_text(
+        "#!/bin/sh\n"
+        '[ "$1" = version ] && { echo "golangci-lint has version 2.13.2'
+        ' built with go1.25.0 from stub"; exit 0; }\n'
+        '[ "$1" = run ] && { [ -n "$LINT_RUN_LOG" ] &&'
+        " printf '%s\\n' \"$*\" >> \"$LINT_RUN_LOG\";"
+        " printf '%s\\n' \"${LINT_FINDINGS:-}\";"
+        ' exit "${LINT_RUN_RC:-0}"; }\n'
+        "exit 0\n"
+    )
+    stub.chmod(0o755)
+    return stub
+
+
 def make_repo(tmp_path, version=OLD, compose="default", changelog="default",
               tag=True, history="mixed"):
     """Build an isolated git repository the script can cut a release in.
@@ -114,6 +139,7 @@ def make_repo(tmp_path, version=OLD, compose="default", changelog="default",
     (root / "scripts").mkdir(parents=True)
     shutil.copy(SCRIPT, root / "scripts" / "cut-release.sh")
     shutil.copy(PARITY_GATE, root / "scripts" / "compose-version-parity.sh")
+    write_lint_stub(root)
     (root / "VERSION").write_text(version + "\n")
     if compose == "default":
         compose = compose_yaml()
@@ -148,10 +174,19 @@ def make_repo(tmp_path, version=OLD, compose="default", changelog="default",
     return root
 
 
-def cut(root, *args):
+def cut(root, *args, env=None):
+    """Run the fixture's cut-release.sh against the lint stub. Extra env
+    overrides steer the stub (LINT_RUN_RC/LINT_FINDINGS/LINT_RUN_LOG) or
+    point GOLANGCI_LINT at something else entirely."""
+    run_env = {
+        **GIT_ENV,
+        "GOLANGCI_LINT": str(root / "scripts" / "lint-stub.sh"),
+    }
+    if env:
+        run_env.update(env)
     return subprocess.run(
         ["bash", str(root / "scripts" / "cut-release.sh"), *args],
-        cwd=root, capture_output=True, text=True, env=GIT_ENV,
+        cwd=root, capture_output=True, text=True, env=run_env,
     )
 
 
@@ -467,4 +502,74 @@ def test_compose_without_a_default_is_refused(tmp_path):
     assert proc.returncode == 2
     assert "carries no ${ARMOR_VERSION:-...} default" in proc.stderr
     assert "nothing to pin to" in proc.stderr
+    assert git_out(root, "rev-parse", "HEAD") == head
+
+
+# ---------------------------------------------------------------------------
+# the lint gate: refuse before anything is written
+# ---------------------------------------------------------------------------
+
+S1000 = (
+    "internal/manifest/loader_concurrency_test.go:31:2: S1000: should use"
+    " a simple channel send/receive instead of select with a single case"
+    " (staticcheck)"
+)
+
+
+def test_dry_run_refuses_a_red_lint_and_names_the_finding(tmp_path):
+    """The gate 0.1.2003 and 0.1.2005 needed: a red lint refuses the cut —
+    a dry run included — with the linter's findings visible, and nothing
+    is written or committed."""
+    root = make_repo(tmp_path)
+    head = git_out(root, "rev-parse", "HEAD")
+    files = {name: (root / name).read_text()
+             for name in ("VERSION", "compose.yaml", "CHANGELOG.md")}
+
+    proc = cut(root, NEW, "--dry-run",
+               env={"LINT_RUN_RC": "1", "LINT_FINDINGS": S1000})
+    assert proc.returncode == 1
+    assert "S1000" in proc.stdout
+    assert "golangci-lint failed" in proc.stderr
+
+    assert git_out(root, "rev-parse", "HEAD") == head
+    assert git_out(root, "status", "--porcelain") == ""
+    assert {name: (root / name).read_text() for name in files} == files
+
+
+def test_green_lint_gate_runs_on_the_dry_run_path(tmp_path):
+    """--dry-run lints too: the stub records the invocation, and the run
+    still proceeds to print the entry it would write."""
+    root = make_repo(tmp_path)
+    log = tmp_path / "lint-runs.log"
+    proc = cut(root, "--dry-run", NEW, env={"LINT_RUN_LOG": str(log)})
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "run --timeout 15m ./..." in log.read_text()
+    assert f"## {NEW} (" in proc.stdout
+
+
+def test_cut_refuses_when_golangci_lint_is_missing(tmp_path):
+    """No binary, no cut: a missing linter cannot stand in for CI's verdict,
+    because a red lint at cut time burns the version number."""
+    root = make_repo(tmp_path)
+    head = git_out(root, "rev-parse", "HEAD")
+    proc = cut(root, NEW, "--no-push",
+               env={"GOLANGCI_LINT": str(root / "no-such-lint")})
+    assert proc.returncode == 1
+    assert "golangci-lint not found" in proc.stderr
+    assert "refusing to cut" in proc.stderr
+    assert git_out(root, "rev-parse", "HEAD") == head
+    assert (root / "VERSION").read_text() == OLD + "\n"
+
+
+def test_cut_refuses_on_linter_major_minor_drift(tmp_path):
+    """armor-build pins golangci-lint v2.13.x; a binary outside that
+    major.minor gives a local verdict CI never rendered."""
+    root = make_repo(tmp_path)
+    stub = root / "scripts" / "lint-stub.sh"
+    stub.write_text(stub.read_text().replace("2.13.2", "2.14.0"))
+    head = git_out(root, "rev-parse", "HEAD")
+    proc = cut(root, NEW, "--no-push")
+    assert proc.returncode == 1
+    assert "v2.13.x required" in proc.stderr
+    assert "2.14.0" in proc.stderr
     assert git_out(root, "rev-parse", "HEAD") == head

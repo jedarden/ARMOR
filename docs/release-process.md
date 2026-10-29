@@ -45,7 +45,7 @@ Pre-conditions, on `main` in a checkout whose index is clean:
 ```bash
 git pull --rebase origin main
 git fetch --tags origin
-scripts/definition-of-done.sh          # build, vet, script tests, short Go suite: must be green
+scripts/definition-of-done.sh          # build, vet, lint, script tests, short Go suite: must be green
 ```
 
 Cut it:
@@ -64,6 +64,13 @@ The script
 - checks the newest reachable local release tag against origin and refuses
   stale tags with a `git fetch --tags origin` instruction, so a published
   release cannot be repeated in the next changelog entry,
+- lints the tree with golangci-lint (`run --timeout 15m ./...`, v2.13.x —
+  the same command and the same major.minor the `lint` step below pins) and
+  refuses to cut when the binary is missing, its version drifts from the
+  pin, or the run is red. `--dry-run` lints too and there is no skip flag:
+  `resolve-version` pins the VERSION commit, so a cut that fails CI's lint
+  step publishes nothing and burns the version number — 0.1.2003 and
+  0.1.2005 both died exactly there, which is why this gate exists,
 - rewrites every `${ARMOR_VERSION:-...}` default in `compose.yaml` to the new
   version, so the tracked demo and production compositions ship pinned to this
   release (`scripts/compose-version-parity.sh` — in the definition of done,
@@ -96,7 +103,7 @@ status on GitHub at start and at the end, which is what the README badge shows.
 | Step | What it proves |
 |---|---|
 | `resolve-version` | The pushed commit changed `VERSION` and the value is `MAJOR.MINOR.PATCH`. A non-release push fails here by design |
-| `lint` | `golangci-lint` clean |
+| `lint` | `golangci-lint` clean (pinned `v2.13.x`; the same command and major.minor the definition-of-done lint stage and `cut-release.sh`'s pre-cut gate run locally) |
 | `test` | `scripts/release-gate.sh` with `ARMOR_RELEASE_RACE=1` (crypto, backend, restore-verifier, canary, config, cmd, handlers under `-race`) |
 | `integration-test` | `tests/integration` compiles and runs in short mode — compile coverage only: every test in the suite skips without real-B2 credentials. Execution is the separate `armor-integration` leg (see [Live-B2 integration leg](#live-b2-integration-leg-armor-integration)) |
 | `docker-build`, `docker-build-restore-verifier`, `docker-build-fleet`, `docker-build-ghcr` | The four images are built with kaniko from the pushed tree. They are siblings: the server image is published even if a companion build fails |
@@ -396,7 +403,10 @@ Details: [drift-check.md](drift-check.md).
 - **A version was cut but the build failed and never published an image.**
   Cut the next version; note in its CHANGELOG entry that it carries the
   unpublished one's changes (see 0.1.1969 and 0.1.1960 in `CHANGELOG.md`). Do
-  not tag the unpublished version.
+  not tag the unpublished version. A `lint` failure can no longer be the
+  cause — `cut-release.sh` runs the same lint before writing `VERSION`
+  (0.1.2003 and 0.1.2005 were the cuts that motivated that gate) — so a
+  failure here means a step only CI can run.
 - **Ghost tag** (`verify-*-image` failed although kaniko exited 0): the
   registry never received the push. Re-run; if it persists, check the
   `docker-hub-registry` / `ghcr-jedarden-registry` secrets in iad-ci.

@@ -3,8 +3,15 @@
 # ${ARMOR_VERSION:-...} defaults to match, and prepend a CHANGELOG.md entry
 # generated from the commits since the previous release tag, in ONE commit.
 #
+# Before writing anything the script lints the tree with golangci-lint —
+# the same command and the same major.minor armor-build's lint step pins —
+# and refuses to cut when the binary is missing, its version drifts from
+# the pin, or the run is red: a cut that fails CI's lint step burns the
+# version number, because resolve-version pins the VERSION commit
+# (0.1.2003, 0.1.2005). --dry-run lints too; there is no skip flag.
+#
 # Usage:
-#   scripts/cut-release.sh <MAJOR.MINOR.PATCH> [--no-push] [--dry-run]
+#   scripts/cut-release.sh [--no-push] [--dry-run] <MAJOR.MINOR.PATCH>
 #
 # Everything after the push is CI's job (declarative-config, armor-build): a
 # push that changes VERSION builds and publishes the images, tags v<version>
@@ -18,12 +25,11 @@
 set -euo pipefail
 
 usage() {
-  sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '2,24p' "$0" | sed 's/^# \{0,1\}//'
   exit 2
 }
 
-VERSION="${1:-}"
-[ $# -gt 0 ] && shift
+VERSION=""
 PUSH=1
 DRY=0
 for arg in "$@"; do
@@ -31,7 +37,14 @@ for arg in "$@"; do
     --no-push) PUSH=0 ;;
     --dry-run) DRY=1; PUSH=0 ;;
     -h|--help) usage ;;
-    *) echo "unknown argument: $arg" >&2; usage ;;
+    -*) echo "unknown argument: $arg" >&2; usage ;;
+    *)
+      if [ -n "$VERSION" ]; then
+        echo "error: multiple versions supplied ('$VERSION' and '$arg')" >&2
+        usage
+      fi
+      VERSION="$arg"
+      ;;
   esac
 done
 [ -n "$VERSION" ] || usage
@@ -84,6 +97,35 @@ if [ -n "$PREV_TAG" ]; then
   RANGE="$PREV_TAG..HEAD"
 else
   RANGE="HEAD"
+fi
+
+# Lint gate, before anything is written. CI's first step after
+# resolve-version is golangci-lint (armor-workflowtemplate.yml,
+# golangci/golangci-lint v2.13.2-alpine), and a red cut burns the version
+# number — resolve-version pins the VERSION commit, so a failed build can
+# only be repaired by another cut (0.1.2003, 0.1.2005). Same command, same
+# major.minor, so a green lint here means a green lint step there. Bump the
+# pin here and in declarative-config together.
+GOLANGCI_LINT="${GOLANGCI_LINT:-golangci-lint}"
+LINT_PIN="2.13"
+if ! command -v "$GOLANGCI_LINT" >/dev/null 2>&1; then
+  echo "error: golangci-lint not found (looked for '$GOLANGCI_LINT'); refusing to cut —" >&2
+  echo "error: install v${LINT_PIN}.x, the major.minor armor-build's lint step pins" >&2
+  exit 1
+fi
+LINT_VERSION="$("$GOLANGCI_LINT" version 2>&1 || true)"
+echo "== lint: $LINT_VERSION"
+case "$LINT_VERSION" in
+  *" version ${LINT_PIN}."*) ;;
+  *)
+    echo "error: golangci-lint v${LINT_PIN}.x required (the major.minor armor-build's lint step pins); found: ${LINT_VERSION:-<no version output>}" >&2
+    exit 1
+    ;;
+esac
+if ! "$GOLANGCI_LINT" run --timeout 15m ./...; then
+  echo "error: golangci-lint failed — fix the findings above before cutting;" >&2
+  echo "error: a cut that ships them burns the version number" >&2
+  exit 1
 fi
 
 # Release notes: every non-merge commit subject since the previous tag, minus
