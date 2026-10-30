@@ -20,6 +20,23 @@ Entries before 0.1.1958 were written by hand on the Forgejo releases and are
 reproduced here; entries from 0.1.1958 on were reconstructed from git history
 on 2026-09-18 (bead armor-43ec803f).
 
+## 0.1.2006 (2026-10-30)
+
+- docs(armor-769e3d53): ardenone verifier 9/11, fresh drift and scrape-wire evidence
+- docs(armor-769e3d53): record converged 0.1.2004 fleet state and live zero drift
+- fix(drift): match running containers via imageID and ignore terminated pods (armor-9a947928)
+- docs(armor-769e3d53): refresh fleet rollout evidence
+- perf(list): raise ListObjectsV2 HEAD fan-out default to cut page wall time (armor-45abc172)
+- docs(armor-769e3d53): record 0.1.2004 fleet pin rollout
+- docs(release): record v0.1.2004 publication and correct the 0.1.2002 caveat (armor-fdab65fe)
+- wip(armor-59dd441e): gate releases and DoD on golangci-lint
+- beads: publish v0.1.2004, correct the 0.1.2002 caveat, unblock the iad-ci roll, file lint-gate and update-step beads
+- fix(lint): replace single-case selects in loader concurrency tests (armor-fdab65fe)
+- feat(server): bind listeners before the manifest cold load (armor-3b7595b6)
+- wip(armor-96b723c5): tolerate renamed filesystem put temps
+- wip(armor-f3c27b2b): parallelize manifest cold-load fetches
+- fix(manifest): recover delta sequence floor after failed cold load (armor-b1745d47)
+
 ## 0.1.2005 (2026-10-29)
 
 - feat(server): bind listeners before the manifest cold load (armor-3b7595b6)
