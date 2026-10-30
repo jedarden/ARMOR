@@ -132,23 +132,27 @@ tag alone.
   for the exact commands and current boundary.
 - **Fleet rollout evidence (2026-10-29, `armor-769e3d53`).** The 15 ARMOR
   and restore-verifier manifests across `iad-ci`, `iad-kalshi`,
-  `ord-devimprint`, `rs-manager`, `apexalgo-iad`, and `ardenone-cluster` now
-  pin the latest fully published release, `0.1.2004`, by digest:
+  `ord-devimprint`, `rs-manager`, `apexalgo-iad`, and `ardenone-cluster` pin
+  the latest fully published release, `0.1.2004`, by digest:
   `armor` `sha256:f39dbcaca179…` and `armor-restore-verifier`
   `sha256:572046ce8f6…`. The staged GitOps commits are `1ac8d6546` (iad-ci),
   `f5b932f23` (armor-test), `3ca9918c3` (iad-kalshi), `e4a641c72`
   (ord-devimprint), `145bbf4c3` (rs-manager), and `c99284d11`
   (ardenone-cluster plus apexalgo-iad); all were pushed to declarative-config
-  `origin/main`. `armor-test` now has the required digest pin. The inventory
-  script reports 15 current pins and no remaining `0.1.1993` references.
-  ArgoCD reconciliation and the post-roll pod/verifier evidence are still
-  pending after the mirror refresh; do not treat the desired-state inventory
-  as proof that every live workload has rolled. The existing live evidence
-  remains bounded to the prior rollout: `iad-ci`, `iad-kalshi`, and
-  `rs-manager` reported 11/11, while `ardenone-cluster` reported 7/11 because
-  four legacy v3 sidecar lookups failed (`armor-69b4983d`, proposal pending).
-  This is not a client-matrix or DR-drill proof (see the capability table
-  above).
+  `origin/main`. `armor-test` has the required digest pin, and the inventory
+  script reports 15 current pins with no remaining 0.1.1993 references.
+  Read-only live inspection after reconciliation found `iad-ci` and
+  `rs-manager` Ready with zero restarts and verifier runs at 11/11;
+  `ord-devimprint` ARMOR Ready with zero restarts while its 0.1.2004 verifier
+  is still in first discovery; `iad-kalshi` ARMOR Ready while its verifier is
+  Pending on RWO-PVC attachment; and `ardenone-cluster` ARMOR and verifier
+  Ready with zero restarts but the verifier at 8/11 because three v3 sidecar
+  reads return 403 (`armor-69b4983d`, proposal pending). The previous
+  ardenone Prometheus scrape acceptance is historical and was not independently
+  reverified for this roll. The default `VERSION` is 0.1.2005, but Docker Hub
+  has no 0.1.2005 server or verifier image, so the live drift checker remains
+  blocked by the release chain. This is not a client-matrix or DR-drill proof
+  (see the capability table above).
 
 ## How to promote a capability
 
