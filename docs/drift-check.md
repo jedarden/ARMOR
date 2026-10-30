@@ -77,6 +77,16 @@ release, not a mismatch. Alert dedup is also version-normalized: a
 digest-only rebuild of the same stale version keeps the fingerprint and does
 not refile.
 
+The live pod check counts only containers kubelet reports as **running**:
+terminated or dead-node (`ContainerStatusUnknown`) pods stay in the per-pod
+details for diagnosis but do not speak for the deployed version, so a
+cluster littered with stranded pods from old ReplicaSets does not look
+permanently mismatched. A running digest-pinned container reports its
+`image` as a bare node-local `sha256:…` with no repository in it — the
+container is matched by repository name from `image` **or** `imageID`, and
+its registry digest is taken from `imageID` (the node-local digest never
+reaches the comparison).
+
 ### Approved latest: max(newest tag, VERSION)
 
 The approved latest is not just the newest release tag — it is

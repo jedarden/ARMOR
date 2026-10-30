@@ -61,6 +61,20 @@ def test_parse_version(tag, expected):
     assert drift_check.parse_version(tag) == expected
 
 
+@pytest.mark.parametrize("ref,tag,digest", [
+    ("ronaldraygun/armor:0.1.100", "0.1.100", None),
+    ("ronaldraygun/armor:0.1.100@sha256:" + "a" * 64, "0.1.100", "a" * 64),
+    ("docker-pullable://ronaldraygun/armor@sha256:" + "a" * 64, None, "a" * 64),
+    ("docker.io/ronaldraygun/armor@sha256:" + "a" * 64, None, "a" * 64),
+    # kubelet reports a digest-pinned container's `image` as a bare local
+    # digest: no repository, no tag, and NOT the registry digest.
+    ("sha256:" + "b" * 64, None, None),
+    ("", None, None),
+])
+def test_image_ref_parts(ref, tag, digest):
+    assert drift_check.image_ref_parts(ref) == (tag, digest)
+
+
 # ---------------------------------------------------------------------------
 # state: current
 # ---------------------------------------------------------------------------
@@ -426,7 +440,30 @@ def test_probe_version_connection_refused_is_probe_error():
         drift_check.probe_version(f"http://127.0.0.1:{dead_port}/version", timeout=2)
 
 
+def _pod(name="armor-abc", image="ronaldraygun/armor:0.1.100",
+         image_id="docker-pullable://ronaldraygun/armor@sha256:" + "a" * 64,
+         ready=True, state=None, phase="Running"):
+    if state is None:
+        state = {"running": {"startedAt": "2026-10-30T00:00:00Z"}}
+    return {
+        "metadata": {"name": name},
+        "status": {
+            "phase": phase,
+            "containerStatuses": [{
+                "name": "armor",
+                "image": image,
+                "imageID": image_id,
+                "ready": ready,
+                "state": state,
+            }],
+        },
+    }
+
+
 class _KubeHandler(BaseHTTPRequestHandler):
+    # Tests override this class attribute to serve a bespoke pod list.
+    pods = None
+
     def do_GET(self):
         if "/apis/apps/v1/" in self.path:
             body = {
@@ -434,20 +471,8 @@ class _KubeHandler(BaseHTTPRequestHandler):
                 "status": {"readyReplicas": 1},
             }
         elif self.path.startswith("/api/v1/"):
-            body = {
-                "items": [{
-                    "metadata": {"name": "armor-abc"},
-                    "status": {
-                        "phase": "Running",
-                        "containerStatuses": [{
-                            "name": "armor",
-                            "image": "ronaldraygun/armor:0.1.100",
-                            "imageID": "docker-pullable://ronaldraygun/armor@sha256:" + "a" * 64,
-                            "ready": True,
-                        }],
-                    },
-                }],
-            }
+            items = self.pods if self.pods is not None else [_pod()]
+            body = {"items": items}
         else:
             self.send_response(404)
             self.end_headers()
@@ -470,6 +495,7 @@ def kube_server():
     thread.start()
     yield f"http://127.0.0.1:{server.server_address[1]}"
     server.shutdown()
+    _KubeHandler.pods = None
 
 
 def test_probe_live_deployment_reads_deployment_and_pod_images(kube_server):
@@ -479,6 +505,51 @@ def test_probe_live_deployment_reads_deployment_and_pod_images(kube_server):
     assert live["running_tags"] == ["0.1.100"]
     assert live["pod_count"] == 1
     assert live["ready_pod_count"] == 1
+
+
+def test_probe_live_deployment_matches_digest_pinned_pod_via_image_id(kube_server):
+    # A running digest-pinned container reports `image` as a bare local
+    # sha256:… with no repository; the repository survives only in imageID.
+    _KubeHandler.pods = [_pod(
+        image="sha256:" + "b" * 64,
+        image_id="docker.io/ronaldraygun/armor@sha256:" + "c" * 64,
+    )]
+    d = deployment(tag="0.1.100", filepath="/dc/k8s/iad-ci/armor/armor.yml")
+    d.update({"kind": "Deployment", "workload_name": "armor", "namespace": "armor"})
+    live = drift_check.probe_live_deployment(d, kube_server)
+    assert live["running_tags"] == []
+    assert live["running_image_ids"] == [
+        "docker.io/ronaldraygun/armor@sha256:" + "c" * 64
+    ]
+
+
+def test_probe_live_deployment_ignores_terminated_pods(kube_server):
+    # Terminated and dead-node pods keep their last pull spec in `image`
+    # but run nothing; only the running container speaks for the fleet.
+    _KubeHandler.pods = [
+        _pod(name="armor-old", image="ronaldraygun/armor:0.1.99",
+             image_id="docker-pullable://ronaldraygun/armor@sha256:" + "d" * 64,
+             ready=False, state={"terminated": {"exitCode": 0}}, phase="Failed"),
+        _pod(name="armor-new", image="sha256:" + "b" * 64,
+             image_id="docker.io/ronaldraygun/armor@sha256:" + "c" * 64),
+    ]
+    d = deployment(tag="0.1.100", filepath="/dc/k8s/iad-ci/armor/armor.yml")
+    d.update({"kind": "Deployment", "workload_name": "armor", "namespace": "armor"})
+    live = drift_check.probe_live_deployment(d, kube_server)
+    assert live["running_tags"] == []
+    assert live["running_image_ids"] == [
+        "docker.io/ronaldraygun/armor@sha256:" + "c" * 64
+    ]
+    assert live["pod_count"] == 2
+    assert live["ready_pod_count"] == 1
+
+
+def test_probe_live_deployment_without_running_containers_is_probe_error(kube_server):
+    _KubeHandler.pods = [_pod(state={"terminated": {"exitCode": 0}}, phase="Failed")]
+    d = deployment(tag="0.1.100", filepath="/dc/k8s/iad-ci/armor/armor.yml")
+    d.update({"kind": "Deployment", "workload_name": "armor", "namespace": "armor"})
+    with pytest.raises(drift_check.ProbeError):
+        drift_check.probe_live_deployment(d, kube_server)
 
 
 def test_render_metrics_contains_state_and_escalation():

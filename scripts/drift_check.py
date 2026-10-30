@@ -124,6 +124,12 @@ def image_ref_parts(image: str) -> Tuple[Optional[str], Optional[str]]:
     digest = digest_match.group(1).lower() if digest_match else None
     without_digest = image.split("@", 1)[0]
     last = without_digest.rsplit("/", 1)[-1]
+    if re.fullmatch(r"sha256:[0-9a-fA-F]{64}", last):
+        # A bare digest reference — what kubelet reports in `image` for a
+        # digest-pinned container — has no repository and no tag, and the
+        # digest it carries is the node-local one, not the registry digest
+        # in `imageID`. It contributes neither part.
+        return None, None
     if ":" not in last:
         return None, digest
     return last.rsplit(":", 1)[1], digest
@@ -331,6 +337,13 @@ def probe_live_deployment(deployment: Dict[str, Any], api_url: str,
     read-only kubectl proxies. No mutation endpoint is used. Returning the
     pod image IDs as well as version tags catches a rollout where the desired
     manifest was updated but one old pod remained running.
+
+    Only containers kubelet reports as running contribute tags and image IDs;
+    terminated or dead-node (state unknown) pods stay in the pod details for
+    diagnosis but do not speak for the deployed version. Containers are
+    matched by repository name taken from ``image`` or ``imageID`` — a
+    digest-pinned running container reports ``image`` as a bare local
+    sha256:… with no repository in it, and matches only via ``imageID``.
     """
     namespace = deployment.get("namespace")
     name = deployment.get("workload_name")
@@ -361,16 +374,25 @@ def probe_live_deployment(deployment: Dict[str, Any], api_url: str,
     running_image_ids: List[str] = []
     pod_details: List[Dict[str, Any]] = []
     ready_pods = 0
+    image_type = str(deployment.get("image_type", ""))
+
+    def repo_name(ref: Any) -> str:
+        image = str(ref or "").split("@", 1)[0]
+        return image.rsplit("/", 1)[-1].rsplit(":", 1)[0]
+
+    def is_target_container(container: Dict[str, Any]) -> bool:
+        # A running digest-pinned container reports `image` as a bare local
+        # sha256:… with no repository in it; the repository name survives
+        # only in `imageID`. Match either spelling.
+        return image_type in (
+            repo_name(container.get("image")),
+            repo_name(container.get("imageID")),
+        )
+
     for pod in pods.get("items", []) or []:
         metadata = pod.get("metadata") or {}
         status = pod.get("status") or {}
         containers = list(status.get("containerStatuses") or [])
-        image_type = str(deployment.get("image_type", ""))
-
-        def is_target_container(container: Dict[str, Any]) -> bool:
-            image = str(container.get("image") or "").split("@", 1)[0]
-            image_name = image.rsplit("/", 1)[-1].rsplit(":", 1)[0]
-            return image_name == image_type
 
         matched = [
             c for c in containers if is_target_container(c)
@@ -383,14 +405,21 @@ def probe_live_deployment(deployment: Dict[str, Any], api_url: str,
         for container in matched:
             image = str(container.get("image") or "")
             image_id = str(container.get("imageID") or "")
+            detail.setdefault("images", []).append(image)
+            if image_id:
+                detail.setdefault("image_ids", []).append(image_id)
+            # Only a container kubelet reports as running speaks for the
+            # deployed version: terminated and dead-node (state unknown)
+            # pods keep their last pull spec in `image` but run nothing,
+            # and counting them makes every fleet with stranded old pods
+            # look permanently mismatched.
+            if "running" not in (container.get("state") or {}):
+                continue
             tag, _ = image_ref_parts(image)
             if tag:
                 running_tags.append(tag)
             if image_id:
                 running_image_ids.append(image_id)
-            detail.setdefault("images", []).append(image)
-            if image_id:
-                detail.setdefault("image_ids", []).append(image_id)
         pod_details.append(detail)
 
     if not pod_details:
