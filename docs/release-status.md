@@ -122,37 +122,47 @@ tag alone.
   2026-09-29 check. On 2026-10-16, `ardenone-cluster` Prometheus accepted the
   new `0.1.1993` verifier scrape (`health=up`, empty `lastError`), confirming
   the numeric exposition fix (`armor-c866e4ca`) reached that target. Its
-  verification ratio is 7/11: four v3 multipart sidecar lookups return 404
-  at the tenant path and 403 at the root fallback (`armor-69b4983d`, proposal
-  pending).
+  verification ratio was 7/11 then (four v3 multipart sidecar lookups 404 at
+  the tenant path, 403 at the root fallback); on the 0.1.2004 roll it is
+  8/11, with the remaining three v3 sidecar reads returning B2 403
+  `not entitled` (`armor-69b4983d`, proposal pending).
   Treat restore failures as paged only on the two smoke-verified clusters
   until the remaining endpoint and restore checks pass; a running verifier
   without a passing scrape and delivery path is not an alerting guarantee.
   See the [restore-verifier alerting runbook](runbooks/restore-verifier-alerting.md)
   for the exact commands and current boundary.
-- **Fleet rollout evidence (2026-10-29, `armor-769e3d53`).** The 15 ARMOR
+- **Fleet rollout evidence (2026-10-30, `armor-769e3d53`).** The 15 ARMOR
   and restore-verifier manifests across `iad-ci`, `iad-kalshi`,
   `ord-devimprint`, `rs-manager`, `apexalgo-iad`, and `ardenone-cluster` pin
   the latest fully published release, `0.1.2004`, by digest:
   `armor` `sha256:f39dbcaca179…` and `armor-restore-verifier`
-  `sha256:572046ce8f6…`. The staged GitOps commits are `1ac8d6546` (iad-ci),
+  `sha256:572046ce8f6…`. The GitOps commits are `1ac8d6546` (iad-ci),
   `f5b932f23` (armor-test), `3ca9918c3` (iad-kalshi), `e4a641c72`
   (ord-devimprint), `145bbf4c3` (rs-manager), and `c99284d11`
   (ardenone-cluster plus apexalgo-iad); all were pushed to declarative-config
   `origin/main`. `armor-test` has the required digest pin, and the inventory
   script reports 15 current pins with no remaining 0.1.1993 references.
-  Read-only live inspection after reconciliation found `iad-ci` and
-  `rs-manager` Ready with zero restarts and verifier runs at 11/11;
-  `ord-devimprint` ARMOR Ready with zero restarts while its 0.1.2004 verifier
-  is still in first discovery; `iad-kalshi` ARMOR Ready while its verifier is
-  Pending on RWO-PVC attachment; and `ardenone-cluster` ARMOR and verifier
-  Ready with zero restarts but the verifier at 8/11 because three v3 sidecar
-  reads return 403 (`armor-69b4983d`, proposal pending). The previous
-  ardenone Prometheus scrape acceptance is historical and was not independently
-  reverified for this roll. The default `VERSION` is 0.1.2005, but Docker Hub
-  has no 0.1.2005 server or verifier image, so the live drift checker remains
-  blocked by the release chain. This is not a client-matrix or DR-drill proof
-  (see the capability table above).
+  After PVC/startup convergence, read-only live inspection on 2026-10-30
+  found all 15 workloads Ready with zero restarts on the pinned digests.
+  Four of five verifier scopes completed 11/11 runs on 0.1.2004: `iad-ci`
+  (2026-10-29 22:59Z), `rs-manager` armor-apexalgo (00:07Z), `iad-kalshi`
+  kalshi-tape (00:15Z), and `ord-devimprint` devimprint (01:19Z, after a
+  1h12m first discovery). `ardenone-cluster` remains 8/11: three v3 sidecar
+  reads return B2 403 `not entitled` (`armor-69b4983d`, proposal pending,
+  unrelated to the image). Stranded `ContainerStatusUnknown` pods from
+  dead nodes on `iad-kalshi`/`ord-devimprint` predate the roll and are
+  excluded from the running fleet by the drift probe
+  (`armor-9a947928`). The live drift check now verifies all 15 deployments
+  current against tag and registry digest (15 current / 0 stale / 0
+  mismatched / 0 unavailable); its exit code stays 1 solely on the
+  `tags_behind_version` warning because `VERSION` is 0.1.2005 while Docker
+  Hub has no 0.1.2005 server or verifier image — a release-chain state, not
+  fleet drift. The ardenone scrape wiring was reverified structurally for
+  this roll (ServiceMonitor → Service port `metrics`/9002 → pod, Prometheus
+  selecting all ServiceMonitors); a fresh target-state read is Forbidden to
+  the read-only observer, and the 0.1.1993 `health=up` acceptance above
+  carries over via the numeric-exposition fix being part of 0.1.2004. This
+  is not a client-matrix or DR-drill proof (see the capability table above).
 
 ## How to promote a capability
 
