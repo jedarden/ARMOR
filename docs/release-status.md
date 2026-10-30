@@ -124,7 +124,8 @@ tag alone.
   the numeric exposition fix (`armor-c866e4ca`) reached that target. Its
   verification ratio was 7/11 then (four v3 multipart sidecar lookups 404 at
   the tenant path, 403 at the root fallback); on the 0.1.2004 roll it is
-  8/11, with the remaining three v3 sidecar reads returning B2 403
+  9/11 (2026-10-30, improved from 8/11 across verification cycles on the
+  same image), with the remaining two v3 sidecar reads returning B2 403
   `not entitled` (`armor-69b4983d`, proposal pending).
   Treat restore failures as paged only on the two smoke-verified clusters
   until the remaining endpoint and restore checks pass; a running verifier
@@ -143,25 +144,36 @@ tag alone.
   `origin/main`. `armor-test` has the required digest pin, and the inventory
   script reports 15 current pins with no remaining 0.1.1993 references.
   After PVC/startup convergence, read-only live inspection on 2026-10-30
-  found all 15 workloads Ready with zero restarts on the pinned digests.
-  Four of five verifier scopes completed 11/11 runs on 0.1.2004: `iad-ci`
-  (2026-10-29 22:59Z), `rs-manager` armor-apexalgo (00:07Z), `iad-kalshi`
-  kalshi-tape (00:15Z), and `ord-devimprint` devimprint (01:19Z, after a
-  1h12m first discovery). `ardenone-cluster` remains 8/11: three v3 sidecar
-  reads return B2 403 `not entitled` (`armor-69b4983d`, proposal pending,
-  unrelated to the image). Stranded `ContainerStatusUnknown` pods from
+  found all 15 workloads Ready with zero restarts on the pinned digests,
+  re-confirmed at 09:00–09:16Z. Four of five verifier scopes completed 11/11
+  runs on 0.1.2004: `iad-ci` (2026-10-29 22:59Z, latest cycle 04:59Z),
+  `rs-manager` armor-apexalgo (00:07Z, latest 06:07Z), `iad-kalshi`
+  kalshi-tape (00:15Z, latest 06:15Z), and `ord-devimprint` devimprint
+  (01:19Z first completed discovery, latest 07:20Z). `ardenone-cluster` is
+  9/11 (2026-10-30 06:06Z, up from 8/11 at 00:06Z on the same image): two
+  v3 sidecar reads return B2 403 `not entitled` (`armor-69b4983d`, proposal
+  pending, unrelated to the image). Stranded `ContainerStatusUnknown` pods from
   dead nodes on `iad-kalshi`/`ord-devimprint` predate the roll and are
   excluded from the running fleet by the drift probe
   (`armor-9a947928`). The live drift check now verifies all 15 deployments
   current against tag and registry digest (15 current / 0 stale / 0
-  mismatched / 0 unavailable); its exit code stays 1 solely on the
-  `tags_behind_version` warning because `VERSION` is 0.1.2005 while Docker
-  Hub has no 0.1.2005 server or verifier image — a release-chain state, not
-  fleet drift. The ardenone scrape wiring was reverified structurally for
-  this roll (ServiceMonitor → Service port `metrics`/9002 → pod, Prometheus
-  selecting all ServiceMonitors); a fresh target-state read is Forbidden to
-  the read-only observer, and the 0.1.1993 `health=up` acceptance above
-  carries over via the numeric-exposition fix being part of 0.1.2004. This
+  mismatched / 0 unavailable; reproduced 2026-10-30 09:16Z with
+  `--cluster-api iad-ci=http://traefik-iad-ci:8001`, since the committed
+  iad-ci URL is the in-cluster address whose serviceaccount token a
+  codinghome run does not have — the default invocation reports those three
+  entries unavailable with `needs_update=0`); its exit code stays 1 solely
+  on the `tags_behind_version` warning because `VERSION` is 0.1.2005 while
+  Docker Hub has no 0.1.2005 server or verifier image — a release-chain
+  state, not fleet drift. The ardenone scrape wiring was reverified
+  structurally for this roll (ServiceMonitor → Service port `metrics`/9002
+  → pod, Prometheus selecting all ServiceMonitors; the Endpoints object
+  carried exactly one ready address — the running 0.1.2004 verifier pod —
+  on 2026-10-30); a fresh target-state read remains blocked from codinghome
+  on two independent paths (the Traefik vpn entrypoint on 443 is not
+  ACL-granted to `tag:codinghome`, and `services/proxy`/`pods/proxy` are
+  Forbidden to the read-only observer), so the 0.1.1993 `health=up`
+  acceptance above carries over via the numeric-exposition fix being part
+  of 0.1.2004. This
   is not a client-matrix or DR-drill proof (see the capability table above).
 
 ## How to promote a capability
