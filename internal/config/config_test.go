@@ -399,6 +399,22 @@ func TestLoadMultiKeyConfiguration(t *testing.T) {
 	}
 }
 
+// TestLoadListHeadFanoutDefault pins ARMOR_LIST_HEAD_FANOUT's default. 16
+// serialized a 1000-key page's backend HEADs into ~63 sequential batches;
+// against the manifest/metadata-cache double-miss steady state this was the
+// dominant term in ListObjectsV2 page wall time (armor-45abc172).
+func TestLoadListHeadFanoutDefault(t *testing.T) {
+	setEnv(t, minimalEnv()...)
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+	if cfg.ListHeadFanout != 128 {
+		t.Errorf("ListHeadFanout default = %d, want 128", cfg.ListHeadFanout)
+	}
+}
+
 // setEnv sets multiple env vars for the duration of a test and restores them in
 // cleanup. Returns a teardown function (also registered via t.Cleanup).
 func setEnv(t *testing.T, pairs ...string) {

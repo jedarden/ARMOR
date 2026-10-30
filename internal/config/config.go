@@ -510,7 +510,19 @@ func Load() (*Config, error) {
 	// plaintext sizes for keys missing from the in-memory indexes. B2
 	// rate-limits per-key metadata calls, so the fan-out stays bounded even
 	// for a full 1000-key page.
-	cfg.ListHeadFanout = getEnvInt("ARMOR_LIST_HEAD_FANOUT", 16)
+	//
+	// 16 (armor-7d94c42d) serializes a 1000-key page's HEADs into ~63
+	// sequential batches; when the manifest index and metadata cache both
+	// miss on nearly every key — the steady state on iad-ci, where the
+	// manifest has been loading with an empty index since before this
+	// setting existed (armor-45abc172) — that turns one backend round trip
+	// per HEAD into the dominant term in page wall time. 128 cuts the batch
+	// count ~8x while staying a small fraction of a 1000-key page's size, so
+	// a true runaway page still can't open more sockets than this. No B2
+	// http_429 responses were observed at 16 over a multi-day production
+	// window (armor_backend_retries_total), so this still has headroom
+	// before the existing retry-with-backoff path would need to absorb any.
+	cfg.ListHeadFanout = getEnvInt("ARMOR_LIST_HEAD_FANOUT", 128)
 	if cfg.ListHeadFanout < 1 {
 		errs = append(errs, fmt.Errorf("ARMOR_LIST_HEAD_FANOUT must be at least 1"))
 	}

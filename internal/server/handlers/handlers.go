@@ -3103,7 +3103,8 @@ func parseCopySource(copySource string) (bucket, key string) {
 
 // defaultListHeadFanout bounds the per-page HEAD fan-out when the handler was
 // built from a Config literal that did not go through config.Load (tests).
-const defaultListHeadFanout = 16
+// Kept equal to config.Load's ARMOR_LIST_HEAD_FANOUT default (armor-45abc172).
+const defaultListHeadFanout = 128
 
 // enrichPlaintextSizes replaces encrypted on-disk sizes with plaintext sizes for
 // ARMOR-encrypted objects. B2's ListObjectsV2 response includes the encrypted

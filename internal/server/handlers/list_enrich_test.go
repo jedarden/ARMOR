@@ -413,6 +413,53 @@ func TestListEnrichCapsConcurrentHeads(t *testing.T) {
 	}
 }
 
+// TestListEnrichFanoutBoundsPageWallTime proves the fan-out cap is the
+// dominant term in page wall time once the manifest index and metadata cache
+// both miss on every key — the steady state on iad-ci (armor-45abc172), where
+// the manifest has been loading with an empty index since before
+// ARMOR_LIST_HEAD_FANOUT existed. Each enrichListBackend.Head call sleeps
+// 2ms, so a 1000-key page needs ceil(1000/fanout) sequential batches; at
+// fanout=16 that is ~63 batches (~126ms here), at fanout=128 ~8 (~16ms) — the
+// same inverse relationship that turned a config default of 16 into a
+// multi-second page regression against real backend latency in production.
+func TestListEnrichFanoutBoundsPageWallTime(t *testing.T) {
+	const keys = 1000
+	names := make([]string, keys)
+	for i := range names {
+		names[i] = fmt.Sprintf("obj-%04d", i)
+	}
+
+	run := func(fanout int) time.Duration {
+		cfg := &config.Config{
+			BlockSize:      65536,
+			AuthAccessKey:  "test-access-key",
+			AuthSecretKey:  "REMOVED-NOT-A-SECRET-VALUE",
+			ListHeadFanout: fanout,
+		}
+		be := newEnrichListBackend(names, 5000)
+		h := New(cfg, be, backend.NewMetadataCache(1000, 300), backend.NewFooterCache(1000, 300), nil, nil)
+		objects := make([]backend.ObjectInfo, keys)
+		for i, k := range names {
+			objects[i] = backend.ObjectInfo{Key: k, Size: 5000 + enrichCiphertextOverhead, ETag: "stored-" + k}
+		}
+		result := &backend.ListResult{Objects: objects}
+		start := time.Now()
+		h.enrichPlaintextSizes(context.Background(), "test-bucket", result)
+		return time.Since(start)
+	}
+
+	lowFanoutWall := run(16)
+	highFanoutWall := run(128)
+
+	// 8x the fan-out should buy noticeably more than a token improvement;
+	// require at least half of the ideal 8x so modest scheduling slack on a
+	// loaded CI box doesn't flake the assertion.
+	if highFanoutWall*4 > lowFanoutWall {
+		t.Fatalf("fanout=128 wall %s did not scale down from fanout=16 wall %s as expected (want <= 1/4)",
+			highFanoutWall, lowFanoutWall)
+	}
+}
+
 // TestListEnrichHeadFailureNeverReportsCiphertextSize proves a HEAD that fails
 // even after its retry leaves the size unset (0) instead of silently reporting
 // the ciphertext size — the failure mode that corrupts DuckDB/httpfs byte

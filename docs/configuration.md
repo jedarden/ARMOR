@@ -123,7 +123,7 @@ for the ACL syntax.
 | `ARMOR_CACHE_TTL` | No | `300` | Metadata cache TTL in seconds |
 | `ARMOR_LIST_CACHE_MAX_ENTRIES` | No | `1000` | List-result cache entries |
 | `ARMOR_LIST_CACHE_TTL` | No | `60` | List-result cache TTL in seconds |
-| `ARMOR_LIST_HEAD_FANOUT` | No | `16` | Maximum concurrent backend HEADs one ListObjectsV2 page issues to resolve plaintext sizes for keys missing from the manifest index and metadata cache; at least 1. B2 rate-limits per-key metadata calls, so a full 1000-key page stays bounded |
+| `ARMOR_LIST_HEAD_FANOUT` | No | `128` | Maximum concurrent backend HEADs one ListObjectsV2 page issues to resolve plaintext sizes for keys missing from the manifest index and metadata cache; at least 1. B2 rate-limits per-key metadata calls, so a full 1000-key page stays bounded. Low values serialize a page's HEADs into many sequential batches, which dominates page wall time whenever the manifest/cache mostly miss (armor-45abc172) |
 
 ## Multipart uploads
 
