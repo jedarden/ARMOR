@@ -145,26 +145,42 @@ tag alone.
   script reports 15 current pins with no remaining 0.1.1993 references.
   After PVC/startup convergence, read-only live inspection on 2026-10-30
   found all 15 workloads Ready with zero restarts on the pinned digests,
-  re-confirmed at 09:00–09:16Z. Four of five verifier scopes completed 11/11
-  runs on 0.1.2004: `iad-ci` (2026-10-29 22:59Z, latest cycle 04:59Z),
-  `rs-manager` armor-apexalgo (00:07Z, latest 06:07Z), `iad-kalshi`
-  kalshi-tape (00:15Z, latest 06:15Z), and `ord-devimprint` devimprint
-  (01:19Z first completed discovery, latest 07:20Z). `ardenone-cluster` is
-  9/11 (2026-10-30 06:06Z, up from 8/11 at 00:06Z on the same image): two
-  v3 sidecar reads return B2 403 `not entitled` (`armor-69b4983d`, proposal
-  pending, unrelated to the image). Stranded `ContainerStatusUnknown` pods from
+  re-confirmed at 09:00–09:16Z and again 13:30–14:05Z. Four of five verifier
+  scopes completed 11/11 runs on 0.1.2004: `iad-ci` (latest cycle 10:59Z),
+  `rs-manager` armor-apexalgo (latest 12:07Z), `iad-kalshi` kalshi-tape
+  (latest 12:15Z), and `ord-devimprint` devimprint (latest 13:29Z, a full
+  1h22m re-discovery cycle over 19.2M listed keys). `ardenone-cluster`
+  completes every cycle but fluctuates 7–9 of 11 by sample (8/11 00:06Z,
+  9/11 06:06Z, 7/11 12:06Z on the same image): failed samples are legacy v3
+  sidecar reads returning B2 403 `not entitled`, concentrated in two cache
+  prefixes (`options-hypothesis-suite-v1`, `oi-positioning-volume-pilot-v1`)
+  plus two sha256-named objects — the pre-roll root-sidecar writes
+  (`armor-69b4983d`, proposal pending, unrelated to the image; the same
+  failures were present on 0.1.1993). Stranded `ContainerStatusUnknown` pods from
   dead nodes on `iad-kalshi`/`ord-devimprint` predate the roll and are
   excluded from the running fleet by the drift probe
   (`armor-9a947928`). The live drift check now verifies all 15 deployments
   current against tag and registry digest (15 current / 0 stale / 0
-  mismatched / 0 unavailable; reproduced 2026-10-30 09:16Z with
+  mismatched / 0 unavailable, `needs_update=0`; reproduced 2026-10-30
+  09:16Z and 14:05Z with
   `--cluster-api iad-ci=http://traefik-iad-ci:8001`, since the committed
   iad-ci URL is the in-cluster address whose serviceaccount token a
   codinghome run does not have — the default invocation reports those three
   entries unavailable with `needs_update=0`); its exit code stays 1 solely
-  on the `tags_behind_version` warning because `VERSION` is 0.1.2005 while
-  Docker Hub has no 0.1.2005 server or verifier image — a release-chain
-  state, not fleet drift. The ardenone scrape wiring was reverified
+  on the `tags_behind_version` warning because the 0.1.2006 cut
+  (2026-10-30 11:16Z) is ahead of the newest recorded release `v0.1.2004`.
+  The 0.1.2006 build pushed the git tag and the public
+  `ghcr.io/jedarden/armor:0.1.2006` server image (verified anonymously
+  2026-10-30, with `0.1.2004` present and `0.1.2005` absent as controls),
+  but the Forgejo and GitHub releases are absent — `publish_release.py`
+  died between the tag push and release creation, whose standing resolution
+  is a fresh cut, never a resubmit; the private `armor-restore-verifier`
+  0.1.2006 tag cannot be verified from codinghome this session. A fleet
+  re-roll to the next fully published release carries the list
+  HEAD-fan-out default raise (`armor-45abc172`) and
+  bind-before-manifest-load (`armor-3b7595b6`) — until then this warning is
+  a release-chain state, not fleet drift. The ardenone scrape wiring was
+  reverified
   structurally for this roll (ServiceMonitor → Service port `metrics`/9002
   → pod, Prometheus selecting all ServiceMonitors; the Endpoints object
   carried exactly one ready address — the running 0.1.2004 verifier pod —
