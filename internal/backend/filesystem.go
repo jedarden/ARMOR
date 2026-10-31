@@ -341,14 +341,20 @@ func (fs *FSBackend) DeleteObjects(ctx context.Context, bucket string, keys []st
 
 // List objects in a bucket with optional prefix.
 func (fs *FSBackend) List(ctx context.Context, bucket, prefix, delimiter, continuationToken string, maxKeys int) (*ListResult, error) {
-	return fs.list(ctx, bucket, prefix, delimiter, continuationToken, maxKeys, false)
+	return fs.ListWithStartAfter(ctx, bucket, prefix, delimiter, continuationToken, "", maxKeys)
+}
+
+// ListWithStartAfter applies S3's exclusive start-after boundary while
+// walking the stable filesystem key order.
+func (fs *FSBackend) ListWithStartAfter(ctx context.Context, bucket, prefix, delimiter, continuationToken, startAfter string, maxKeys int) (*ListResult, error) {
+	return fs.list(ctx, bucket, prefix, delimiter, continuationToken, startAfter, maxKeys, false)
 }
 
 // ListRaw lists objects without hiding the reserved .armor/ namespace. It is
 // used by internal services such as provenance auditing; public S3 listings
 // continue to use List and cannot observe these objects.
 func (fs *FSBackend) ListRaw(ctx context.Context, bucket, prefix, delimiter, continuationToken string, maxKeys int) (*ListResult, error) {
-	return fs.list(ctx, bucket, prefix, delimiter, continuationToken, maxKeys, true)
+	return fs.list(ctx, bucket, prefix, delimiter, continuationToken, "", maxKeys, true)
 }
 
 // isMissingInFlightPutTemp reports whether a walk error is the expected
@@ -361,7 +367,7 @@ func isMissingInFlightPutTemp(path string, err error) bool {
 		strings.HasPrefix(name, ".armor-put-") && strings.HasSuffix(name, ".tmp")
 }
 
-func (fs *FSBackend) list(ctx context.Context, bucket, prefix, delimiter, continuationToken string, maxKeys int, includeInternal bool) (*ListResult, error) {
+func (fs *FSBackend) list(ctx context.Context, bucket, prefix, delimiter, continuationToken, startAfter string, maxKeys int, includeInternal bool) (*ListResult, error) {
 	bucketPath := fs.bucketPath(bucket)
 
 	var objects []ObjectInfo
@@ -420,7 +426,7 @@ func (fs *FSBackend) list(ctx context.Context, bucket, prefix, delimiter, contin
 		}
 		// For delimiter pages the token can name a common prefix. Skip its
 		// entire subtree so it is not repeated on the next page.
-		if key <= continuationToken || (delimiter == "/" && strings.HasSuffix(continuationToken, "/") && strings.HasPrefix(key, continuationToken)) {
+		if key <= continuationToken || key <= startAfter || (delimiter == "/" && strings.HasSuffix(continuationToken, "/") && strings.HasPrefix(key, continuationToken)) {
 			return nil
 		}
 

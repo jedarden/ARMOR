@@ -790,6 +790,56 @@ func TestListObjectsV2(t *testing.T) {
 	}
 }
 
+func TestListObjectsV2StartAfter(t *testing.T) {
+	cfg, mb, cache, footerCache, mek := testSetup(t)
+	h := handlers.New(cfg, mb, cache, footerCache, mek, nil)
+
+	for i := 0; i < 5; i++ {
+		req := httptest.NewRequest(http.MethodPut, fmt.Sprintf("/test-bucket/start-after/file%d.txt", i), bytes.NewReader([]byte("content")))
+		w := httptest.NewRecorder()
+		h.HandleRoot(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("PUT %d failed: status %d, body %s", i, w.Code, w.Body.String())
+		}
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/test-bucket?list-type=2&prefix=start-after/&start-after=start-after/file1.txt", nil)
+	w := httptest.NewRecorder()
+	h.HandleRoot(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("ListObjectsV2 failed: status %d, body %s", w.Code, w.Body.String())
+	}
+
+	var result struct {
+		Contents []struct {
+			Key string `xml:"Key"`
+		} `xml:"Contents"`
+	}
+	if err := xml.Unmarshal(w.Body.Bytes(), &result); err != nil {
+		t.Fatalf("decode list response: %v", err)
+	}
+	if got, want := len(result.Contents), 3; got != want {
+		t.Fatalf("StartAfter returned %d objects, want %d", got, want)
+	}
+	wantKeys := map[string]bool{
+		"start-after/file2.txt": false,
+		"start-after/file3.txt": false,
+		"start-after/file4.txt": false,
+	}
+	for _, object := range result.Contents {
+		if _, ok := wantKeys[object.Key]; !ok {
+			t.Errorf("unexpected StartAfter key %q", object.Key)
+			continue
+		}
+		wantKeys[object.Key] = true
+	}
+	for key, found := range wantKeys {
+		if !found {
+			t.Errorf("StartAfter response omitted %q", key)
+		}
+	}
+}
+
 func TestEncryptionRoundTrip(t *testing.T) {
 	// This test verifies that the encryption actually happens
 	// by checking that the stored data is different from plaintext

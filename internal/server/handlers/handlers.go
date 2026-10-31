@@ -22,6 +22,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -3199,6 +3200,7 @@ func (h *Handlers) ListObjectsV2(w http.ResponseWriter, r *http.Request, bucket 
 	prefix := r.URL.Query().Get("prefix")
 	delimiter := r.URL.Query().Get("delimiter")
 	contToken := r.URL.Query().Get("continuation-token")
+	startAfter := r.URL.Query().Get("start-after")
 	maxKeys := 1000
 	if mk := r.URL.Query().Get("max-keys"); mk != "" {
 		if v, err := strconv.Atoi(mk); err == nil && v > 0 {
@@ -3213,14 +3215,29 @@ func (h *Handlers) ListObjectsV2(w http.ResponseWriter, r *http.Request, bucket 
 	backendPrefix := h.applyPrefix(prefix)
 
 	var result *backend.ListResult
-	if h.listCache != nil {
+	// StartAfter is part of the S3 page boundary. Older cache entries do not
+	// carry it, so bypass the cache for those requests rather than serving a
+	// page computed for a different cursor.
+	if h.listCache != nil && startAfter == "" {
 		if cached, ok := h.listCache.Get(bucket, prefix, delimiter, maxKeys, contToken); ok {
 			result = cached
 		}
 	}
 	if result == nil {
 		var err error
-		result, err = h.backend.List(ctx, bucket, backendPrefix, delimiter, contToken, maxKeys)
+		if lister, ok := h.backend.(backend.StartAfterLister); ok {
+			result, err = lister.ListWithStartAfter(ctx, bucket, backendPrefix, delimiter, contToken, h.applyPrefix(startAfter), maxKeys)
+		} else {
+			result, err = h.backend.List(ctx, bucket, backendPrefix, delimiter, contToken, maxKeys)
+			if err == nil && startAfter != "" {
+				result.Objects = slices.DeleteFunc(result.Objects, func(obj backend.ObjectInfo) bool {
+					return obj.Key <= h.applyPrefix(startAfter)
+				})
+				result.CommonPrefixes = slices.DeleteFunc(result.CommonPrefixes, func(commonPrefix string) bool {
+					return commonPrefix <= h.applyPrefix(startAfter)
+				})
+			}
+		}
 		if err != nil {
 			h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to list: %v", err), 500)
 			return
@@ -3230,7 +3247,7 @@ func (h *Handlers) ListObjectsV2(w http.ResponseWriter, r *http.Request, bucket 
 		// use these sizes to compute byte-range offsets, so they must reflect the
 		// plaintext length.
 		h.enrichPlaintextSizes(ctx, bucket, result)
-		if h.listCache != nil {
+		if h.listCache != nil && startAfter == "" {
 			h.listCache.Set(bucket, prefix, delimiter, maxKeys, contToken, result)
 		}
 	}

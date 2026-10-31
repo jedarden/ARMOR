@@ -41,6 +41,14 @@ type ListResult struct {
 	CommonPrefixes []string
 }
 
+// StartAfterLister is implemented by backends that can apply S3's
+// ListObjectsV2 start-after cursor before limiting a page. It is optional so
+// small test and auxiliary backends can continue to implement Backend without
+// duplicating pagination logic.
+type StartAfterLister interface {
+	ListWithStartAfter(ctx context.Context, bucket, prefix, delimiter, continuationToken, startAfter string, maxKeys int) (*ListResult, error)
+}
+
 // BucketInfo contains metadata about a bucket.
 type BucketInfo struct {
 	Name         string

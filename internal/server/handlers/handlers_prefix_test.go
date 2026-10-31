@@ -145,6 +145,62 @@ func TestMultipartKeySubresourcesUsePrefix(t *testing.T) {
 	}
 }
 
+func TestObjectLockSubresourcesUsePrefix(t *testing.T) {
+	mek := make([]byte, 32)
+	if _, err := rand.Read(mek); err != nil {
+		t.Fatalf("failed to generate MEK: %v", err)
+	}
+	cfg := &config.Config{
+		BlockSize:     65536,
+		AuthAccessKey: "test-access-key",
+		AuthSecretKey: "REMOVED-NOT-A-SECRET-VALUE",
+		Prefix:        normalizeTestPrefix("tenant-a/"),
+	}
+	mb := newMockBackendWithObjectLock()
+	cache := backend.NewMetadataCache(1000, 300)
+	footerCache := backend.NewFooterCache(1000, 300)
+	km, err := keymanager.New(mek, nil, nil)
+	if err != nil {
+		t.Fatalf("failed to create key manager: %v", err)
+	}
+	h := handlers.New(cfg, mb, cache, footerCache, km, nil)
+
+	retentionXML := `<Retention xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Mode>GOVERNANCE</Mode><RetainUntilDate>2026-12-31T00:00:00Z</RetainUntilDate></Retention>`
+	req := httptest.NewRequest(http.MethodPut, "/test-bucket/object.txt?retention", strings.NewReader(retentionXML))
+	w := httptest.NewRecorder()
+	h.HandleRoot(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("PUT retention: status %d, body %s", w.Code, w.Body.String())
+	}
+	if _, ok := mb.retentionConfig["test-bucket/tenant-a/object.txt"]; !ok {
+		t.Fatalf("retention stored under keys %v, want prefixed object key", mb.retentionConfig)
+	}
+
+	legalHoldXML := `<LegalHold xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Status>ON</Status></LegalHold>`
+	req = httptest.NewRequest(http.MethodPut, "/test-bucket/object.txt?legal-hold", strings.NewReader(legalHoldXML))
+	w = httptest.NewRecorder()
+	h.HandleRoot(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("PUT legal hold: status %d, body %s", w.Code, w.Body.String())
+	}
+	if _, ok := mb.legalHoldConfig["test-bucket/tenant-a/object.txt"]; !ok {
+		t.Fatalf("legal hold stored under keys %v, want prefixed object key", mb.legalHoldConfig)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/test-bucket/object.txt?retention", nil)
+	w = httptest.NewRecorder()
+	h.HandleRoot(w, req)
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "GOVERNANCE") {
+		t.Fatalf("GET retention: status %d, body %s", w.Code, w.Body.String())
+	}
+	req = httptest.NewRequest(http.MethodGet, "/test-bucket/object.txt?legal-hold", nil)
+	w = httptest.NewRecorder()
+	h.HandleRoot(w, req)
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "ON") {
+		t.Fatalf("GET legal hold: status %d, body %s", w.Code, w.Body.String())
+	}
+}
+
 // TestListObjectsV2WithPrefix verifies that ListObjectsV2 works correctly
 // when ARMOR_PREFIX is configured.
 func TestListObjectsV2WithPrefix(t *testing.T) {

@@ -917,10 +917,18 @@ func (b *B2Backend) DeleteObjects(ctx context.Context, bucket string, keys []str
 
 // List objects in a bucket with optional prefix.
 func (b *B2Backend) List(ctx context.Context, bucket, prefix, delimiter, continuationToken string, maxKeys int) (*ListResult, error) {
+	return b.ListWithStartAfter(ctx, bucket, prefix, delimiter, continuationToken, "", maxKeys)
+}
+
+// ListWithStartAfter applies the S3 StartAfter cursor before B2 applies
+// MaxKeys. This preserves the requested page boundary instead of discarding
+// already-fetched entries in the handler.
+func (b *B2Backend) ListWithStartAfter(ctx context.Context, bucket, prefix, delimiter, continuationToken, startAfter string, maxKeys int) (*ListResult, error) {
 	input := &s3.ListObjectsV2Input{
 		Bucket:            aws.String(bucket),
 		Prefix:            aws.String(prefix),
 		ContinuationToken: aws.String(continuationToken),
+		StartAfter:        aws.String(startAfter),
 	}
 	if delimiter != "" {
 		input.Delimiter = aws.String(delimiter)
