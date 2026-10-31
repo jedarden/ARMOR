@@ -201,7 +201,7 @@ func TestCompleteMultipartUpload_V3_SinglePart(t *testing.T) {
 	}
 
 	// Cleanup
-	_, err = storageClient.DeleteObject(ctx, &s3.DeleteObjectInput{
+	_, err = client.DeleteObject(ctx, &s3.DeleteObjectInput{
 		Bucket: aws.String(bucket),
 		Key:    aws.String(key),
 	})
@@ -417,7 +417,7 @@ func TestCompleteMultipartUpload_V3_TwoParts(t *testing.T) {
 	}
 
 	// Cleanup
-	_, err = storageClient.DeleteObject(ctx, &s3.DeleteObjectInput{
+	_, err = client.DeleteObject(ctx, &s3.DeleteObjectInput{
 		Bucket: aws.String(bucket),
 		Key:    aws.String(key),
 	})
