@@ -601,6 +601,10 @@ func (s *Server) Handler() http.Handler {
 	}
 
 	// Bucket operations
+	// The canary is also exposed on the S3 listener: the integration health
+	// contract probes ARMOR_ENDPOINT directly, while the admin listener keeps
+	// the same route for operators and Kubernetes probes.
+	mux.HandleFunc("/armor/canary", s.canaryHandler)
 	mux.HandleFunc("/", s.wrapHandler(h.HandleRoot))
 
 	// Apply server header and request ID middleware to all S3 responses

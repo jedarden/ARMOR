@@ -1480,6 +1480,27 @@ func (h *Handlers) GetObject(w http.ResponseWriter, r *http.Request, bucket, key
 
 	// Check if this is a multipart object (HMAC table in sidecar, no embedded header)
 	isMultipart := info.Metadata["x-amz-meta-armor-multipart"] == "true"
+	if rawPartNumber := r.URL.Query().Get("partNumber"); rawPartNumber != "" {
+		partNumber, parseErr := strconv.Atoi(rawPartNumber)
+		if parseErr != nil || partNumber < 1 || partNumber > 10000 {
+			h.writeError(w, r, "InvalidPart", "part number must be between 1 and 10000", http.StatusRequestedRangeNotSatisfiable)
+			return
+		}
+		if !isMultipart {
+			h.writeError(w, r, "InvalidPart", "part number is only valid for multipart objects", http.StatusRequestedRangeNotSatisfiable)
+			return
+		}
+		start, end, ok := multipartPartRange(info.Metadata, int64(partNumber), plaintextSize)
+		if !ok {
+			h.writeError(w, r, "InvalidPart", fmt.Sprintf("multipart part %d does not exist", partNumber), http.StatusRequestedRangeNotSatisfiable)
+			return
+		}
+		if r.Header.Get("Range") != "" {
+			h.writeError(w, r, "InvalidRequest", "part number cannot be combined with Range", http.StatusBadRequest)
+			return
+		}
+		r.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", start, end))
+	}
 
 	// Determine the version and create decryptor
 	// For single-PUT objects: read envelope header to get version
@@ -1715,6 +1736,18 @@ func readSmallFetchBody(body io.Reader, want int64) ([]byte, error) {
 // the table and data regions are sliced out of it locally instead of fetched.
 func (h *Handlers) handleFullObjectStream(w http.ResponseWriter, r *http.Request, bucket, key string, decryptor *crypto.Decryptor, armorMeta *backend.ARMORMetadata, plaintextSize int64, lastModified time.Time, isMultipart bool, multipartPartSize int64, isNonUniform bool, cumulativePartSizes map[int]int64, header *crypto.EnvelopeHeader, storedGen v3TableKeyParts, singleFetch []byte) {
 	ctx := r.Context()
+	if plaintextSize == 0 {
+		// Empty v3 objects have a header and an empty trailer, so there is no
+		// data or block table range to fetch. Return the authenticated empty
+		// representation directly.
+		w.Header().Set("Content-Length", "0")
+		w.Header().Set("Content-Type", armorMeta.ContentType)
+		w.Header().Set("ETag", fmt.Sprintf(`"%s"`, armorMeta.ETag))
+		w.Header().Set("Accept-Ranges", "bytes")
+		w.Header().Set("Last-Modified", lastModified.UTC().Format(http.TimeFormat))
+		w.WriteHeader(http.StatusOK)
+		return
+	}
 
 	// Apply prefix for backend operations
 	prefixedKey := h.applyPrefix(key)
@@ -2679,6 +2712,46 @@ func parseRangeHeader(header string, totalSize int64) (start, end int64, err err
 	return start, end, nil
 }
 
+// multipartPartRange maps an S3 GetObject partNumber to the plaintext span
+// represented by that part. Current multipart objects record a uniform part
+// size; non-uniform legacy objects carry cumulative part sizes instead.
+func multipartPartRange(metadata map[string]string, partNumber, plaintextSize int64) (start, end int64, ok bool) {
+	if raw := metadata["x-amz-meta-armor-cumulative-sizes"]; raw != "" {
+		var cumulative map[int]int64
+		if err := json.Unmarshal([]byte(raw), &cumulative); err == nil {
+			endExclusive, exists := cumulative[int(partNumber)]
+			if !exists {
+				return 0, 0, false
+			}
+			if partNumber > 1 {
+				var previous bool
+				start, previous = cumulative[int(partNumber-1)]
+				if !previous {
+					return 0, 0, false
+				}
+			}
+			if start < 0 || endExclusive <= start || endExclusive > plaintextSize {
+				return 0, 0, false
+			}
+			return start, endExclusive - 1, true
+		}
+	}
+
+	partSize, err := strconv.ParseInt(metadata["x-amz-meta-armor-part-size"], 10, 64)
+	if err != nil || partSize <= 0 {
+		return 0, 0, false
+	}
+	start = (partNumber - 1) * partSize
+	if start < 0 || start >= plaintextSize {
+		return 0, 0, false
+	}
+	end = start + partSize - 1
+	if end >= plaintextSize {
+		end = plaintextSize - 1
+	}
+	return start, end, true
+}
+
 // HeadObject handles S3 HeadObject.
 func (h *Handlers) HeadObject(w http.ResponseWriter, r *http.Request, bucket, key string) {
 	ctx := r.Context()
@@ -2908,6 +2981,10 @@ func (h *Handlers) CopyObject(w http.ResponseWriter, r *http.Request, dstBucket,
 	// resolves the same way the URL bucket does. Without this the copy fails
 	// with NoSuchKey against a bucket that no longer holds anything.
 	srcBucket = h.config.ResolveBucket(srcBucket)
+	if srcBucket == dstBucket && srcKey == dstKey {
+		h.writeError(w, r, "InvalidRequest", "Cannot copy an object onto itself", http.StatusBadRequest)
+		return
+	}
 
 	// Apply prefix for backend operations
 	srcPrefixedKey := h.applyPrefix(srcKey)
@@ -3045,6 +3122,15 @@ func (h *Handlers) CopyObject(w http.ResponseWriter, r *http.Request, dstBucket,
 			for k, v := range r.Header {
 				if strings.HasPrefix(k, "X-Amz-Meta-") && !strings.HasPrefix(k, "X-Amz-Meta-Armor-") {
 					newMeta[strings.ToLower(k)] = v[0]
+				}
+			}
+		} else {
+			// The ARMOR metadata map is rebuilt above for the re-wrapped DEK;
+			// explicitly preserve client metadata for the default COPY directive.
+			for k, v := range srcInfo.Metadata {
+				lower := strings.ToLower(k)
+				if strings.HasPrefix(lower, "x-amz-meta-") && !strings.HasPrefix(lower, "x-amz-meta-armor-") {
+					newMeta[lower] = v
 				}
 			}
 		}
@@ -3510,8 +3596,10 @@ func (h *Handlers) DeleteObjects(w http.ResponseWriter, r *http.Request, bucket 
 	}
 
 	if len(deleteReq.Objects) == 0 {
-		h.writeError(w, r, "MalformedXML", "No objects specified for deletion", 400)
-		return
+		// S3 accepts an empty batch and returns an empty DeleteResult.  This is
+		// useful to clients that construct a batch from an optional input set.
+		// Continue through the ordinary response path so quiet mode and the
+		// XML shape stay identical to a successful non-empty request.
 	}
 
 	// Extract original keys from request and prepare prefixed keys for backend
@@ -5253,6 +5341,36 @@ func (h *Handlers) ListMultipartUploads(w http.ResponseWriter, r *http.Request, 
 	if err != nil {
 		h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to list multipart uploads: %v", err), 500)
 		return
+	}
+
+	// The backend contract predates the marker and max-uploads fields, so apply
+	// those page boundaries here in client-key space while keeping the backend
+	// namespace private. This preserves the existing prefix forwarding without
+	// changing ListObjectsV2 semantics.
+	keyMarker := h.applyPrefix(r.URL.Query().Get("key-marker"))
+	uploadIDMarker := r.URL.Query().Get("upload-id-marker")
+	filtered := result.Uploads[:0]
+	for _, upload := range result.Uploads {
+		if keyMarker != "" {
+			if upload.Key < keyMarker || (upload.Key == keyMarker && upload.UploadID <= uploadIDMarker) {
+				continue
+			}
+		}
+		filtered = append(filtered, upload)
+	}
+	result.Uploads = filtered
+	maxUploads := 1000
+	if raw := r.URL.Query().Get("max-uploads"); raw != "" {
+		if parsed, parseErr := strconv.Atoi(raw); parseErr == nil && parsed > 0 {
+			maxUploads = parsed
+		}
+	}
+	if len(result.Uploads) > maxUploads {
+		last := result.Uploads[maxUploads-1]
+		result.Uploads = result.Uploads[:maxUploads]
+		result.IsTruncated = true
+		result.NextKeyMarker = last.Key
+		result.NextUploadIDMarker = last.UploadID
 	}
 
 	// Build XML response

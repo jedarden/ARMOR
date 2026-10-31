@@ -232,13 +232,21 @@ func TestBlockTable_CompressedAndMixedEntries(t *testing.T) {
 func TestBlockTable_EmptyTable(t *testing.T) {
 	table := NewBlockTable(65536, 0)
 
-	if _, err := table.Encode(); err == nil {
-		t.Error("Encode should reject empty table")
+	encoded, err := table.Encode()
+	if err != nil {
+		t.Fatalf("Encode failed: %v", err)
+	}
+	if len(encoded) != 0 {
+		t.Fatalf("empty table encoded to %d bytes, want 0", len(encoded))
 	}
 
 	emptyData := []byte{}
-	if _, err := DecodeBlockTable(emptyData, 65536, 0); err == nil {
-		t.Error("Decode should reject empty data")
+	decoded, err := DecodeBlockTable(emptyData, 65536, 0)
+	if err != nil {
+		t.Fatalf("Decode failed: %v", err)
+	}
+	if len(decoded.Entries) != 0 {
+		t.Fatalf("decoded empty table has %d entries, want 0", len(decoded.Entries))
 	}
 }
 

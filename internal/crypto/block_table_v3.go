@@ -150,7 +150,10 @@ func (t *BlockTable) AddEntry(entry *BlockTableEntry) error {
 // Encode serializes the entire block table to bytes.
 func (t *BlockTable) Encode() ([]byte, error) {
 	if len(t.Entries) == 0 {
-		return nil, fmt.Errorf("cannot encode empty block table: %w", ErrInvalidBlockTableEntry)
+		// Empty plaintext is represented by an empty trailer.  The envelope
+		// header carries the zero plaintext size, so no sentinel block is
+		// needed and inventing one would change the format's size invariant.
+		return []byte{}, nil
 	}
 
 	buf := make([]byte, len(t.Entries)*BlockTableEntrySize)
@@ -169,7 +172,11 @@ func (t *BlockTable) Encode() ([]byte, error) {
 // It validates that the number of entries matches expectedBlockCount.
 func DecodeBlockTable(data []byte, blockSize int, expectedBlockCount uint32) (*BlockTable, error) {
 	if len(data) == 0 {
-		return nil, fmt.Errorf("empty block table data: %w", ErrInvalidBlockTableEntry)
+		if expectedBlockCount != 0 {
+			return nil, fmt.Errorf("expected %d entries (%d bytes), got 0 entries (0 bytes): %w",
+				expectedBlockCount, expectedBlockCount*BlockTableEntrySize, ErrInvalidTableSize)
+		}
+		return NewBlockTable(blockSize, 0), nil
 	}
 
 	// Verify table size matches expected block count

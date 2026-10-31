@@ -75,12 +75,6 @@ func NewReplayableEnvelopeReader(plaintext io.ReadSeeker, header []byte, dek, iv
 		return nil, errors.New("invalid replayable envelope source or size")
 	}
 	blockCount := ComputeBlockCount(plaintextSize, blockSize)
-	if version == Version3 && blockCount == 0 {
-		// EncryptV3Stream followed by BlockTable.Encode fails an empty
-		// table, so the pipe path never produced a v3 envelope with no
-		// blocks; fail here before any bytes move.
-		return nil, fmt.Errorf("v3 envelope requires at least one block: %w", ErrInvalidBlockTableEntry)
-	}
 	r := &ReplayableEnvelopeReader{
 		plaintext:     plaintext,
 		header:        header,

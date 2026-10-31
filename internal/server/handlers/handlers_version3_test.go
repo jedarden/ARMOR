@@ -87,6 +87,29 @@ func TestVersion3EncryptionPutObject(t *testing.T) {
 	}
 }
 
+// TestVersion3EmptyPutObject verifies that an empty plaintext uses the
+// header-only v3 envelope and still round-trips through the normal GET path.
+func TestVersion3EmptyPutObject(t *testing.T) {
+	cfg, mb, cache, footerCache, km := testSetup(t)
+	cfg.FormatWriteVersion = 3
+	h := handlers.New(cfg, mb, cache, footerCache, km, nil)
+
+	put := httptest.NewRecorder()
+	h.HandleRoot(put, httptest.NewRequest(http.MethodPut, "/test-bucket/empty-key", bytes.NewReader(nil)))
+	if put.Code != http.StatusOK {
+		t.Fatalf("empty v3 PUT = %d: %s", put.Code, put.Body.String())
+	}
+	if stored := mb.objects["test-bucket/empty-key"]; len(stored) != crypto.HeaderSize {
+		t.Fatalf("empty v3 envelope length = %d, want %d", len(stored), crypto.HeaderSize)
+	}
+
+	get := httptest.NewRecorder()
+	h.HandleRoot(get, httptest.NewRequest(http.MethodGet, "/test-bucket/empty-key", nil))
+	if get.Code != http.StatusOK || get.Body.Len() != 0 {
+		t.Fatalf("empty v3 GET = %d with %d body bytes, want 200 and 0: %s", get.Code, get.Body.Len(), get.Body.String())
+	}
+}
+
 // TestVersion3EncryptionStreamingPut verifies that streaming PUT uses Version3 encryption when FormatWriteVersion is 3.
 func TestVersion3EncryptionStreamingPut(t *testing.T) {
 	cfg, mb, cache, footerCache, km := testSetup(t)

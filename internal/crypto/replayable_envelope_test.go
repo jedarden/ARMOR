@@ -244,17 +244,25 @@ func TestReplayableEnvelopeSeekWhence(t *testing.T) {
 
 func TestReplayableEnvelopeEmptyInput(t *testing.T) {
 	dek, iv := replayableKeyMaterial()
-	// v3 with zero blocks has no encodable trailer table; the pipe path
-	// fails it at BlockTable.Encode, so the reader must fail it up front.
-	if _, err := NewReplayableEnvelopeReader(bytes.NewReader(nil), nil, dek, iv, 4096, 0, Version3); err == nil {
-		t.Fatalf("v3 empty envelope accepted")
+	headerBytes, v3Want := expectedEnvelope(t, dek, iv, 4096, nil, Version3)
+	v3, err := NewReplayableEnvelopeReader(replayableSpool(t, nil), headerBytes, dek, iv, 4096, 0, Version3)
+	if err != nil {
+		t.Fatalf("v3 empty envelope: %v", err)
 	}
-	headerBytes, want := expectedEnvelope(t, dek, iv, 4096, nil, Version2)
+	got, err := io.ReadAll(v3)
+	if err != nil {
+		t.Fatalf("v3 empty read: %v", err)
+	}
+	if !bytes.Equal(got, v3Want) {
+		t.Fatalf("v3 empty envelope mismatch (%d vs %d bytes)", len(got), len(v3Want))
+	}
+	var want []byte
+	headerBytes, want = expectedEnvelope(t, dek, iv, 4096, nil, Version2)
 	r, err := NewReplayableEnvelopeReader(replayableSpool(t, nil), headerBytes, dek, iv, 4096, 0, Version2)
 	if err != nil {
 		t.Fatalf("v2 empty envelope: %v", err)
 	}
-	got, err := io.ReadAll(r)
+	got, err = io.ReadAll(r)
 	if err != nil {
 		t.Fatalf("v2 empty read: %v", err)
 	}
