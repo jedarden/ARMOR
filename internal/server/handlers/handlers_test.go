@@ -32,6 +32,8 @@ type mockBackend struct {
 	meta                               map[string]map[string]string
 	modified                           map[string]time.Time // LastModified stamped at write time, as a real object store would
 	capturedListMultipartUploadsPrefix string               // Captured prefix argument for testing
+	capturedAbortMultipartKey          string
+	capturedListPartsKey               string
 }
 
 func newMockBackend() *mockBackend {
@@ -335,10 +337,16 @@ func (m *mockBackend) CompleteMultipartUpload(ctx context.Context, bucket, key, 
 }
 
 func (m *mockBackend) AbortMultipartUpload(ctx context.Context, bucket, key, uploadID string) error {
+	m.mu.Lock()
+	m.capturedAbortMultipartKey = key
+	m.mu.Unlock()
 	return nil
 }
 
 func (m *mockBackend) ListParts(ctx context.Context, bucket, key, uploadID string) (*backend.ListPartsResult, error) {
+	m.mu.Lock()
+	m.capturedListPartsKey = key
+	m.mu.Unlock()
 	return &backend.ListPartsResult{}, nil
 }
 

@@ -5024,7 +5024,7 @@ func (h *Handlers) AbortMultipartUpload(w http.ResponseWriter, r *http.Request, 
 	}
 
 	// Forward abort to B2
-	if err := h.backend.AbortMultipartUpload(ctx, bucket, key, uploadID); err != nil {
+	if err := h.backend.AbortMultipartUpload(ctx, bucket, h.applyPrefix(key), uploadID); err != nil {
 		h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to abort multipart upload: %v", err), 500)
 		return
 	}
@@ -5081,7 +5081,7 @@ func (h *Handlers) ListParts(w http.ResponseWriter, r *http.Request, bucket, key
 	}
 
 	// Forward to B2
-	result, err := h.backend.ListParts(ctx, bucket, key, uploadID)
+	result, err := h.backend.ListParts(ctx, bucket, h.applyPrefix(key), uploadID)
 	if err != nil {
 		h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to list parts: %v", err), 500)
 		return
@@ -5489,7 +5489,7 @@ func (h *Handlers) PutObjectLockConfiguration(w http.ResponseWriter, r *http.Req
 func (h *Handlers) GetObjectRetention(w http.ResponseWriter, r *http.Request, bucket, key string) {
 	ctx := r.Context()
 
-	retention, err := h.backend.GetObjectRetention(ctx, bucket, key)
+	retention, err := h.backend.GetObjectRetention(ctx, bucket, h.applyPrefix(key))
 	if err != nil {
 		h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to get object retention: %v", err), 500)
 		return
@@ -5512,7 +5512,7 @@ func (h *Handlers) PutObjectRetention(w http.ResponseWriter, r *http.Request, bu
 		return
 	}
 
-	if err := h.backend.PutObjectRetention(ctx, bucket, key, body); err != nil {
+	if err := h.backend.PutObjectRetention(ctx, bucket, h.applyPrefix(key), body); err != nil {
 		h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to put object retention: %v", err), 500)
 		return
 	}
@@ -5525,7 +5525,7 @@ func (h *Handlers) PutObjectRetention(w http.ResponseWriter, r *http.Request, bu
 func (h *Handlers) GetObjectLegalHold(w http.ResponseWriter, r *http.Request, bucket, key string) {
 	ctx := r.Context()
 
-	legalHold, err := h.backend.GetObjectLegalHold(ctx, bucket, key)
+	legalHold, err := h.backend.GetObjectLegalHold(ctx, bucket, h.applyPrefix(key))
 	if err != nil {
 		h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to get object legal hold: %v", err), 500)
 		return
@@ -5548,7 +5548,7 @@ func (h *Handlers) PutObjectLegalHold(w http.ResponseWriter, r *http.Request, bu
 		return
 	}
 
-	if err := h.backend.PutObjectLegalHold(ctx, bucket, key, body); err != nil {
+	if err := h.backend.PutObjectLegalHold(ctx, bucket, h.applyPrefix(key), body); err != nil {
 		h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to put object legal hold: %v", err), 500)
 		return
 	}

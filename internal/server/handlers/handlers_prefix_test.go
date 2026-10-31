@@ -97,6 +97,54 @@ func TestPutObjectWithPrefix(t *testing.T) {
 	}
 }
 
+// TestMultipartKeySubresourcesUsePrefix verifies that the multipart state
+// lookup and the upstream S3 operation agree on the stored key. The client
+// must remain unaware of ARMOR_PREFIX, including for ListParts and Abort.
+func TestMultipartKeySubresourcesUsePrefix(t *testing.T) {
+	cfg, mb, cache, footerCache, km := testSetupWithPrefix(t, "tenant-a/")
+	h := handlers.New(cfg, mb, cache, footerCache, km, nil)
+
+	key := "multipart/object.bin"
+	req := httptest.NewRequest(http.MethodPost, "/test-bucket/"+key+"?uploads=", nil)
+	w := httptest.NewRecorder()
+	h.HandleRoot(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("CreateMultipartUpload failed: status %d, body %s", w.Code, w.Body.String())
+	}
+	var created struct {
+		UploadID string `xml:"UploadId"`
+	}
+	if err := xml.Unmarshal(w.Body.Bytes(), &created); err != nil {
+		t.Fatalf("decode create response: %v", err)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/test-bucket/"+key+"?uploadId="+created.UploadID, nil)
+	w = httptest.NewRecorder()
+	h.HandleRoot(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("ListParts failed: status %d, body %s", w.Code, w.Body.String())
+	}
+	mb.mu.Lock()
+	gotListPartsKey := mb.capturedListPartsKey
+	mb.mu.Unlock()
+	if gotListPartsKey != cfg.Prefix+key {
+		t.Fatalf("ListParts backend key = %q, want %q", gotListPartsKey, cfg.Prefix+key)
+	}
+
+	req = httptest.NewRequest(http.MethodDelete, "/test-bucket/"+key+"?uploadId="+created.UploadID, nil)
+	w = httptest.NewRecorder()
+	h.HandleRoot(w, req)
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("AbortMultipartUpload failed: status %d, body %s", w.Code, w.Body.String())
+	}
+	mb.mu.Lock()
+	gotAbortKey := mb.capturedAbortMultipartKey
+	mb.mu.Unlock()
+	if gotAbortKey != cfg.Prefix+key {
+		t.Fatalf("AbortMultipartUpload backend key = %q, want %q", gotAbortKey, cfg.Prefix+key)
+	}
+}
+
 // TestListObjectsV2WithPrefix verifies that ListObjectsV2 works correctly
 // when ARMOR_PREFIX is configured.
 func TestListObjectsV2WithPrefix(t *testing.T) {
