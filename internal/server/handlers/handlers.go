@@ -3350,6 +3350,17 @@ func (h *Handlers) ListObjectsV2(w http.ResponseWriter, r *http.Request, bucket 
 	// requested prefix so the backend finds the right objects.
 	backendPrefix := h.applyPrefix(prefix)
 
+	// StartAfter is a client cursor: empty means "from the beginning of the
+	// prefix". Composing the prefix onto the empty string would fabricate a
+	// start-after equal to the bare ARMOR_PREFIX, which B2 honors as a real
+	// cursor — and with a delimiter it empties the first page (aws s3 ls
+	// sends delimiter=/ and exits 1 on the empty result; armor-56ecc6b7).
+	// Only compose it when the client actually sent one.
+	backendStartAfter := ""
+	if startAfter != "" {
+		backendStartAfter = h.applyPrefix(startAfter)
+	}
+
 	var result *backend.ListResult
 	// StartAfter is part of the S3 page boundary. Older cache entries do not
 	// carry it, so bypass the cache for those requests rather than serving a
@@ -3362,15 +3373,15 @@ func (h *Handlers) ListObjectsV2(w http.ResponseWriter, r *http.Request, bucket 
 	if result == nil {
 		var err error
 		if lister, ok := h.backend.(backend.StartAfterLister); ok {
-			result, err = lister.ListWithStartAfter(ctx, bucket, backendPrefix, delimiter, contToken, h.applyPrefix(startAfter), maxKeys)
+			result, err = lister.ListWithStartAfter(ctx, bucket, backendPrefix, delimiter, contToken, backendStartAfter, maxKeys)
 		} else {
 			result, err = h.backend.List(ctx, bucket, backendPrefix, delimiter, contToken, maxKeys)
 			if err == nil && startAfter != "" {
 				result.Objects = slices.DeleteFunc(result.Objects, func(obj backend.ObjectInfo) bool {
-					return obj.Key <= h.applyPrefix(startAfter)
+					return obj.Key <= backendStartAfter
 				})
 				result.CommonPrefixes = slices.DeleteFunc(result.CommonPrefixes, func(commonPrefix string) bool {
-					return commonPrefix <= h.applyPrefix(startAfter)
+					return commonPrefix <= backendStartAfter
 				})
 			}
 		}
