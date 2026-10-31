@@ -1,6 +1,6 @@
 # Release status and known limitations
 
-**Status date:** 2026-10-29 · **Source version:** see [`VERSION`](../VERSION)
+**Status date:** 2026-10-31 · **Source version:** see [`VERSION`](../VERSION)
 
 This page is the evidence boundary for operator documentation. `repository-tested`
 means the current tree has focused passing tests, not proof of a published image
@@ -76,7 +76,7 @@ tag alone.
 | Presigned/share GET | `repository-tested` | The enabled in-process harness passes share GET and range/error cases; `armor-0163fb32` closed after correcting its test configuration. | **None recorded**; the share GET test skips external-image endpoint mode. | Enable `ARMOR_PRESIGN_ENABLED` and configure the base URL and secret, then probe the deployed route. |
 | Byte-range reads | `active-regression` | Protocol and handler tests cover byte/status correctness; `armor-817d9d92` closed the large multipart read failure, `armor-73564f97` and `armor-5694713b` closed bounded read-ahead and offset coalescing, and `armor-272299ca` closed whole-part v3 multipart GET streaming (block-by-block through one pipelined range; on `main`, not yet in a release). [Local baseline](performance/large-object-range-read-baseline.md) and the [live qualification](performance/production-b2-cloudflare-2026-09-28.md) bound performance evidence. `armor-68e3d5a9` recorded the 2026-10-24 rerun; `armor-ebd22a99` remains open. | **0.1.1975** predates the six-client range matrix; the later backfilled tags do not prove the streaming read path. The 2026-10-24 qualification on 0.1.1993 completed the full workload including all five range shapes on the per-block v3 path, and measured ARMOR full-GET plaintext throughput at 2.0 MB/s and ranged reads at 1.4–57 s p50; the coalesced range path (`792a619b`) and the streamed multipart GET are not yet in a release. | Active regression boundary is large-object throughput and bounded reads; the live qualification measured that boundary on one runner and one replica and is not a production performance claim. |
 | ADR-006 provider-outage failover and failback | `repository-tested` | The tagged `TestProviderOutageFailoverWritesAndFailback` filesystem drill and backend tests prove the explicit promotion sequence; `armor-14a2e34c` is closed. | **None recorded** for a live provider outage. | Run the live drill and record the image version and recovery inventory before treating a deployment as proven. |
-| S3 operation surface | `scope-limited` | The current six-client matrix covers authentication, reads, ranges, listing, overwrite/delete, and multipart where supported. | **0.1.1975** is the last completed client-image evidence and predates that matrix; backfilled tags through 0.1.1988 have no completed matrix proof. | Use the matrix for the exact image under evaluation; this is a scoped operation claim. |
+| S3 operation surface | `scope-limited` | The current six-client matrix covers authentication, reads, ranges, listing, overwrite/delete, and multipart where supported. Bucket administration (create/delete/root listing) and S3 object lock are explicitly outside the matrix: the exact-SHA `armor-integration` gate excludes both families by default (2026-10-31, armor-be3d322a) so every remaining gate failure is a claimed-operation failure. | **0.1.1975** is the last completed client-image evidence and predates that matrix; backfilled tags through 0.1.1988 have no completed matrix proof. | Use the matrix for the exact image under evaluation; this is a scoped operation claim. Bucket administration and object lock are unclaimed — see the known-limitations entry below; the gate exclusion is not evidence that they work. |
 
 ## Known limitations
 
@@ -114,6 +114,34 @@ tag alone.
   the compatibility matrix, against the tested image and configuration. Do not
   generalize them to untested S3 features or to a deployment whose image or
   configuration has not been checked.
+- **Bucket administration and S3 object lock are outside the release claim.**
+  ARMOR is a single-bucket encryption proxy: every deployment configures one
+  bucket, and every fleet B2 credential is an application key scoped to that
+  bucket. A bucket-scoped key cannot create or delete buckets, and "listing"
+  in the claim matrix means object listing inside the configured bucket —
+  root `ListBuckets` is not claimed. The `CreateBucket`/`DeleteBucket`/
+  `ListBuckets` handlers exist as backend pass-throughs (dispatch is
+  classified in `s3_operation.go` for metrics), but a backend denial under a
+  bucket-scoped key surfaces as a generic `500 InternalError`, not a
+  client-scoped error — observed in the `armor-integration` nightly on the
+  iad-ci scope. Object lock is further limited in two ways. First, the
+  `?object-lock` / `?retention` / `?legal-hold` subresources forward raw XML
+  to B2, so they only behave where the underlying B2 bucket itself is
+  object-lock enabled (B2 allows object lock only at bucket creation).
+  Second, the PUT path does not consume `x-amz-object-lock-mode`,
+  `x-amz-object-lock-retain-until-date`, or `x-amz-object-lock-legal-hold`
+  request headers: a client that asks for WORM retention or a legal hold
+  receives success while the object is stored unprotected and remains
+  deletable — the nightly shows a compliance-mode object deleted without a
+  bypass header. Do not point S3 clients that depend on object lock at
+  ARMOR. Both families are excluded from the exact-SHA `armor-integration`
+  gate's default `skip-tests` (scope decision 2026-10-31, armor-be3d322a;
+  pattern in `k8s/iad-ci/argo-workflows/armor-integration-workflowtemplate.yml`)
+  so the gate's remaining failures are all claimed-operation failures — the
+  exclusion is not evidence that these operations work, and claimed-operation
+  tests must never be added to that pattern. Returning a loud `NotImplemented`
+  for lock headers and subresources instead of silently accepting them is a
+  candidate future change, not a current claim.
 - **Restore-verifier alerting is not yet a fleet-wide release claim.** The
   GitOps rollout now contains the scrape, rule-evaluation, Alertmanager route,
   and tailnet verification surfaces for all five verifier scopes. The live

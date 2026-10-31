@@ -216,10 +216,34 @@ the live iad-ci bucket scope isolated under `ARMOR_PREFIX=integration-tests/`
 with its own `ARMOR_WRITER_ID` (so its manifest chain and every object it
 writes are disjoint from the live deployment's keys in the same bucket),
 and runs the suite with `-race` and **without** `-short` — omitting
-`-short` is the point, since every test skips under it. Only
-`TestMultipart5GB*` (a genuine 6 GiB upload, opt-in by the suite's own
-design) is excluded by default via the `skip-tests` parameter; an empty
-value runs the boundary pair too.
+`-short` is the point, since every test skips under it. The default
+`skip-tests` value excludes two groups (scope decision 2026-10-31,
+armor-be3d322a; evidence boundary in docs/release-status.md):
+
+- `TestMultipart5GB*` — a genuine 6 GiB upload, opt-in by the suite's own
+  design; an empty value runs the boundary pair too.
+- Bucket administration (`TestListBuckets`, `TestCreateBucket_BucketNaming`,
+  `TestCreateBucket_AlreadyExists`, `TestDeleteBucket_EmptyBucket`,
+  `TestDeleteBucket_NonEmptyBucket`, `TestDeleteBucket_NonExistentBucket`,
+  `TestBucketLocationConstraint`) and the object-lock family
+  (`TestPutObjectLockConfiguration`, `TestPutObjectWithRetention`,
+  `TestPutObjectWithLegalHold`, `TestPutObjectWithLegalHold_DISABLED`,
+  `TestPutObjectLegalHold`, `TestPutObjectRetention`,
+  `TestGetObjectRetention`, `TestBypassRetentionWithGovernance`,
+  `TestWORMWithComplianceMode`, `TestObjectLockModes`). These operations are
+  outside the release claim: the integration credential — like every fleet
+  credential — is a B2 application key scoped to one existing bucket, so
+  bucket create/delete is denied outright and root listing is unclaimed;
+  object-lock subresources require a lock-enabled B2 bucket and ARMOR does
+  not consume `x-amz-object-lock-*` request headers (see the
+  "Bucket administration and S3 object lock are outside the release claim"
+  limitation in docs/release-status.md).
+
+Excluding those families keeps every remaining red a claimed-operation
+failure; the exclusion is not evidence that they work. Claimed-operation
+tests — multipart, copy, tags, object listing, ranges, zero-byte PUT — are
+never added to this pattern; a failure there blocks the release until its
+owning bead lands.
 
 The leg runs nightly against current `main`
 (`armor-integration-nightly` CronWorkflow). A red nightly flags a

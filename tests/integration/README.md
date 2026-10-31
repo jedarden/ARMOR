@@ -109,15 +109,25 @@ the bucket), then runs:
 
 ```bash
 go test -v -race -tags=integration -timeout 50m \
-  -skip '^TestMultipart5GB' ./tests/integration/...
+  -skip '^TestMultipart5GB|^TestListBuckets$|^TestCreateBucket_BucketNaming$|^TestCreateBucket_AlreadyExists$|^TestDeleteBucket_EmptyBucket$|^TestDeleteBucket_NonEmptyBucket$|^TestDeleteBucket_NonExistentBucket$|^TestBucketLocationConstraint$|^TestPutObjectLockConfiguration$|^TestPutObjectWithRetention$|^TestPutObjectWithLegalHold$|^TestPutObjectWithLegalHold_DISABLED$|^TestPutObjectLegalHold$|^TestPutObjectRetention$|^TestGetObjectRetention$|^TestBypassRetentionWithGovernance$|^TestWORMWithComplianceMode$|^TestObjectLockModes$' \
+  ./tests/integration/...
 ```
 
 **No `-short`**: every test in this suite skips under it, so a `-short` run
 executes nothing — this was exactly how the suite sat unused until 2026-09
 (ADR-002: a test that isn't gating deploys is decorative). The default
-`-skip '^TestMultipart5GB'` excludes only `TestMultipart5GB*`, which
-uploads a genuine 6 GiB object and stays opt-in by its own design; submit a
-manual workflow run with `skip-tests: ""` to include it.
+`skip-tests` pattern excludes two groups (scope decision recorded in
+docs/release-status.md, "Bucket administration and S3 object lock are
+outside the release claim"): the opt-in 6 GiB `TestMultipart5GB*` boundary
+pair, and the bucket-administration + object-lock families, which the
+gate's bucket-scoped B2 credential cannot exercise meaningfully (bucket
+create/delete is denied outright by the credential; root `ListBuckets` and
+object lock are outside the release claim). Everything else that fails is a
+claimed-operation failure and blocks the release. The exact pattern lives
+in the workflow template
+(`k8s/iad-ci/argo-workflows/armor-integration-workflowtemplate.yml`,
+parameter `skip-tests`); submit a manual workflow run with `skip-tests: ""`
+to include the boundary pair too.
 
 The workflow env deliberately does **not** set `ARMOR_LARGE_OBJECT_TESTS`, so
 the two 7 GiB `TestLargeObjectMigration*` tests skip as well: their in-memory
