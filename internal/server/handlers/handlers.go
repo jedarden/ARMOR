@@ -392,6 +392,11 @@ func (h *Handlers) HandleRoot(w http.ResponseWriter, r *http.Request) {
 			h.GetObjectLegalHold(w, r, bucket, key)
 			return
 		}
+		// Handle GetObjectTagging (GET ?tagging on object)
+		if r.URL.Query().Has("tagging") && key != "" {
+			h.GetObjectTagging(w, r, bucket, key)
+			return
+		}
 		// Handle ListParts (GET ?uploadId on object)
 		if uploadID := r.URL.Query().Get("uploadId"); uploadID != "" && key != "" {
 			h.ListParts(w, r, bucket, key, uploadID)
@@ -436,6 +441,13 @@ func (h *Handlers) HandleRoot(w http.ResponseWriter, r *http.Request) {
 			h.PutObjectLegalHold(w, r, bucket, key)
 			return
 		}
+		// Handle PutObjectTagging (PUT ?tagging on object). This must be
+		// routed before PutObject: the tagging body is XML, not object
+		// data, and the generic PUT would store it as the object's bytes.
+		if r.URL.Query().Has("tagging") && key != "" {
+			h.PutObjectTagging(w, r, bucket, key)
+			return
+		}
 		if key != "" {
 			// Handle UploadPart (PUT ?partNumber&uploadId on object) — standard
 			// S3 clients PUT parts; routing this to PutObject silently stored
@@ -469,6 +481,13 @@ func (h *Handlers) HandleRoot(w http.ResponseWriter, r *http.Request) {
 		// Handle AbortMultipartUpload (DELETE ?uploadId on object)
 		if uploadID := r.URL.Query().Get("uploadId"); uploadID != "" && key != "" {
 			h.AbortMultipartUpload(w, r, bucket, key, uploadID)
+			return
+		}
+		// Handle DeleteObjectTagging (DELETE ?tagging on object). This
+		// must be routed before DeleteObject, which would delete the
+		// object itself.
+		if r.URL.Query().Has("tagging") && key != "" {
+			h.DeleteObjectTagging(w, r, bucket, key)
 			return
 		}
 		if key != "" {
@@ -580,6 +599,17 @@ func (h *Handlers) PutObject(w http.ResponseWriter, r *http.Request, bucket, key
 	contentLength := r.ContentLength
 	streamingThreshold := int64(10 * 1024 * 1024) // 10MB threshold
 
+	// Parse and validate the tag set (x-amz-tagging) before any body work:
+	// the streaming path spools the whole body before it would otherwise
+	// notice an invalid header, and an invalid tag set must fail the PUT
+	// without storing the object. taggingEncoded == "" (header absent)
+	// writes an untagged object.
+	taggingEncoded, err := taggingHeaderEncoded(r)
+	if err != nil {
+		h.writeError(w, r, "InvalidArgument", fmt.Sprintf("Invalid x-amz-tagging header: %v", err), 400)
+		return
+	}
+
 	// Resolve the per-object compression decision (x-amz-meta-armor-compress
 	// override > compress rules > global Compress flag) BEFORE choosing the
 	// upload path. Keying streaming off the mere presence of compression
@@ -606,7 +636,7 @@ func (h *Handlers) PutObject(w http.ResponseWriter, r *http.Request, bucket, key
 	useStreaming := !shouldCompress && (contentLength < 0 || contentLength > streamingThreshold)
 
 	if useStreaming {
-		h.putObjectStreaming(ctx, w, r, bucket, key, createOnly, appendOnly, explicitCondition)
+		h.putObjectStreaming(ctx, w, r, bucket, key, createOnly, appendOnly, explicitCondition, taggingEncoded)
 		return
 	}
 
@@ -794,6 +824,7 @@ func (h *Handlers) PutObject(w http.ResponseWriter, r *http.Request, bucket, key
 		CompressionType: backend.CompressionType(compressionType),
 	}).ToMetadata()
 	mergeUserMetadata(meta, r)
+	setStoredTagging(meta, taggingEncoded)
 
 	// Upload to B2 with prefix applied
 	prefixedKey := h.applyPrefix(key)
@@ -917,8 +948,10 @@ func (h *Handlers) PutObject(w http.ResponseWriter, r *http.Request, bucket, key
 //
 // explicitCondition is the client's own If-None-Match: * intent (ADR-017):
 // it only shapes conflict translation for append-only credentials, never the
-// create-only decision, which createOnly already carries.
-func (h *Handlers) putObjectStreaming(ctx context.Context, w http.ResponseWriter, r *http.Request, bucket, key string, createOnly, appendOnly, explicitCondition bool) {
+// create-only decision, which createOnly already carries. taggingEncoded is
+// the request's validated tag set ("" writes an untagged object), parsed in
+// PutObject before the body is spooled.
+func (h *Handlers) putObjectStreaming(ctx context.Context, w http.ResponseWriter, r *http.Request, bucket, key string, createOnly, appendOnly, explicitCondition bool, taggingEncoded string) {
 	// Phase 1: Stream to temp file and compute SHA-256
 	tmpFile, err := os.CreateTemp("", "armor-upload-*.tmp")
 	if err != nil {
@@ -1079,6 +1112,7 @@ func (h *Handlers) putObjectStreaming(ctx context.Context, w http.ResponseWriter
 		KeyID:         keyID,
 	}).ToMetadata()
 	mergeUserMetadata(meta, r)
+	setStoredTagging(meta, taggingEncoded)
 
 	// Upload with prefix applied. Encryption starts with the backend read.
 	prefixedKey := h.applyPrefix(key)
@@ -2890,6 +2924,16 @@ func (h *Handlers) CopyObject(w http.ResponseWriter, r *http.Request, dstBucket,
 	metadataDirective := r.Header.Get("x-amz-metadata-directive")
 	replaceMetadata := metadataDirective == "REPLACE"
 
+	// Resolve the tagging directive (x-amz-tagging-directive) once, before
+	// any backend work: COPY (the default) carries the source's tag set to
+	// the destination, REPLACE takes the request's x-amz-tagging set. An
+	// invalid directive or tag header fails the copy with InvalidArgument.
+	replaceTags, replaceTagsEncoded, err := copyTaggingDirective(r)
+	if err != nil {
+		h.writeError(w, r, "InvalidArgument", fmt.Sprintf("Invalid tagging directive: %v", err), 400)
+		return
+	}
+
 	// Build response XML structure
 	type CopyObjectResult struct {
 		XMLName      xml.Name `xml:"CopyObjectResult"`
@@ -3005,6 +3049,11 @@ func (h *Handlers) CopyObject(w http.ResponseWriter, r *http.Request, dstBucket,
 			}
 		}
 
+		// Carry the tag set across the re-wrap: newMeta was rebuilt from the
+		// parsed ARMOR fields, so without this the destination would silently
+		// drop the source's tags even under the COPY directive.
+		applyCopyTagging(newMeta, srcInfo.Metadata, replaceTags, replaceTagsEncoded)
+
 		// Perform server-side copy with updated metadata
 		if err := h.backend.Copy(ctx, srcBucket, srcPrefixedKey, dstBucket, dstPrefixedKey, newMeta, true); err != nil {
 			h.writeError(w, r, "InternalError", fmt.Sprintf("Copy failed: %v", err), 500)
@@ -3051,6 +3100,7 @@ func (h *Handlers) CopyObject(w http.ResponseWriter, r *http.Request, dstBucket,
 				meta[strings.ToLower(k)] = v[0]
 			}
 		}
+		applyCopyTagging(meta, srcInfo.Metadata, replaceTags, replaceTagsEncoded)
 	}
 
 	if err := h.backend.Copy(ctx, srcBucket, srcPrefixedKey, dstBucket, dstPrefixedKey, meta, replaceMetadata); err != nil {

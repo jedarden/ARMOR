@@ -24,9 +24,11 @@ import (
 	"net/http"
 	"testing"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/aws/smithy-go"
 	smithyhttp "github.com/aws/smithy-go/transport/http"
 )
@@ -370,6 +372,143 @@ func TestVerify_Delete(t *testing.T) {
 		t.Fatalf("idempotent DeleteObject: %v", err)
 	}
 	t.Logf("delete OK: GET NoSuchKey, HEAD NotFound, LIST empty, second DELETE idempotent")
+}
+
+// TestVerify_ObjectTagging pins the object-tagging wire contract: the tag
+// set a PutObject sends as x-amz-tagging comes back from GetObjectTagging
+// in order, PutObjectTagging replaces the set, DeleteObjectTagging clears
+// it without touching the object, and CopyObject's tagging directive either
+// carries the source set across the copy (COPY, the default) or applies the
+// request's set (REPLACE). Without the dedicated ?tagging routes these
+// requests fall through to the object handlers: GET ?tagging serves the
+// object body as invalid XML, PUT ?tagging overwrites the object with the
+// XML request body, and DELETE ?tagging deletes the object outright.
+func TestVerify_ObjectTagging(t *testing.T) {
+	endpoint := startArmorServer(t)
+	client := newSDKClient(t, endpoint)
+	ctx := context.Background()
+	bucket := compatBucket(t)
+	key := "verify/conformance/tagging.bin"
+
+	k := key
+	if _, err := client.PutObject(ctx, &s3.PutObjectInput{
+		Bucket: &bucket, Key: &k, Body: bytes.NewReader(conformancePayload(2048)),
+		Tagging: awsString("Environment=Test&Project=ARMOR&Owner=Test%20Suite"),
+	}); err != nil {
+		t.Fatalf("PutObject with tagging: %v", err)
+	}
+
+	getTags := func(key string) []types.Tag {
+		t.Helper()
+		out, err := client.GetObjectTagging(ctx, &s3.GetObjectTaggingInput{Bucket: &bucket, Key: &key})
+		if err != nil {
+			t.Fatalf("GetObjectTagging(%s): %v", key, err)
+		}
+		return out.TagSet
+	}
+	assertTagSet := func(got, want []types.Tag) {
+		t.Helper()
+		if len(got) != len(want) {
+			t.Fatalf("tag set = %v, want %v", got, want)
+		}
+		for i := range want {
+			if aws.ToString(got[i].Key) != aws.ToString(want[i].Key) ||
+				aws.ToString(got[i].Value) != aws.ToString(want[i].Value) {
+				t.Fatalf("tag %d = %s=%s, want %s=%s",
+					i, aws.ToString(got[i].Key), aws.ToString(got[i].Value),
+					aws.ToString(want[i].Key), aws.ToString(want[i].Value))
+			}
+		}
+	}
+
+	assertTagSet(getTags(key), []types.Tag{
+		{Key: awsString("Environment"), Value: awsString("Test")},
+		{Key: awsString("Project"), Value: awsString("ARMOR")},
+		{Key: awsString("Owner"), Value: awsString("Test Suite")},
+	})
+
+	// Tagging operations on a missing key fail with NoSuchKey.
+	absent := "verify/conformance/tagging-absent.bin"
+	_, err := client.GetObjectTagging(ctx, &s3.GetObjectTaggingInput{Bucket: &bucket, Key: &absent})
+	assertS3Error(t, err, "NoSuchKey", http.StatusNotFound)
+
+	// PutObjectTagging replaces the whole set.
+	if _, err := client.PutObjectTagging(ctx, &s3.PutObjectTaggingInput{
+		Bucket: &bucket, Key: &k,
+		Tagging: &types.Tagging{TagSet: []types.Tag{
+			{Key: awsString("Stage"), Value: awsString("prod")},
+			{Key: awsString("Owner"), Value: awsString("platform")},
+		}},
+	}); err != nil {
+		t.Fatalf("PutObjectTagging: %v", err)
+	}
+	assertTagSet(getTags(key), []types.Tag{
+		{Key: awsString("Stage"), Value: awsString("prod")},
+		{Key: awsString("Owner"), Value: awsString("platform")},
+	})
+
+	// The payload is untouched by the tagging writes.
+	out, err := client.GetObject(ctx, &s3.GetObjectInput{Bucket: &bucket, Key: &k})
+	if err != nil {
+		t.Fatalf("GetObject after tagging writes: %v", err)
+	}
+	bodyLen := 0
+	if out.Body != nil {
+		n, rerr := io.ReadAll(out.Body)
+		out.Body.Close()
+		if rerr != nil {
+			t.Fatalf("read body after tagging writes: %v", rerr)
+		}
+		bodyLen = len(n)
+	}
+	if bodyLen != 2048 {
+		t.Fatalf("GetObject after tagging writes: %d bytes, want 2048 — the tagging PUT replaced the object body", bodyLen)
+	}
+
+	// CopyObject's default COPY directive carries the source tag set to the
+	// destination.
+	dstCopy := "verify/conformance/tagging-copy.bin"
+	if _, err := client.CopyObject(ctx, &s3.CopyObjectInput{
+		Bucket: &bucket, Key: &dstCopy,
+		CopySource: awsString(bucket + "/" + key),
+	}); err != nil {
+		t.Fatalf("CopyObject (default COPY): %v", err)
+	}
+	assertTagSet(getTags(dstCopy), []types.Tag{
+		{Key: awsString("Stage"), Value: awsString("prod")},
+		{Key: awsString("Owner"), Value: awsString("platform")},
+	})
+
+	// REPLACE applies the request's set on the destination.
+	dstReplace := "verify/conformance/tagging-replace.bin"
+	if _, err := client.CopyObject(ctx, &s3.CopyObjectInput{
+		Bucket: &bucket, Key: &dstReplace,
+		CopySource:       awsString(bucket + "/" + key),
+		Tagging:          awsString("Environment=Test&Project=Copied"),
+		TaggingDirective: types.TaggingDirectiveReplace,
+	}); err != nil {
+		t.Fatalf("CopyObject (REPLACE): %v", err)
+	}
+	assertTagSet(getTags(dstReplace), []types.Tag{
+		{Key: awsString("Environment"), Value: awsString("Test")},
+		{Key: awsString("Project"), Value: awsString("Copied")},
+	})
+
+	// DeleteObjectTagging clears the set and keeps the object.
+	if _, err := client.DeleteObjectTagging(ctx, &s3.DeleteObjectTaggingInput{Bucket: &bucket, Key: &k}); err != nil {
+		t.Fatalf("DeleteObjectTagging: %v", err)
+	}
+	if got := getTags(key); len(got) != 0 {
+		t.Fatalf("tags after DeleteObjectTagging = %v, want empty", got)
+	}
+	if _, err := client.HeadObject(ctx, &s3.HeadObjectInput{Bucket: &bucket, Key: &k}); err != nil {
+		t.Fatalf("HeadObject after DeleteObjectTagging: %v — the tagging DELETE must not delete the object", err)
+	}
+
+	for _, dk := range []string{key, dstCopy, dstReplace} {
+		_, _ = client.DeleteObject(ctx, &s3.DeleteObjectInput{Bucket: &bucket, Key: &dk})
+	}
+	t.Logf("object tagging OK: header round-trip, PUT/GET/DELETE ?tagging, copy COPY/REPLACE, payload intact")
 }
 
 // awsString is a tiny helper for the &str pattern the SDK inputs need.

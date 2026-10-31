@@ -36,6 +36,9 @@ func s3OperationForRequest(r *http.Request) string {
 			if q.Has("legal-hold") {
 				return "GetObjectLegalHold"
 			}
+			if q.Has("tagging") {
+				return "GetObjectTagging"
+			}
 			return "GetObject"
 		}
 		if bucket != "" {
@@ -82,6 +85,9 @@ func s3OperationForRequest(r *http.Request) string {
 			if q.Has("legal-hold") {
 				return "PutObjectLegalHold"
 			}
+			if q.Has("tagging") {
+				return "PutObjectTagging"
+			}
 			if r.Header.Get("x-amz-copy-source") != "" {
 				return "CopyObject"
 			}
@@ -104,6 +110,9 @@ func s3OperationForRequest(r *http.Request) string {
 		if key != "" {
 			if q.Get("uploadId") != "" {
 				return "AbortMultipartUpload"
+			}
+			if q.Has("tagging") {
+				return "DeleteObjectTagging"
 			}
 			return "DeleteObject"
 		}

@@ -26,6 +26,9 @@ func TestS3OperationForRequest(t *testing.T) {
 		{"upload part", httptest.NewRequest(http.MethodPut, "/bucket/key.dat?partNumber=1&uploadId=u", nil), "UploadPart"},
 		{"abort multipart", httptest.NewRequest(http.MethodDelete, "/bucket/key.dat?uploadId=u", nil), "AbortMultipartUpload"},
 		{"list parts", httptest.NewRequest(http.MethodGet, "/bucket/key.dat?uploadId=u", nil), "ListParts"},
+		{"get object tagging", httptest.NewRequest(http.MethodGet, "/bucket/key.dat?tagging", nil), "GetObjectTagging"},
+		{"put object tagging", httptest.NewRequest(http.MethodPut, "/bucket/key.dat?tagging", nil), "PutObjectTagging"},
+		{"delete object tagging", httptest.NewRequest(http.MethodDelete, "/bucket/key.dat?tagging", nil), "DeleteObjectTagging"},
 		{"copy object", func() *http.Request {
 			r := httptest.NewRequest(http.MethodPut, "/bucket/dst", nil)
 			r.Header.Set("x-amz-copy-source", "/bucket/src")

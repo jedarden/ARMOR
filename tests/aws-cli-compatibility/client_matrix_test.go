@@ -47,6 +47,7 @@ const (
 	opListing         compatOperation = "listing"
 	opOverwriteDelete compatOperation = "overwrite/delete"
 	opMultipart       compatOperation = "multipart"
+	opObjectTagging   compatOperation = "object tagging"
 )
 
 // allOperations is the full column set; the union of the client legs and
@@ -58,6 +59,7 @@ var allOperations = []compatOperation{
 	opListing,
 	opOverwriteDelete,
 	opMultipart,
+	opObjectTagging,
 }
 
 // clientLeg is one row of the matrix: a real S3 client, the package file
@@ -187,6 +189,9 @@ var conformanceFloor = map[compatOperation][]string{
 	opListing:         {"TestVerify_List"},
 	opOverwriteDelete: {"TestVerify_Overwrite", "TestVerify_Delete"},
 	opMultipart:       {"TestVerify_MultipartRoundTrip", "TestVerify_ConcurrentTransfers"},
+	// The tagging subresource APIs and the copy tagging directive; no real
+	// client leg exercises them, so the SDK floor is the sole pin.
+	opObjectTagging: {"TestVerify_ObjectTagging"},
 }
 
 // floorFiles hold the conformance floor. They must contain no presence

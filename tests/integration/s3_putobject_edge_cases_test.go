@@ -408,9 +408,7 @@ func TestPutObject_ObjectTags(t *testing.T) {
 		),
 	})
 	if err != nil {
-		t.Logf("PutObject with tagging: %v", err)
-		t.Log("Object tagging may not be supported in ARMOR")
-		return
+		t.Fatalf("PutObject with tagging: %v", err)
 	}
 	t.Log("Successfully uploaded object with tags")
 
@@ -424,7 +422,7 @@ func TestPutObject_ObjectTags(t *testing.T) {
 	}
 
 	if len(getTagResp.TagSet) != len(tagging.TagSet) {
-		t.Errorf("Expected %d tags, got %d", len(tagging.TagSet), len(getTagResp.TagSet))
+		t.Fatalf("Expected %d tags, got %d", len(tagging.TagSet), len(getTagResp.TagSet))
 	}
 
 	for i, tag := range getTagResp.TagSet {
