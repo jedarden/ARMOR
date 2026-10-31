@@ -19,6 +19,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
+	"github.com/jedarden/armor/internal/backend"
 )
 
 // sha256Sum computes the SHA-256 hash of the input data
@@ -35,6 +36,7 @@ func TestCompleteMultipartUpload_V3_SinglePart(t *testing.T) {
 
 	armorEndpoint := getEnvOr("ARMOR_ENDPOINT", "http://localhost:9000")
 	client := createS3Client(t, armorEndpoint)
+	storageClient := createDirectB2Client(t)
 	ctx := context.Background()
 	key := generateTestKey(t)
 
@@ -43,8 +45,8 @@ func TestCompleteMultipartUpload_V3_SinglePart(t *testing.T) {
 		Bucket: aws.String(bucket),
 		Key:    aws.String(key),
 		Metadata: map[string]string{
-			"test-name":     "TestCompleteMultipartUpload_V3_SinglePart",
-			"armor-format":  "3",
+			"test-name":    "TestCompleteMultipartUpload_V3_SinglePart",
+			"armor-format": "3",
 		},
 	})
 	if err != nil {
@@ -70,9 +72,9 @@ func TestCompleteMultipartUpload_V3_SinglePart(t *testing.T) {
 
 	// Complete the multipart upload
 	completeResp, err := client.CompleteMultipartUpload(ctx, &s3.CompleteMultipartUploadInput{
-		Bucket:          aws.String(bucket),
-		Key:             aws.String(key),
-		UploadId:        uploadID,
+		Bucket:   aws.String(bucket),
+		Key:      aws.String(key),
+		UploadId: uploadID,
 		MultipartUpload: &types.CompletedMultipartUpload{
 			Parts: []types.CompletedPart{
 				{
@@ -109,8 +111,8 @@ func TestCompleteMultipartUpload_V3_SinglePart(t *testing.T) {
 	}
 
 	// Verify the v3 sidecar exists and can be parsed
-	sidecarKey := fmt.Sprintf(".armor/hmac/%x", sha256Sum([]byte(key)))
-	sidecarResp, err := client.GetObject(ctx, &s3.GetObjectInput{
+	sidecarKey := backend.GetSidecarKey(armorPrefix, key)
+	sidecarResp, err := storageClient.GetObject(ctx, &s3.GetObjectInput{
 		Bucket: aws.String(bucket),
 		Key:    aws.String(sidecarKey),
 	})
@@ -127,12 +129,12 @@ func TestCompleteMultipartUpload_V3_SinglePart(t *testing.T) {
 	defer gz.Close()
 
 	var sidecar struct {
-		Version  int `json:"version"`
-		Parts    []struct {
-			N              int        `json:"n"`
-			PlaintextLen   int64      `json:"plaintext_len"`
-			CiphertextLen  int64      `json:"ciphertext_len"`
-			Blocks         [][]string `json:"blocks"`
+		Version int `json:"version"`
+		Parts   []struct {
+			N             int        `json:"n"`
+			PlaintextLen  int64      `json:"plaintext_len"`
+			CiphertextLen int64      `json:"ciphertext_len"`
+			Blocks        [][]string `json:"blocks"`
 		} `json:"parts"`
 	}
 
@@ -181,8 +183,8 @@ func TestCompleteMultipartUpload_V3_SinglePart(t *testing.T) {
 	t.Log("Successfully validated v3 sidecar structure")
 
 	// Verify per-part objects were deleted after Complete
-	multipartPrefix := fmt.Sprintf(".armor/multipart/%s/", *uploadID)
-	listResp, err := client.ListObjectsV2(ctx, &s3.ListObjectsV2Input{
+	multipartPrefix := fmt.Sprintf("%s.armor/multipart/%s/", armorPrefix, *uploadID)
+	listResp, err := storageClient.ListObjectsV2(ctx, &s3.ListObjectsV2Input{
 		Bucket:  aws.String(bucket),
 		Prefix:  aws.String(multipartPrefix),
 		MaxKeys: aws.Int32(100),
@@ -199,7 +201,7 @@ func TestCompleteMultipartUpload_V3_SinglePart(t *testing.T) {
 	}
 
 	// Cleanup
-	_, err = client.DeleteObject(ctx, &s3.DeleteObjectInput{
+	_, err = storageClient.DeleteObject(ctx, &s3.DeleteObjectInput{
 		Bucket: aws.String(bucket),
 		Key:    aws.String(key),
 	})
@@ -208,7 +210,7 @@ func TestCompleteMultipartUpload_V3_SinglePart(t *testing.T) {
 	}
 
 	// Delete sidecar
-	_, err = client.DeleteObject(ctx, &s3.DeleteObjectInput{
+	_, err = storageClient.DeleteObject(ctx, &s3.DeleteObjectInput{
 		Bucket: aws.String(bucket),
 		Key:    aws.String(sidecarKey),
 	})
@@ -225,6 +227,7 @@ func TestCompleteMultipartUpload_V3_TwoParts(t *testing.T) {
 
 	armorEndpoint := getEnvOr("ARMOR_ENDPOINT", "http://localhost:9000")
 	client := createS3Client(t, armorEndpoint)
+	storageClient := createDirectB2Client(t)
 	ctx := context.Background()
 	key := generateTestKey(t)
 
@@ -274,9 +277,9 @@ func TestCompleteMultipartUpload_V3_TwoParts(t *testing.T) {
 
 	// Complete the multipart upload
 	completeResp, err := client.CompleteMultipartUpload(ctx, &s3.CompleteMultipartUploadInput{
-		Bucket:          aws.String(bucket),
-		Key:             aws.String(key),
-		UploadId:        uploadID,
+		Bucket:   aws.String(bucket),
+		Key:      aws.String(key),
+		UploadId: uploadID,
 		MultipartUpload: &types.CompletedMultipartUpload{
 			Parts: []types.CompletedPart{
 				{
@@ -317,8 +320,8 @@ func TestCompleteMultipartUpload_V3_TwoParts(t *testing.T) {
 	}
 
 	// Verify the v3 sidecar exists and can be parsed
-	sidecarKey := fmt.Sprintf(".armor/hmac/%x", sha256Sum([]byte(key)))
-	sidecarResp, err := client.GetObject(ctx, &s3.GetObjectInput{
+	sidecarKey := backend.GetSidecarKey(armorPrefix, key)
+	sidecarResp, err := storageClient.GetObject(ctx, &s3.GetObjectInput{
 		Bucket: aws.String(bucket),
 		Key:    aws.String(sidecarKey),
 	})
@@ -335,12 +338,12 @@ func TestCompleteMultipartUpload_V3_TwoParts(t *testing.T) {
 	defer gz.Close()
 
 	var sidecar struct {
-		Version  int `json:"version"`
-		Parts    []struct {
-			N              int        `json:"n"`
-			PlaintextLen   int64      `json:"plaintext_len"`
-			CiphertextLen  int64      `json:"ciphertext_len"`
-			Blocks         [][]string `json:"blocks"`
+		Version int `json:"version"`
+		Parts   []struct {
+			N             int        `json:"n"`
+			PlaintextLen  int64      `json:"plaintext_len"`
+			CiphertextLen int64      `json:"ciphertext_len"`
+			Blocks        [][]string `json:"blocks"`
 		} `json:"parts"`
 	}
 
@@ -396,8 +399,8 @@ func TestCompleteMultipartUpload_V3_TwoParts(t *testing.T) {
 	t.Log("Successfully validated v3 sidecar structure for 2-part upload")
 
 	// Verify per-part objects were deleted after Complete
-	multipartPrefix := fmt.Sprintf(".armor/multipart/%s/", *uploadID)
-	listResp, err := client.ListObjectsV2(ctx, &s3.ListObjectsV2Input{
+	multipartPrefix := fmt.Sprintf("%s.armor/multipart/%s/", armorPrefix, *uploadID)
+	listResp, err := storageClient.ListObjectsV2(ctx, &s3.ListObjectsV2Input{
 		Bucket:  aws.String(bucket),
 		Prefix:  aws.String(multipartPrefix),
 		MaxKeys: aws.Int32(100),
@@ -414,7 +417,7 @@ func TestCompleteMultipartUpload_V3_TwoParts(t *testing.T) {
 	}
 
 	// Cleanup
-	_, err = client.DeleteObject(ctx, &s3.DeleteObjectInput{
+	_, err = storageClient.DeleteObject(ctx, &s3.DeleteObjectInput{
 		Bucket: aws.String(bucket),
 		Key:    aws.String(key),
 	})
@@ -423,7 +426,7 @@ func TestCompleteMultipartUpload_V3_TwoParts(t *testing.T) {
 	}
 
 	// Delete sidecar
-	_, err = client.DeleteObject(ctx, &s3.DeleteObjectInput{
+	_, err = storageClient.DeleteObject(ctx, &s3.DeleteObjectInput{
 		Bucket: aws.String(bucket),
 		Key:    aws.String(sidecarKey),
 	})
@@ -440,6 +443,7 @@ func TestAbortMultipartUpload_V3_Cleanup(t *testing.T) {
 
 	armorEndpoint := getEnvOr("ARMOR_ENDPOINT", "http://localhost:9000")
 	client := createS3Client(t, armorEndpoint)
+	storageClient := createDirectB2Client(t)
 	ctx := context.Background()
 	key := generateTestKey(t)
 
@@ -473,8 +477,8 @@ func TestAbortMultipartUpload_V3_Cleanup(t *testing.T) {
 	t.Log("Uploaded part 1 before abort")
 
 	// Verify per-part objects exist
-	multipartPrefix := fmt.Sprintf(".armor/multipart/%s/", *uploadID)
-	listResp1, err := client.ListObjectsV2(ctx, &s3.ListObjectsV2Input{
+	multipartPrefix := fmt.Sprintf("%s.armor/multipart/%s/", armorPrefix, *uploadID)
+	listResp1, err := storageClient.ListObjectsV2(ctx, &s3.ListObjectsV2Input{
 		Bucket:  aws.String(bucket),
 		Prefix:  aws.String(multipartPrefix),
 		MaxKeys: aws.Int32(100),
@@ -504,7 +508,7 @@ func TestAbortMultipartUpload_V3_Cleanup(t *testing.T) {
 	time.Sleep(1 * time.Second)
 
 	// Verify per-part objects were deleted after Abort
-	listResp2, err := client.ListObjectsV2(ctx, &s3.ListObjectsV2Input{
+	listResp2, err := storageClient.ListObjectsV2(ctx, &s3.ListObjectsV2Input{
 		Bucket:  aws.String(bucket),
 		Prefix:  aws.String(multipartPrefix),
 		MaxKeys: aws.Int32(100),

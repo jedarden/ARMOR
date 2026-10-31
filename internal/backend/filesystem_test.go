@@ -720,6 +720,43 @@ func TestFSBackend_ListMultipartUploads(t *testing.T) {
 	}
 }
 
+func TestFSBackend_ListMultipartUploadsWithKeyPrefix(t *testing.T) {
+	fs, err := NewFSBackend(FSConfig{BasePath: t.TempDir(), KeyPrefix: "tenant/"})
+	if err != nil {
+		t.Fatalf("NewFSBackend: %v", err)
+	}
+
+	ctx := context.Background()
+	const bucket = "test-bucket"
+	if err := fs.CreateBucket(ctx, bucket); err != nil {
+		t.Fatalf("CreateBucket: %v", err)
+	}
+
+	first, err := fs.CreateMultipartUpload(ctx, bucket, "tenant/first.bin", nil)
+	if err != nil {
+		t.Fatalf("CreateMultipartUpload(first): %v", err)
+	}
+	second, err := fs.CreateMultipartUpload(ctx, bucket, "tenant/second.bin", nil)
+	if err != nil {
+		t.Fatalf("CreateMultipartUpload(second): %v", err)
+	}
+
+	result, err := fs.ListMultipartUploads(ctx, bucket, "tenant/")
+	if err != nil {
+		t.Fatalf("ListMultipartUploads: %v", err)
+	}
+	if len(result.Uploads) != 2 {
+		t.Fatalf("ListMultipartUploads returned %d uploads, want 2", len(result.Uploads))
+	}
+	seen := map[string]bool{}
+	for _, upload := range result.Uploads {
+		seen[upload.UploadID] = true
+	}
+	if !seen[first] || !seen[second] {
+		t.Fatalf("ListMultipartUploads IDs = %v, want %q and %q", seen, first, second)
+	}
+}
+
 // TestFSBackend_ARMORMetadata tests ARMOR-specific metadata handling.
 func TestFSBackend_ARMORMetadata(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "armor-fs-test-*")

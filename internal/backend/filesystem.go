@@ -867,9 +867,13 @@ func (fs *FSBackend) ListParts(ctx context.Context, bucket, key, uploadID string
 
 // ListMultipartUploads lists active multipart uploads.
 func (fs *FSBackend) ListMultipartUploads(ctx context.Context, bucket, prefix string) (*ListMultipartUploadsResult, error) {
+	// CreateMultipartUpload receives the already-prefixed stored key from the
+	// handler and keeps that key below the backend's reserved .armor/multipart
+	// root. A key containing slashes therefore creates more than one directory
+	// level; walk to the metadata leaf instead of assuming the key is flat.
 	multipartDir := filepath.Join(fs.bucketPath(bucket), ".armor", "multipart")
 
-	entries, err := os.ReadDir(multipartDir)
+	_, err := os.Stat(multipartDir)
 	if err != nil {
 		if os.IsNotExist(err) {
 			// No multipart uploads exist
@@ -883,53 +887,46 @@ func (fs *FSBackend) ListMultipartUploads(ctx context.Context, bucket, prefix st
 	}
 
 	var uploads []UploadInfo
-	for _, keyEntry := range entries {
-		if !keyEntry.IsDir() {
-			continue
+	err = filepath.WalkDir(multipartDir, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if entry.IsDir() || entry.Name() != "upload-metadata.json" {
+			return nil
 		}
 
-		key := keyEntry.Name()
-
-		// Filter by prefix when one is provided so only uploads under the
-		// ARMOR namespace are returned.
-		if prefix != "" && !strings.HasPrefix(key, prefix) {
-			continue
-		}
-
-		keyDir := filepath.Join(multipartDir, key)
-
-		uploadEntries, err := os.ReadDir(keyDir)
+		rel, err := filepath.Rel(multipartDir, path)
 		if err != nil {
-			continue
+			return err
+		}
+		parts := strings.Split(filepath.ToSlash(rel), "/")
+		if len(parts) < 3 {
+			return nil
+		}
+		uploadID := parts[len(parts)-2]
+		key := strings.Join(parts[:len(parts)-2], "/")
+		if prefix != "" && !strings.HasPrefix(key, prefix) {
+			return nil
 		}
 
-		for _, uploadEntry := range uploadEntries {
-			if !uploadEntry.IsDir() {
-				continue
-			}
-
-			uploadID := uploadEntry.Name()
-			metaPath := filepath.Join(keyDir, uploadID, "upload-metadata.json")
-
-			metaData, err := os.ReadFile(metaPath)
-			if err != nil {
-				continue
-			}
-
-			var uploadMeta map[string]interface{}
-			if err := json.Unmarshal(metaData, &uploadMeta); err != nil {
-				continue
-			}
-
-			initiatedStr, _ := uploadMeta["initiated"].(string)
-			initiated, _ := time.Parse(time.RFC3339, initiatedStr)
-
-			uploads = append(uploads, UploadInfo{
-				UploadID:  uploadID,
-				Key:       key,
-				Initiated: initiated,
-			})
+		metaData, err := os.ReadFile(path)
+		if err != nil {
+			return nil
 		}
+		var uploadMeta map[string]interface{}
+		if err := json.Unmarshal(metaData, &uploadMeta); err != nil {
+			return nil
+		}
+		initiatedStr, _ := uploadMeta["initiated"].(string)
+		initiated, _ := time.Parse(time.RFC3339, initiatedStr)
+		uploads = append(uploads, UploadInfo{UploadID: uploadID, Key: key, Initiated: initiated})
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to walk multipart directory: %w", err)
 	}
 
 	return &ListMultipartUploadsResult{

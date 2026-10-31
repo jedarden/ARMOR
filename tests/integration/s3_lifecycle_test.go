@@ -49,9 +49,9 @@ func TestFullObjectLifecycle(t *testing.T) {
 	// ===== STEP 1: PUT (single-part) =====
 	t.Log("STEP 1: PUT (single-part upload)")
 	putResp1, err := client.PutObject(ctx, &s3.PutObjectInput{
-		Bucket: aws.String(bucket),
-		Key:    aws.String(key),
-		Body:   bytes.NewReader(initialData),
+		Bucket:      aws.String(bucket),
+		Key:         aws.String(key),
+		Body:        bytes.NewReader(initialData),
 		ContentType: aws.String("application/octet-stream"),
 	})
 	if err != nil {
@@ -248,9 +248,9 @@ func TestFullObjectLifecycle(t *testing.T) {
 	}
 
 	putResp2, err := client.PutObject(ctx, &s3.PutObjectInput{
-		Bucket: aws.String(bucket),
-		Key:    aws.String(key),
-		Body:   bytes.NewReader(overwrittenData),
+		Bucket:      aws.String(bucket),
+		Key:         aws.String(key),
+		Body:        bytes.NewReader(overwrittenData),
 		ContentType: aws.String("application/octet-stream"),
 	})
 	if err != nil {
@@ -363,8 +363,8 @@ func isNoSuchKey(err error) bool {
 	// Check error message for common patterns indicating 404/NotFound
 	errStr := err.Error()
 	return strings.Contains(errStr, "NoSuchKey") ||
-	       strings.Contains(errStr, "NotFound") ||
-	       strings.Contains(errStr, "404")
+		strings.Contains(errStr, "NotFound") ||
+		strings.Contains(errStr, "404")
 }
 
 // TestMultipartLifecycle tests the complete multipart upload lifecycle through real HTTP.
@@ -534,12 +534,27 @@ func TestMultipartLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("STEP 7 FAILED: ListObjectsV2 failed: %v", err)
 	}
-	if len(listResp.Contents) != 1 {
-		t.Errorf("STEP 7 FAILED: Expected 1 object in LIST, got %d", len(listResp.Contents))
+	// ADR-016 stores a documented <key>.armor-manifest sibling beside the
+	// completed object. A prefix listing therefore legitimately contains both
+	// keys; assert the client object itself rather than treating its metadata
+	// sidecar as a duplicate object.
+	var listedObject *types.Object
+	for _, object := range listResp.Contents {
+		if object.Key != nil && *object.Key == key {
+			listedObject = &object
+			break
+		}
+	}
+	if listedObject == nil {
+		t.Errorf("STEP 7 FAILED: Completed object %q missing from LIST (got %d results)", key, len(listResp.Contents))
 	} else {
-		if *listResp.Contents[0].Size != totalSize {
+		if listedObject.Size == nil || *listedObject.Size != totalSize {
+			var size int64
+			if listedObject.Size != nil {
+				size = *listedObject.Size
+			}
 			t.Errorf("STEP 7 FAILED: Listed size mismatch: got %d, want %d",
-				*listResp.Contents[0].Size, totalSize)
+				size, totalSize)
 		} else {
 			t.Logf("STEP 7 SUCCESS: Multipart object appears in LIST with correct size (%d bytes)", totalSize)
 		}

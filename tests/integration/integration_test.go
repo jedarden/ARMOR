@@ -53,16 +53,16 @@ import (
 // ARMOR_MANIFEST_ENABLED                - Enable manifest index (default: true)
 
 var (
-	b2AccessKeyID  string
+	b2AccessKeyID     string
 	b2SecretAccessKey string
-	b2Region       string
-	bucket         string
-	cfDomain       string
-	mek            string
-	armorAccessKey string
-	armorSecretKey string
-	armorPrefix    string
-	armorAdminToken string
+	b2Region          string
+	bucket            string
+	cfDomain          string
+	mek               string
+	armorAccessKey    string
+	armorSecretKey    string
+	armorPrefix       string
+	armorAdminToken   string
 )
 
 func TestMain(m *testing.M) {
@@ -161,6 +161,32 @@ func createS3Client(t *testing.T, armorEndpoint string) *s3.Client {
 
 	return s3.NewFromConfig(cfg, func(o *s3.Options) {
 		o.BaseEndpoint = aws.String(armorEndpoint)
+		o.UsePathStyle = true
+	})
+}
+
+// createDirectB2Client is used only for assertions about ARMOR's reserved
+// internal objects. The public ARMOR endpoint deliberately denies .armor/
+// client keys, so sidecar and in-flight-state checks must address B2 directly.
+func createDirectB2Client(t *testing.T) *s3.Client {
+	t.Helper()
+	cfg, err := config.LoadDefaultConfig(context.Background(),
+		config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(
+			b2AccessKeyID,
+			b2SecretAccessKey,
+			"",
+		)),
+		config.WithRegion(b2Region),
+	)
+	if err != nil {
+		t.Fatalf("Failed to load B2 AWS config: %v", err)
+	}
+	endpoint := os.Getenv("ARMOR_B2_ENDPOINT")
+	if endpoint == "" {
+		endpoint = "https://s3." + b2Region + ".backblazeb2.com"
+	}
+	return s3.NewFromConfig(cfg, func(o *s3.Options) {
+		o.BaseEndpoint = aws.String(endpoint)
 		o.UsePathStyle = true
 	})
 }
@@ -267,10 +293,10 @@ func TestRangeRead(t *testing.T) {
 	ranges := []struct {
 		start, end int64
 	}{
-		{0, 100},            // First 100 bytes
-		{1000, 2000},        // Middle chunk
+		{0, 100},     // First 100 bytes
+		{1000, 2000}, // Middle chunk
 		{int64(len(testData)) - 100, int64(len(testData)) - 1}, // Last 100 bytes
-		{0, int64(len(testData)) - 1}, // Full file
+		{0, int64(len(testData)) - 1},                          // Full file
 	}
 
 	for _, r := range ranges {
