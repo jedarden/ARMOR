@@ -9,7 +9,7 @@ SET s3_endpoint = 'http://localhost:9000';
 SET region = 'us-east-1';  -- Required but unused by ARMOR
 
 # Configure credentials
--- Set these to your ARMOR_AUTH_ACCESS_KEY_ID and ARMOR_AUTH_SECRET_KEY
+-- Set these to your ARMOR_AUTH_ACCESS_KEY and ARMOR_AUTH_SECRET_KEY
 SET s3_access_key_id = 'YOUR_ACCESS_KEY_ID';
 SET s3_secret_access_key = 'YOUR_SECRET_ACCESS_KEY';
 

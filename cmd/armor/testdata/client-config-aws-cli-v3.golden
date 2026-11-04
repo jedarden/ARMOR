@@ -9,7 +9,7 @@ s3 =
 region = us-east-1
 
 # Credentials (set these via 'aws configure set ...' or environment variables)
-# ARMOR_AUTH_ACCESS_KEY_ID
+# ARMOR_AUTH_ACCESS_KEY
 # ARMOR_AUTH_SECRET_KEY
 
 # Test the configuration:

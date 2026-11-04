@@ -326,14 +326,13 @@ deployment's write format.
 | `-bucket` | Bucket name to include in the examples |
 | `-credential` | Named credential to reference in the output comments |
 
-- **Inputs:** the flags above, plus the deployment's `ARMOR_*` environment
-  when available: the write format decides whether the emitted multipart
-  block describes the v2 uniform-part-size contract or v3's
-  no-contract rule. When the environment is missing, the command warns on
-  stderr and assumes v3.
-- **Outputs:** the configuration text on stdout; warnings on stderr.
-- **Exit codes:** 0; 2 for a missing `-for`/`-endpoint`, an unknown tool, or
-  unexpected positional arguments.
+- **Inputs:** the flags above, plus the optional `ARMOR_FORMAT_VERSION` (2 or
+  3). The write format decides whether the emitted multipart block describes
+  the v2 uniform-part-size contract or v3's no-contract rule; when it is
+  unset, the command assumes v3 without loading or validating server config.
+- **Outputs:** the configuration text on stdout; validation errors on stderr.
+- **Exit codes:** 0; 2 for a missing `-for`/`-endpoint`, an unknown tool,
+  unexpected positional arguments, or an invalid `ARMOR_FORMAT_VERSION`.
 - **Credentials/keys:** none — the command never reads a credential and only
   ever prints variable names or `YOUR_ACCESS_KEY_ID`-style placeholders.
 - **Safe use:** read-only. Fill the credential placeholders from your

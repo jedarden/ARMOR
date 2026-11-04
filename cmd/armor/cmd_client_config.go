@@ -6,8 +6,6 @@ import (
 	"fmt"
 	"os"
 	"strings"
-
-	"github.com/jedarden/armor/internal/config"
 )
 
 func init() {
@@ -99,15 +97,9 @@ func clientConfig(fs *flag.FlagSet) {
 		exit(2)
 	}
 
-	// Load config to get format write version
-	cfg, err := config.Load()
-	if err != nil {
-		// If config fails to load, we can still generate configs but warn about format version
-		fmt.Fprintf(os.Stderr, "Warning: could not load ARMOR config: %v\n", err)
-		fmt.Fprintf(os.Stderr, "Warning: format write version unknown; assuming version 3 constraints\n")
-		cfg = &config.Config{}
-		cfg.FormatWriteVersion = 3 // Default
-	}
+	// Resolve only the write format. client-config emits no server settings and
+	// must remain usable from a workstation without backend or auth credentials.
+	formatVersion := formatWriteVersion()
 
 	// Generate config for the requested tool
 	var output string
@@ -115,17 +107,17 @@ func clientConfig(fs *flag.FlagSet) {
 
 	switch tool {
 	case "aws-cli", "awscli":
-		output = awsCLIConfig(endpointFlag, bucketFlag, credentialFlag, cfg.FormatWriteVersion)
+		output = awsCLIConfig(endpointFlag, bucketFlag, credentialFlag, formatVersion)
 	case "rclone":
-		output = rcloneConfig(endpointFlag, bucketFlag, credentialFlag, cfg.FormatWriteVersion)
+		output = rcloneConfig(endpointFlag, bucketFlag, credentialFlag, formatVersion)
 	case "boto3":
-		output = boto3Config(endpointFlag, bucketFlag, credentialFlag, cfg.FormatWriteVersion)
+		output = boto3Config(endpointFlag, bucketFlag, credentialFlag, formatVersion)
 	case "duckdb":
-		output = duckDBConfig(endpointFlag, bucketFlag, credentialFlag, cfg.FormatWriteVersion)
+		output = duckDBConfig(endpointFlag, bucketFlag, credentialFlag, formatVersion)
 	case "litestream":
-		output = litestreamConfig(endpointFlag, bucketFlag, credentialFlag, cfg.FormatWriteVersion)
+		output = litestreamConfig(endpointFlag, bucketFlag, credentialFlag, formatVersion)
 	case "barman":
-		output = barmanConfig(endpointFlag, bucketFlag, credentialFlag, cfg.FormatWriteVersion)
+		output = barmanConfig(endpointFlag, bucketFlag, credentialFlag, formatVersion)
 	default:
 		fmt.Fprintf(os.Stderr, "Error: unknown tool %q\n", tool)
 		fmt.Fprintf(os.Stderr, "Available tools: aws-cli, rclone, boto3, duckdb, litestream, barman\n")
@@ -160,7 +152,7 @@ func awsCLIConfig(endpoint, bucket, credential string, formatVersion int) string
 		fmt.Fprintf(&sb, "export AWS_ACCESS_KEY_ID=$(armor get-credential %s key)\n", credential)
 		fmt.Fprintf(&sb, "export AWS_SECRET_ACCESS_KEY=$(armor get-credential %s secret)\n", credential)
 	} else {
-		sb.WriteString("# ARMOR_AUTH_ACCESS_KEY_ID\n")
+		sb.WriteString("# ARMOR_AUTH_ACCESS_KEY\n")
 		sb.WriteString("# ARMOR_AUTH_SECRET_KEY\n")
 	}
 	sb.WriteString("\n")
@@ -205,7 +197,7 @@ func rcloneConfig(endpoint, bucket, credential string, formatVersion int) string
 		sb.WriteString("# Set access_key_id and secret_access_key from the credential:\n")
 		sb.WriteString("# armor get-credential ") // In a real implementation, this would be a subcommand
 	} else {
-		sb.WriteString("# Set these to your ARMOR_AUTH_ACCESS_KEY_ID and ARMOR_AUTH_SECRET_KEY values:\n")
+		sb.WriteString("# Set these to your ARMOR_AUTH_ACCESS_KEY and ARMOR_AUTH_SECRET_KEY values:\n")
 	}
 	sb.WriteString("access_key_id = YOUR_ACCESS_KEY_ID\n")
 	sb.WriteString("secret_access_key = YOUR_SECRET_ACCESS_KEY\n\n")
@@ -241,7 +233,7 @@ func boto3Config(endpoint, bucket, credential string, formatVersion int) string 
 		fmt.Fprintf(&sb, "# Using named credential: %s\n", credential)
 		sb.WriteString("# Get these from your ARMOR deployment:\n")
 	} else {
-		sb.WriteString("# ARMOR_AUTH_ACCESS_KEY_ID\n")
+		sb.WriteString("# ARMOR_AUTH_ACCESS_KEY\n")
 		sb.WriteString("# ARMOR_AUTH_SECRET_KEY\n")
 	}
 	sb.WriteString("access_key = os.environ.get('AWS_ACCESS_KEY_ID')\n")
@@ -294,7 +286,7 @@ func duckDBConfig(endpoint, bucket, credential string, formatVersion int) string
 		sb.WriteString("-- SET s3_access_key_id = $AWS_ACCESS_KEY_ID;\n")
 		sb.WriteString("-- SET s3_secret_access_key = $AWS_SECRET_ACCESS_KEY;\n")
 	} else {
-		sb.WriteString("-- Set these to your ARMOR_AUTH_ACCESS_KEY_ID and ARMOR_AUTH_SECRET_KEY\n")
+		sb.WriteString("-- Set these to your ARMOR_AUTH_ACCESS_KEY and ARMOR_AUTH_SECRET_KEY\n")
 	}
 	sb.WriteString("SET s3_access_key_id = 'YOUR_ACCESS_KEY_ID';\n")
 	sb.WriteString("SET s3_secret_access_key = 'YOUR_SECRET_ACCESS_KEY';\n\n")
@@ -334,7 +326,7 @@ func litestreamConfig(endpoint, bucket, credential string, formatVersion int) st
 	if credential != "" {
 		fmt.Fprintf(&sb, "# Using named credential: %s\n", credential)
 	}
-	sb.WriteString("# Set these from your ARMOR_AUTH_ACCESS_KEY_ID and ARMOR_AUTH_SECRET_KEY\n")
+	sb.WriteString("# Set these from your ARMOR_AUTH_ACCESS_KEY and ARMOR_AUTH_SECRET_KEY\n")
 	sb.WriteString("LITESTREAM_ACCESS_KEY_ID=YOUR_ACCESS_KEY_ID\n")
 	sb.WriteString("LITESTREAM_SECRET_ACCESS_KEY=YOUR_SECRET_ACCESS_KEY\n\n")
 
@@ -369,7 +361,7 @@ func barmanConfig(endpoint, bucket, credential string, formatVersion int) string
 	if credential != "" {
 		fmt.Fprintf(&sb, "# Using named credential: %s\n", credential)
 	}
-	sb.WriteString("# Set these from your ARMOR_AUTH_ACCESS_KEY_ID and ARMOR_AUTH_SECRET_KEY\n")
+	sb.WriteString("# Set these from your ARMOR_AUTH_ACCESS_KEY and ARMOR_AUTH_SECRET_KEY\n")
 	sb.WriteString("export AWS_ACCESS_KEY_ID=YOUR_ACCESS_KEY_ID\n")
 	sb.WriteString("export AWS_SECRET_ACCESS_KEY=YOUR_SECRET_ACCESS_KEY\n\n")
 

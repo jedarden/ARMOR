@@ -6,7 +6,7 @@ export AWS_ENDPOINT_URL=http://localhost:9000
 export AWS_REGION=us-east-1  # Required but unused by ARMOR
 
 # Credentials
-# Set these from your ARMOR_AUTH_ACCESS_KEY_ID and ARMOR_AUTH_SECRET_KEY
+# Set these from your ARMOR_AUTH_ACCESS_KEY and ARMOR_AUTH_SECRET_KEY
 export AWS_ACCESS_KEY_ID=YOUR_ACCESS_KEY_ID
 export AWS_SECRET_ACCESS_KEY=YOUR_SECRET_ACCESS_KEY
 

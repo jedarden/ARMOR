@@ -11,7 +11,7 @@ location_constraint =
 acl = private
 
 # Credentials
-# Set these to your ARMOR_AUTH_ACCESS_KEY_ID and ARMOR_AUTH_SECRET_KEY values:
+# Set these to your ARMOR_AUTH_ACCESS_KEY and ARMOR_AUTH_SECRET_KEY values:
 access_key_id = YOUR_ACCESS_KEY_ID
 secret_access_key = YOUR_SECRET_ACCESS_KEY
 

@@ -113,9 +113,59 @@ func TestClientConfigInvalidFlags(t *testing.T) {
 	}
 }
 
+// TestClientConfigEmptyEnvironmentIsQuiet verifies that workstation use does
+// not attempt to validate the server's backend and credential configuration.
+func TestClientConfigEmptyEnvironmentIsQuiet(t *testing.T) {
+	oldEnv := os.Environ()
+	os.Clearenv()
+	t.Cleanup(func() {
+		os.Clearenv()
+		for _, entry := range oldEnv {
+			key, value, ok := strings.Cut(entry, "=")
+			if ok {
+				_ = os.Setenv(key, value)
+			}
+		}
+	})
+
+	oldFor, oldEndpoint, oldBucket, oldCredential := forFlag, endpointFlag, bucketFlag, credentialFlag
+	t.Cleanup(func() {
+		forFlag, endpointFlag, bucketFlag, credentialFlag = oldFor, oldEndpoint, oldBucket, oldCredential
+	})
+	forFlag = "aws-cli"
+	endpointFlag = "http://localhost:9000"
+	bucketFlag = ""
+	credentialFlag = ""
+
+	oldStdout, oldStderr := os.Stdout, os.Stderr
+	stdoutR, stdoutW, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("create stdout pipe: %v", err)
+	}
+	stderrR, stderrW, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("create stderr pipe: %v", err)
+	}
+	os.Stdout, os.Stderr = stdoutW, stderrW
+	runCommand(t, "client-config")
+	stdoutW.Close()
+	stderrW.Close()
+	os.Stdout, os.Stderr = oldStdout, oldStderr
+
+	var stdout, stderr bytes.Buffer
+	_, _ = stdout.ReadFrom(stdoutR)
+	_, _ = stderr.ReadFrom(stderrR)
+	if got := stderr.String(); got != "" {
+		t.Errorf("empty environment produced client-config diagnostics; want quiet output, got %q", got)
+	}
+	if !strings.Contains(stdout.String(), "write format v3") {
+		t.Errorf("empty environment did not use the default v3 format:\n%s", stdout.String())
+	}
+}
+
 // TestClientConfigGoldenFiles tests that the generated configs match the golden files
 func TestClientConfigGoldenFiles(t *testing.T) {
-	// Set up minimal environment for config loading
+	// Set up the environment used by the generated configuration tests.
 	os.Setenv("ARMOR_BUCKET", "test-bucket")
 	os.Setenv("ARMOR_MEK", "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
 	os.Setenv("ARMOR_B2_REGION", "us-east-005")
@@ -303,9 +353,9 @@ const (
 	clientConfigSentinelSecret = "sentinel-armor-auth-secret-4a220505"
 )
 
-// pinClientConfigTestEnv pins the ARMOR_* environment clientConfig's
-// config.Load() call needs, with sentinel auth values: every config captured
-// through it doubles as a target for the value-never-emitted assertions.
+// pinClientConfigTestEnv pins ARMOR_* values, including sentinel auth values:
+// every config captured through it doubles as a target for the value-never-
+// emitted assertions.
 func pinClientConfigTestEnv(t *testing.T) {
 	t.Helper()
 	t.Setenv("ARMOR_BUCKET", "test-bucket")
@@ -318,8 +368,8 @@ func pinClientConfigTestEnv(t *testing.T) {
 }
 
 // captureClientConfig sets the client-config flags, runs the command the way
-// main dispatches it, and returns its stdout with the ARMOR_* environment
-// pinned so config.Load() succeeds and the requested write format is honored.
+// main dispatches it, and returns its stdout with the requested write format
+// pinned in ARMOR_FORMAT_VERSION.
 func captureClientConfig(t *testing.T, tool, endpoint, bucket, credential, formatVersion string) string {
 	t.Helper()
 	pinClientConfigTestEnv(t)
@@ -366,7 +416,7 @@ func TestClientConfigSigningSettings(t *testing.T) {
 			tool:           "aws-cli",
 			wantEndpointOn: "endpoint_url = https://armor.example.com:9000",
 			wantAddressing: "addressing_style = path",
-			wantCredNames:  []string{"ARMOR_AUTH_ACCESS_KEY_ID", "ARMOR_AUTH_SECRET_KEY"},
+			wantCredNames:  []string{"ARMOR_AUTH_ACCESS_KEY", "ARMOR_AUTH_SECRET_KEY"},
 		},
 		{
 			name:           "rclone",
