@@ -140,6 +140,7 @@ Contextual notes and temporary documentation:
 - **[Small-Object Full-GET Baseline](performance/small-object-get-baseline.md)** — Backend request counts per small-object GET (pinned by tests), the latency-injected matrix, and the in-cluster `armor-get-probe` production numbers (armor-50a36688)
 - **[Large-Object Range-Read Baseline](performance/large-object-range-read-baseline.md)** — Repeatable latency and backend-byte measurements for representative ranges on a 64 MiB object, with the production-evidence boundary
 - **[Production B2/Cloudflare Qualification](performance/production-b2-cloudflare-2026-09-28.md)** — First live large-object qualification workload; the 2026-09-28 attempt on 0.1.1971 produced no numbers (verification GET hang), superseded in the same document by the valid 2026-10-24 result on 0.1.1993
+- **[CF Read Transport Matrix](performance/cf-read-transport-matrix-2026-11-04.md)** — {h2, h1} x concurrency x fetch-size read grid against the live Cloudflare path (armor-409733e3): protocol is immaterial, the MISS path is origin-fetch bound, fetch size is the lever
 
 ## Archive
 

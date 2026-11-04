@@ -97,6 +97,11 @@ type B2Config struct {
 	CFDomain        string // Cloudflare domain for free egress downloads
 	ReadConcurrency int    // Maximum concurrent ranged reads; zero uses the default
 
+	// CFDisableHTTP2 pins the Cloudflare read client to HTTP/1.1 so each
+	// ranged fetch holds its own TCP connection instead of multiplexing onto
+	// one shared connection. Zero (the default) keeps HTTP/2 negotiation.
+	CFDisableHTTP2 bool
+
 	// ReadFetchSize is the size of each backend ranged request in bytes. It is
 	// a network knob only and never changes the stored block size. Zero uses
 	// the default.
@@ -232,7 +237,7 @@ func NewB2Backend(ctx context.Context, cfg B2Config) (*B2Backend, error) {
 			// Same pool sizing as the SDK client; the 30m ceiling is unchanged
 			// and in practice shadowed by the per-request read deadline that
 			// every caller of the CF client applies (fetchRange).
-			Transport: newReadHTTPTransport(readConcurrency, backendLimit),
+			Transport: newReadHTTPTransport(readConcurrency, backendLimit, cfg.CFDisableHTTP2),
 			Timeout:   30 * time.Minute,
 		},
 		readBlockSize:   fetchSize,

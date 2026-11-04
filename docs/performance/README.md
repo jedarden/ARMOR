@@ -21,6 +21,7 @@ run) as current production throughput**; re-run the harness.
 | [small-object-get-baseline.md](small-object-get-baseline.md) | The small-object full-GET baseline (armor-50a36688): per-GET backend request counts pinned by tests, the latency-injected matrix, and the in-cluster `armor-get-probe` production numbers |
 | [large-object-range-read-baseline.md](large-object-range-read-baseline.md) | The focused large-object range baseline: exact plaintext verification, warm-metadata latency, backend fetch counts/bytes, and interpretation limits |
 | [production-b2-cloudflare-2026-09-28.md](production-b2-cloudflare-2026-09-28.md) | First live B2/Cloudflare qualification result: workload, deployment, failed large-object qualification, and release-status boundary |
+| [cf-read-transport-matrix-2026-11-04.md](cf-read-transport-matrix-2026-11-04.md) | The {h2, h1} x concurrency x fetch-size transport grid behind ARMOR_CF_DISABLE_HTTP2 (armor-409733e3): protocol immaterial, MISS path origin-fetch bound, `cfreadprobe` harness |
 
 ## What is measured
 

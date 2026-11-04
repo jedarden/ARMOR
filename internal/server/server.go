@@ -131,6 +131,7 @@ func New(cfg *config.Config) (*Server, error) {
 			AccessKeyID:        cfg.B2AccessKeyID,
 			SecretKey:          cfg.B2SecretAccessKey,
 			CFDomain:           cfg.CFDomain,
+			CFDisableHTTP2:     cfg.CFDisableHTTP2,
 			ReadConcurrency:    cfg.ReadConcurrency,
 			ReadFetchSize:      cfg.ReadFetchSize,
 			ReadRequestTimeout: cfg.ReadRequestTimeout,

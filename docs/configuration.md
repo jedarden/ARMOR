@@ -133,6 +133,7 @@ for the ACL syntax.
 | `ARMOR_READ_RETRY_MAX_BACKOFF` | No | `2s` | Non-negative Go duration (for example `2s`). Upper bound on one read-retry backoff sleep |
 | `ARMOR_CF_STALE_FALLBACK` | No | `true` | `false` or `0` disables re-reading a range directly from B2, at the version the request's HEAD saw, when Cloudflare served a different version (a stale edge copy after an overwrite). Only affects reads that would otherwise fail |
 | `ARMOR_CF_VERSION_PINNED` | No | `false` | `true` or `1` reads through Cloudflare by B2 file ID (`/b2api/v1/b2_download_file_by_id`) instead of by key, so each version has its own immutable URL. Requires that path to pass through the Cloudflare CNAME and cache rule |
+| `ARMOR_CF_DISABLE_HTTP2` | No | `false` | `true` pins the Cloudflare read client to HTTP/1.1, so each pipelined ranged fetch holds its own TCP+TLS connection instead of multiplexing onto one shared connection. Measured against the live Cloudflare path (docs/performance/cf-read-transport-matrix-2026-11-04.md) the aggregate is unchanged — per-fetch origin latency, not connection multiplexing, bounds the MISS path — so the default stays off |
 | `ARMOR_CACHE_MAX_ENTRIES` | No | `10000` | Object metadata cache entries |
 | `ARMOR_CACHE_MAX_BYTES` | No | `0` | Object metadata cache cap by total cached bytes; at least 0, and `0` keeps the backend's built-in byte backstop |
 | `ARMOR_CACHE_TTL` | No | `300` | Metadata cache TTL in seconds |

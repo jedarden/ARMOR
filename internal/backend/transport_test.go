@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -68,7 +69,7 @@ func insecureReadTransport(tr *http.Transport) *http.Transport {
 // poolTestTransport returns a client transport built by the production
 // builder, relaxed for self-signed test servers.
 func poolTestTransport(idlePerHost, idleTotal int) *http.Transport {
-	return insecureReadTransport(newReadHTTPTransport(idlePerHost, idleTotal))
+	return insecureReadTransport(newReadHTTPTransport(idlePerHost, idleTotal, false))
 }
 
 // insecureSDKClient relaxes an SDK buildable client the same way, preserving
@@ -348,7 +349,7 @@ func BenchmarkTransportPool(b *testing.B) {
 				return insecureReadTransport(http.DefaultTransport.(*http.Transport).Clone())
 			}},
 			{"sized", func() http.RoundTripper {
-				return insecureReadTransport(newReadHTTPTransport(defaultReadConcurrency, defaultReadBackendLimit))
+				return insecureReadTransport(newReadHTTPTransport(defaultReadConcurrency, defaultReadBackendLimit, false))
 			}},
 		}
 		for _, proto := range protos {
@@ -440,4 +441,76 @@ func runPoolOps(b *testing.B, stats *countingTLSStats, op func() error) {
 	b.StopTimer()
 	b.ReportMetric(float64(stats.handshakes.Load())/float64(b.N), "handshakes/op")
 	b.ReportMetric(float64(stats.conns.Load()), "conns-total")
+}
+
+// TestReadTransportDisableHTTP2 pins the ARMOR_CF_DISABLE_HTTP2 contract at
+// the wire level: with the knob on, an h2-capable peer never sees the h2
+// ALPN offer, so a simultaneous burst holds one TCP connection per in-flight
+// ranged fetch; with it off (the default), the same burst multiplexes onto a
+// single connection. armor-409733e3 added the knob while hunting the ~2 MB/s
+// production read ceiling; the measured aggregate is unchanged on the live
+// Cloudflare path (see docs/performance/cf-read-transport-matrix-2026-11-04.md),
+// so the default stays multiplexed and the knob exists for field-forcing the
+// shape without a rebuild.
+func TestReadTransportDisableHTTP2(t *testing.T) {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusPartialContent)
+		_, _ = w.Write(make([]byte, 128))
+	})
+	srv, stats := newCountingTLSServer(t, handler, true)
+
+	// Unit level: the knob pins ALPN to HTTP/1.1 and drops the h2 attempt.
+	plain := newReadHTTPTransport(16, 64, true)
+	if plain.ForceAttemptHTTP2 {
+		t.Fatalf("disableHTTP2: ForceAttemptHTTP2 stayed on")
+	}
+	if got := plain.TLSClientConfig.NextProtos; len(got) != 1 || got[0] != "http/1.1" {
+		t.Fatalf("disableHTTP2: NextProtos = %v, want [http/1.1]", got)
+	}
+	kept := newReadHTTPTransport(16, 64, false)
+	if !kept.ForceAttemptHTTP2 {
+		t.Fatalf("default transport: ForceAttemptHTTP2 off, want on (h2 negotiation)")
+	}
+
+	newBurstConns := func(disable bool) (int64, string) {
+		client := &http.Client{
+			Transport: insecureReadTransport(newReadHTTPTransport(defaultReadConcurrency, defaultReadBackendLimit, disable)),
+		}
+		// Warm so the counters reflect the knob's steady-state shape, then
+		// fire one simultaneous 16-wide burst: with h1 each in-flight
+		// request must hold its own connection; with h2 the same burst
+		// multiplexes onto the warm connection.
+		warm, err := client.Get(srv.URL + "/file/bucket/key")
+		if err != nil {
+			t.Fatalf("warmup: %v", err)
+		}
+		proto := fmt.Sprintf("HTTP/%d", warm.ProtoMajor)
+		_, _ = io.Copy(io.Discard, warm.Body)
+		warm.Body.Close()
+
+		before := stats.conns.Load()
+		driveBursts(t, client, srv.URL+"/file/bucket/key", stats, 1, 16)
+		return stats.conns.Load() - before, proto
+	}
+
+	h1Conns, h1Proto := newBurstConns(true)
+	if h1Proto != "HTTP/1" {
+		t.Fatalf("disableHTTP2 warmup negotiated %s, want HTTP/1.1", h1Proto)
+	}
+	h2Conns, h2Proto := newBurstConns(false)
+	if h2Proto != "HTTP/2" {
+		t.Fatalf("default warmup negotiated %s, want HTTP/2", h2Proto)
+	}
+
+	// One burst request may legitimately ride the warm connection that just
+	// returned to the idle pool, so the floor is width-1; the contract this
+	// pins is "a fresh connection per in-flight request" versus the
+	// multiplexed default's one-or-two.
+	if h1Conns < 12 {
+		t.Fatalf("disableHTTP2: 16-wide burst opened %d new connections, want >= 12 (one per in-flight request)", h1Conns)
+	}
+	if h2Conns > 2 {
+		t.Fatalf("default: 16-wide burst opened %d connections, want <= 2 (multiplexed)", h2Conns)
+	}
+	t.Logf("16-wide burst: h1 conns=%d, h2 conns=%d", h1Conns, h2Conns)
 }

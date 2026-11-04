@@ -148,6 +148,11 @@ type Config struct {
 	CFStaleFallback bool
 	// CFVersionPinned reads through Cloudflare by B2 file ID (default false).
 	CFVersionPinned bool
+	// CFDisableHTTP2 pins the Cloudflare read client to HTTP/1.1 (default
+	// false: HTTP/2 negotiation stays on, pipelined fetches multiplex onto
+	// one connection). Set ARMOR_CF_DISABLE_HTTP2=true to give every ranged
+	// fetch its own TCP connection.
+	CFDisableHTTP2 bool
 
 	// Multi-key configuration
 	NamedKeys map[string][]byte // Named MEKs (key name -> MEK)
@@ -458,6 +463,11 @@ func Load() (*Config, error) {
 
 	cfg.CFStaleFallback = getEnvBool("ARMOR_CF_STALE_FALLBACK", true, &errs)
 	cfg.CFVersionPinned = getEnvBool("ARMOR_CF_VERSION_PINNED", false, &errs)
+
+	// HTTP/1.1-only Cloudflare read client (opt-in; see
+	// docs/performance/cf-read-transport-matrix-2026-11-04.md for the
+	// measurement behind keeping the default off).
+	cfg.CFDisableHTTP2 = getEnvBool("ARMOR_CF_DISABLE_HTTP2", false, &errs)
 
 	// Auth credentials
 	cfg.AuthAccessKey = os.Getenv("ARMOR_AUTH_ACCESS_KEY")

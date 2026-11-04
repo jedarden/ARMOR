@@ -1,6 +1,7 @@
 package backend
 
 import (
+	"crypto/tls"
 	"net/http"
 
 	awshttp "github.com/aws/aws-sdk-go-v2/aws/transport/http"
@@ -35,10 +36,29 @@ import (
 // TLS defaults, 90s idle timeout, 10s handshake timeout and HTTP/2
 // negotiation via ForceAttemptHTTP2 are all preserved — with only the
 // idle-pool sizes raised from the stdlib defaults.
-func newReadHTTPTransport(idlePerHost, idleTotal int) *http.Transport {
+//
+// disableHTTP2 opts out of the HTTP/2 upgrade (ARMOR_CF_DISABLE_HTTP2):
+// NextProtos is pinned to "http/1.1", so every in-flight ranged fetch holds
+// its own TCP+TLS connection instead of multiplexing onto one shared
+// connection. The read pipeline's parallelism (ARMOR_READ_CONCURRENCY) then
+// maps onto parallel connections rather than parallel streams. Measured
+// against the live Cloudflare path this does not move aggregate throughput —
+// see docs/performance/cf-read-transport-matrix-2026-11-04.md — so the
+// default stays multiplexed; the knob exists so the shape can be forced in
+// the field without a rebuild.
+func newReadHTTPTransport(idlePerHost, idleTotal int, disableHTTP2 bool) *http.Transport {
 	tr := http.DefaultTransport.(*http.Transport).Clone()
 	tr.MaxIdleConnsPerHost = idlePerHost
 	tr.MaxIdleConns = idleTotal
+	if disableHTTP2 {
+		tr.ForceAttemptHTTP2 = false
+		if tr.TLSClientConfig == nil {
+			tr.TLSClientConfig = &tls.Config{}
+		} else {
+			tr.TLSClientConfig = tr.TLSClientConfig.Clone()
+		}
+		tr.TLSClientConfig.NextProtos = []string{"http/1.1"}
+	}
 	return tr
 }
 

@@ -1,6 +1,8 @@
 # ADR-013: Read throughput is bounded by unpipelined per-block ranged GETs
 
-**Status:** Proposed
+**Status:** Accepted (implemented — the pipelined reader shipped in v0.1.1987,
+armor-73564f97; measured outcome and the ceiling that remains are recorded in
+[docs/performance/cf-read-transport-matrix-2026-11-04.md](../performance/cf-read-transport-matrix-2026-11-04.md))
 **Date:** 2026-08-08
 
 ## Context
