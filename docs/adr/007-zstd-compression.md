@@ -159,6 +159,12 @@ curl -X PUT http://armor:9000/bucket/key \
 
 Valid values: `true` (compress), `false` (don't compress). Invalid values return HTTP 400.
 
+**Size bound:** the override (and any matching rule) is honored only for
+uploads within the in-memory buffer — a declared size at or under the 10 MiB
+streaming threshold. Larger or unknown-length uploads always take the
+streaming path and store uncompressed, so a per-request header can never
+force whole-body buffering of an arbitrary-size upload.
+
 ### README Configuration Table Entry
 
 | Variable | Required | Default | Description |

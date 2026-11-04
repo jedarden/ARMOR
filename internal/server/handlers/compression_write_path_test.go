@@ -26,18 +26,18 @@ func compressibleBody(size int) []byte {
 // leaves r.ContentLength at -1, the chunked/unknown-length upload shape.
 type unknownLengthBody struct{ io.Reader }
 
-// TestPutObjectOverrideCompressesLargeObjectWhenConfigOff verifies that a
-// compress=true override is honored even when config compression is off and
-// the body is over the streaming threshold. Before the fix the request took
-// the streaming path, which cannot compress, and the header was silently
-// ignored. (ADR-007 per-request override.)
-//
-// The read side is deliberately not exercised here: whole-object compressed
-// GET round-trips are currently broken independently of the routing decision
-// (the reader derives block layout from the original plaintext size, so a
-// shrunken envelope fails verification). That defect is tracked separately;
-// this test pins the write-path routing only.
-func TestPutObjectOverrideCompressesLargeObjectWhenConfigOff(t *testing.T) {
+// TestPutObjectOverrideTrueStreamsLargeObjectWhenConfigOff verifies that a
+// compress=true override can NO LONGER pull an over-threshold body into the
+// buffered path when it cannot honor it safely. A compression decision (here:
+// the client-supplied x-amz-meta-armor-compress header with config
+// compression off) never influences path choice: whole-object compression
+// needs the entire body in memory, so honoring the override on a large body
+// was a memory-DoS route — any authenticated client could stream a multi-GiB
+// PUT through io.ReadAll with one header. The request takes the streaming
+// path (which spools to a temp file, bounding memory) and stores the object
+// UNCOMPRESSED; the override keeps its small-object semantics (see
+// TestSmallObjectOverridePrecedence). (ADR-007 per-request override, bounded.)
+func TestPutObjectOverrideTrueStreamsLargeObjectWhenConfigOff(t *testing.T) {
 	cfg, mb, cache, footerCache, km := testSetup(t)
 	cfg.FormatWriteVersion = 3
 	// Config compression stays OFF: no cfg.Compress, no CompressRules.
@@ -56,9 +56,12 @@ func TestPutObjectOverrideCompressesLargeObjectWhenConfigOff(t *testing.T) {
 		t.Fatalf("expected status 200, got %d: %s", w.Code, w.Body.String())
 	}
 
-	// The buffered (compressible) path must have been taken, not streaming.
-	if w.Header().Get("X-Armor-Streaming") == "true" {
-		t.Error("compress=true override must bypass the streaming path")
+	// The bounded streaming path must have been taken, not the buffered
+	// whole-body path — the routing assertion is the bounded-memory check:
+	// the streaming path spools to a temp file, and io.ReadAll is unreachable
+	// for any body whose declared length exceeds the streaming threshold.
+	if w.Header().Get("X-Armor-Streaming") != "true" {
+		t.Error("compress=true override must not force a large body onto the buffered path")
 	}
 
 	mb.mu.Lock()
@@ -66,27 +69,152 @@ func TestPutObjectOverrideCompressesLargeObjectWhenConfigOff(t *testing.T) {
 	data := mb.objects["test-bucket/override-large"]
 	mb.mu.Unlock()
 
-	if meta["x-amz-meta-armor-compressed"] != "true" {
-		t.Errorf("expected compressed=true, got %q", meta["x-amz-meta-armor-compressed"])
-	}
-	if meta["x-amz-meta-armor-compression-type"] != "zstd" {
-		t.Errorf("expected zstd compression type, got %q", meta["x-amz-meta-armor-compression-type"])
+	if meta["x-amz-meta-armor-compressed"] != "" {
+		t.Errorf("expected the streamed object to be stored uncompressed, got compressed=%q", meta["x-amz-meta-armor-compressed"])
 	}
 	if len(data) < 64 {
 		t.Fatalf("stored envelope too short: %d bytes", len(data))
 	}
-	if got := data[62]; got != crypto.CompressionFlagZstd {
-		t.Errorf("expected Reserved[0]=0x%02x, got 0x%02x", crypto.CompressionFlagZstd, got)
+	if got := data[62]; got != crypto.CompressionFlagNone {
+		t.Errorf("expected Reserved[0]=0x%02x (uncompressed), got 0x%02x", crypto.CompressionFlagNone, got)
 	}
 	if envelopeVersion := data[4]; envelopeVersion != 0x03 {
 		t.Errorf("expected envelope version 0x03, got 0x%02x", envelopeVersion)
 	}
+
+	// The streamed object must still round-trip byte-identically.
+	req = httptest.NewRequest(http.MethodGet, "/test-bucket/override-large", nil)
+	w = httptest.NewRecorder()
+	h.HandleRoot(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("GET failed: status %d", w.Code)
+	}
+	if !bytes.Equal(w.Body.Bytes(), plaintext) {
+		t.Errorf("streaming round-trip mismatch: got %d bytes, want %d", w.Body.Len(), len(plaintext))
+	}
+}
+
+// TestPutObjectEnabledCompressionStreamsAboveThreshold verifies the same
+// bound for server-side compression: with compression ENABLED (a matching
+// rule, or the ARMOR_COMPRESS=true global alias), an over-threshold body
+// still takes the streaming path and stores uncompressed. Before the bound a
+// matching rule forced every over-threshold matching object through io.ReadAll
+// — the same unbounded-buffering defect as the override header, reached via
+// configuration instead of a request header.
+func TestPutObjectEnabledCompressionStreamsAboveThreshold(t *testing.T) {
+	plaintext := compressibleBody(10*1024*1024 + 1) // over the streaming threshold
+
+	t.Run("matching_rule", func(t *testing.T) {
+		cfg, mb, cache, footerCache, km := testSetup(t)
+		cfg.FormatWriteVersion = 3
+		rules, err := config.ParseCompressRules(".jsonl=zstd")
+		if err != nil {
+			t.Fatalf("parse rules: %v", err)
+		}
+		cfg.CompressRules = rules
+		h := handlers.New(cfg, mb, cache, footerCache, km, nil)
+
+		req := httptest.NewRequest(http.MethodPut, "/test-bucket/metrics.jsonl", bytes.NewReader(plaintext))
+		req.Header.Set("Content-Type", "application/jsonl")
+		w := httptest.NewRecorder()
+
+		h.HandleRoot(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected status 200, got %d: %s", w.Code, w.Body.String())
+		}
+		if w.Header().Get("X-Armor-Streaming") != "true" {
+			t.Error("a matching compression rule must not force a large body onto the buffered path")
+		}
+
+		mb.mu.Lock()
+		meta := mb.meta["test-bucket/metrics.jsonl"]
+		mb.mu.Unlock()
+
+		if meta["x-amz-meta-armor-compressed"] != "" {
+			t.Errorf("expected the streamed object to be stored uncompressed, got compressed=%q", meta["x-amz-meta-armor-compressed"])
+		}
+
+		req = httptest.NewRequest(http.MethodGet, "/test-bucket/metrics.jsonl", nil)
+		w = httptest.NewRecorder()
+		h.HandleRoot(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("GET failed: status %d", w.Code)
+		}
+		if !bytes.Equal(w.Body.Bytes(), plaintext) {
+			t.Errorf("streaming round-trip mismatch: got %d bytes, want %d", w.Body.Len(), len(plaintext))
+		}
+	})
+
+	t.Run("global_flag", func(t *testing.T) {
+		cfg, mb, cache, footerCache, km := testSetup(t)
+		cfg.FormatWriteVersion = 3
+		cfg.Compress = true
+		h := handlers.New(cfg, mb, cache, footerCache, km, nil)
+
+		req := httptest.NewRequest(http.MethodPut, "/test-bucket/flag-large", bytes.NewReader(plaintext))
+		req.Header.Set("Content-Type", "application/octet-stream")
+		w := httptest.NewRecorder()
+
+		h.HandleRoot(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected status 200, got %d: %s", w.Code, w.Body.String())
+		}
+		if w.Header().Get("X-Armor-Streaming") != "true" {
+			t.Error("the global compress flag must not force a large body onto the buffered path")
+		}
+
+		mb.mu.Lock()
+		meta := mb.meta["test-bucket/flag-large"]
+		mb.mu.Unlock()
+
+		if meta["x-amz-meta-armor-compressed"] != "" {
+			t.Errorf("expected the streamed object to be stored uncompressed, got compressed=%q", meta["x-amz-meta-armor-compressed"])
+		}
+	})
+}
+
+// TestPutObjectUnknownLengthOverrideStreams extends the bound to the
+// unknown-length (chunked) shape: a compress=true override cannot force a
+// body with no Content-Length onto the buffered path either — without a
+// length there is no proof the body fits the buffer, so it streams.
+func TestPutObjectUnknownLengthOverrideStreams(t *testing.T) {
+	cfg, mb, cache, footerCache, km := testSetup(t)
+	h := handlers.New(cfg, mb, cache, footerCache, km, nil)
+
+	plaintext := compressibleBody(1024)
+
+	req := httptest.NewRequest(http.MethodPut, "/test-bucket/chunked-override.parquet", unknownLengthBody{bytes.NewReader(plaintext)})
+	req.Header.Set("Content-Type", "application/octet-stream")
+	req.Header.Set("x-amz-meta-armor-compress", "true")
+	if req.ContentLength != -1 {
+		t.Fatalf("test premise: expected unknown ContentLength, got %d", req.ContentLength)
+	}
+	w := httptest.NewRecorder()
+
+	h.HandleRoot(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if w.Header().Get("X-Armor-Streaming") != "true" {
+		t.Error("an unknown-length body must take the streaming path even with compress=true")
+	}
+
+	mb.mu.Lock()
+	meta := mb.meta["test-bucket/chunked-override.parquet"]
+	mb.mu.Unlock()
+
+	if meta["x-amz-meta-armor-compressed"] != "" {
+		t.Errorf("expected the streamed object to be stored uncompressed, got compressed=%q", meta["x-amz-meta-armor-compressed"])
+	}
 }
 
 // TestPutObjectOverrideFalseStillStreamsLargeObjectWhenConfigOff verifies that
-// a compress=false override does NOT force the buffered path — only
-// compress=true pulls large bodies into memory — and that the rerouted
-// streaming object still round-trips byte-identically.
+// a compress=false override does NOT force the buffered path — no override
+// value pulls large bodies into memory — and that the streamed
+// object still round-trips byte-identically.
 func TestPutObjectOverrideFalseStillStreamsLargeObjectWhenConfigOff(t *testing.T) {
 	cfg, mb, cache, footerCache, km := testSetup(t)
 	h := handlers.New(cfg, mb, cache, footerCache, km, nil)

@@ -612,12 +612,10 @@ func (h *Handlers) PutObject(w http.ResponseWriter, r *http.Request, bucket, key
 
 	// Resolve the per-object compression decision (x-amz-meta-armor-compress
 	// override > compress rules > global Compress flag) BEFORE choosing the
-	// upload path. Keying streaming off the mere presence of compression
-	// configuration forced every large or unknown-length body — including
-	// objects no rule would compress — through io.ReadAll, and the streaming
-	// path never evaluated the override header (silently ignoring compress
-	// requests and never rejecting invalid ones). Only an object that will
-	// actually be whole-object compressed needs the buffered path.
+	// upload path, so an invalid override fails the PUT on both paths with
+	// the same InvalidArgument error (the streaming path cannot validate the
+	// header once the body is spooled). The decision applies only on the
+	// buffered path; it never influences path choice — see useStreaming.
 	contentType := r.Header.Get("Content-Type")
 	if contentType == "" {
 		contentType = "application/octet-stream"
@@ -630,10 +628,22 @@ func (h *Handlers) PutObject(w http.ResponseWriter, r *http.Request, bucket, key
 		return
 	}
 
-	// Use streaming for large files or unknown size unless THIS object will be
-	// compressed: whole-object compression requires the buffer, and the
-	// streaming path stores objects uncompressed.
-	useStreaming := !shouldCompress && (contentLength < 0 || contentLength > streamingThreshold)
+	// Use streaming for large files or unknown size — ALWAYS, even when the
+	// object carries a compression decision. Whole-object compression requires
+	// the entire body in memory, so it is bounded to the buffered path (a
+	// declared Content-Length at or under streamingThreshold; net/http caps
+	// body reads at the declared length). Letting shouldCompress defeat this
+	// check made a single client-supplied header a memory-DoS route: any
+	// authenticated PUT with x-amz-meta-armor-compress: true pulled a
+	// multi-GiB body through io.ReadAll. Bodies above the threshold — or
+	// without a length — stream and store UNCOMPRESSED (the streaming path
+	// cannot compress; this is the same fallback an incompressible payload
+	// already gets). Deliberate routing change, documented in
+	// docs/configuration.md: compressed GET round-trips for whole-object
+	// compressed envelopes are independently broken (the reader derives block
+	// layout from the original plaintext size), so large bodies never belonged
+	// on the buffered compression path.
+	useStreaming := contentLength < 0 || contentLength > streamingThreshold
 
 	if useStreaming {
 		h.putObjectStreaming(ctx, w, r, bucket, key, createOnly, appendOnly, explicitCondition, taggingEncoded)
