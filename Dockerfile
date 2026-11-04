@@ -30,8 +30,16 @@ RUN mkdir -p /image-tmp && chmod 1777 /image-tmp
 # Test gate shared with CI. It covers the v3 cryptographic primitives,
 # multipart state, canary, concurrent HTTP round trips, the publisher
 # contract tests (network-free, fake endpoints), and integration-suite
-# compilation without requiring live B2 credentials.
-RUN ARMOR_GATE_SCOPE=image CGO_ENABLED=0 ./scripts/release-gate.sh
+# compilation without requiring live B2 credentials. Local Docker builds keep
+# this gate enabled by default. armor-build runs the same gate once at the
+# exact release SHA before the four Kaniko image builds, then passes
+# ARMOR_SKIP_GATE=1 to avoid repeating it in each image build.
+ARG ARMOR_SKIP_GATE=0
+RUN if [ "${ARMOR_SKIP_GATE}" = "1" ]; then \
+      echo "Skipping in-image release gate: CI already verified this SHA"; \
+    else \
+      ARMOR_GATE_SCOPE=image CGO_ENABLED=0 ./scripts/release-gate.sh; \
+    fi
 
 # Build the main armor binary
 ARG VERSION
