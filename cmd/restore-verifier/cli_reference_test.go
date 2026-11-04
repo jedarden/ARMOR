@@ -261,6 +261,17 @@ var (
 	verifierBinDir  string
 )
 
+// TestMain removes the once-per-process reference-binary directory after the
+// suite. t.Cleanup cannot: every caller of verifierBinary shares it. Without
+// this each run leaked the binary into TMPDIR (armor-53f0d650).
+func TestMain(m *testing.M) {
+	code := m.Run()
+	if verifierBinDir != "" {
+		_ = os.RemoveAll(verifierBinDir)
+	}
+	os.Exit(code)
+}
+
 // verifierBinary builds the restore-verifier binary once per test run and
 // returns its path. The toolchain is the one running these tests: `go` from
 // PATH, or GOROOT/bin/go — the running toolchain itself — when `go` is not

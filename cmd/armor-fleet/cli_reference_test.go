@@ -234,6 +234,17 @@ var (
 	fleetBinDir  string
 )
 
+// TestMain removes the once-per-process reference-binary directory after the
+// suite. t.Cleanup cannot: every caller of fleetBinary shares it. Without
+// this each run leaked the binary into TMPDIR (armor-53f0d650).
+func TestMain(m *testing.M) {
+	code := m.Run()
+	if fleetBinDir != "" {
+		_ = os.RemoveAll(fleetBinDir)
+	}
+	os.Exit(code)
+}
+
 // fleetBinary builds the armor-fleet binary once per test run and returns
 // its path. The toolchain is the one running these tests: `go` from PATH,
 // or GOROOT/bin/go — the running toolchain itself — when `go` is not on

@@ -41,7 +41,20 @@ var (
 	binariesOnce sync.Once
 	binaries     map[string]contractBinary
 	binariesErr  error
+	binariesDir  string
 )
+
+// TestMain removes the once-per-process binary directory after the suite.
+// t.Cleanup cannot: every contract case shares the directory, so it must
+// outlive any single test. Without this each run leaked ~85MB of binaries
+// into TMPDIR, which filled codinghome's /home (armor-53f0d650).
+func TestMain(m *testing.M) {
+	code := m.Run()
+	if binariesDir != "" {
+		_ = os.RemoveAll(binariesDir)
+	}
+	os.Exit(code)
+}
 
 // repoRoot resolves the repository from this source file, so the suite also
 // works from the git-archive extraction used by the completion checklist.
@@ -63,6 +76,7 @@ func builtBinaries(t *testing.T) map[string]contractBinary {
 			binariesErr = fmt.Errorf("create binary directory: %w", err)
 			return
 		}
+		binariesDir = dir
 		binaries = make(map[string]contractBinary, 3)
 		for _, spec := range []struct {
 			name string
