@@ -104,7 +104,7 @@ status on GitHub at start and at the end, which is what the README badge shows.
 |---|---|
 | `resolve-version` | The pushed commit changed `VERSION` and the value is `MAJOR.MINOR.PATCH`. A non-release push fails here by design |
 | `lint` | `golangci-lint` clean (pinned `v2.13.x`; the same command and major.minor the definition-of-done lint stage and `cut-release.sh`'s pre-cut gate run locally) |
-| `test` | `scripts/release-gate.sh` with `ARMOR_RELEASE_RACE=1` (crypto, backend, restore-verifier, canary, config, cmd, handlers under `-race`) |
+| `test` | `scripts/release-gate.sh` with `ARMOR_RELEASE_RACE=1` (the complete `go test -short ./...` suite under `-race`) |
 | `integration-test` | `tests/integration` compiles and runs in short mode — compile coverage only: every test in the suite skips without real-B2 credentials. Execution is the separate `armor-integration` leg (see [Live-B2 integration leg](#live-b2-integration-leg-armor-integration)) |
 | `docker-build`, `docker-build-restore-verifier`, `docker-build-fleet`, `docker-build-ghcr` | The four images are built with kaniko from the pushed tree. They are siblings: the server image is published even if a companion build fails |
 | `verify-*-image` | Each Docker Hub tag is resolvable through the registry API (the ghost-tag guard) |

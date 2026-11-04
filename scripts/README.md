@@ -8,7 +8,7 @@ Local verification gate. `scripts/definition-of-done.sh --fast` is the hermetic 
 
 ## release-gate.sh
 
-The test gate CI and the `Dockerfile` run before building an image: the toolchain parity check, the compose.yaml ↔ VERSION parity check, the prohibited deployment constructs gate, the Dockerfile image contract gate, the executable CLI contract gate (`scripts/cli-contract-gate.sh`), the publisher contract tests (`tests/test_publish_release.py` — network-free, fake endpoints; needs python3 + pytest, which the `Dockerfile` builder stage and CI's `go-test` step install for this leg), crypto, backend, restore-verifier, canary, config, `cmd/armor` and the server handlers, plus an integration-suite compile. `ARMOR_RELEASE_RACE=1` adds `-race` to the packages that support it (CI sets it).
+The test gate CI and the `Dockerfile` run before building an image: the toolchain parity check, the compose.yaml ↔ VERSION parity check, the prohibited deployment constructs gate, the Dockerfile image contract gate, the executable CLI contract gate (`scripts/cli-contract-gate.sh`), the publisher contract tests (`tests/test_publish_release.py` — network-free, fake endpoints; needs python3 + pytest, which the `Dockerfile` builder stage and CI's `go-test` step install for this leg), `go vet ./...`, and the complete `go test -short ./...` suite. `ARMOR_RELEASE_RACE=1` adds `-race` to that Go test suite (CI sets it).
 
 ## toolchain-parity.sh
 

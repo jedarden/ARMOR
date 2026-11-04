@@ -422,7 +422,7 @@ func TestReadyzConcurrentCanaryMode(t *testing.T) {
 		CanarySize: 100,
 	})
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	m.Start(ctx)
 
@@ -465,6 +465,7 @@ func TestReadyzConcurrentCanaryMode(t *testing.T) {
 	}
 	t.Logf("Canary mode: HeadBucket calls: %d", calls)
 
+	cancel()
 	m.Stop()
 }
 
@@ -523,7 +524,7 @@ func TestReadyzCanaryHealthy(t *testing.T) {
 
 	// Start the canary so its initial check runs (encrypt-then-decrypt round trip
 	// against the in-memory backend), then wait for it to report healthy.
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	m.Start(ctx)
 
@@ -534,6 +535,7 @@ func TestReadyzCanaryHealthy(t *testing.T) {
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
+	cancel()
 	m.Stop()
 
 	s := &Server{
@@ -640,7 +642,7 @@ func TestCanaryHandlerMultipartHealthy(t *testing.T) {
 	}
 
 	// Test with canary monitor that has been started (regular check should succeed)
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	m.Start(ctx)
 
@@ -686,5 +688,6 @@ func TestCanaryHandlerMultipartHealthy(t *testing.T) {
 		t.Error("expected multipart_healthy_status field to remain in JSON")
 	}
 
+	cancel()
 	m.Stop()
 }

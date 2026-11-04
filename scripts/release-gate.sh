@@ -1,10 +1,8 @@
 #!/bin/sh
 set -eu
 
-# Release-critical gate for the ARMOR server image.  The repository still has
-# unrelated legacy CLI/dashboard/fleet tests awaiting repair; those must not
-# hide regressions in the encryption and multipart paths used by production.
-# Keep this gate narrow, deterministic, and shared by CI and the Docker build.
+# Release-critical gate for the ARMOR server image. Keep this gate deterministic
+# and shared by CI and the Docker build.
 
 race_flag=""
 if [ "${ARMOR_RELEASE_RACE:-0}" = "1" ]; then
@@ -71,48 +69,10 @@ fi
 
 go vet ./...
 
-go test ${race_flag} -count=1 ./internal/crypto \
-	-run '^(TestV3Counter|TestV3BlockHMACKeys|TestV3MaxBlockSizeConstraint|TestV3HMACInputFormat)$'
-
-go test ${race_flag} -count=1 ./internal/backend \
-	-run '^TestMultipartV3|^TestMultipartV2Format$|^TestFSBackend_MultipartUpload$|^TestB2PutIfAbsentForwardsAtomicCondition$|^TestFSBackendPutIfAbsentDoesNotOverwrite$'
-
-# Restore discovery (armor-8290de05): getLatestObject must continue past list
-# pages the backend returns EMPTY because every key on them was .armor/*
-# internal bookkeeping — an unprefixed bucket whose lexicographic head is
-# thousands of canary objects otherwise blinds the verifier completely.
-go test ${race_flag} -count=1 ./internal/restoreverifier \
-	-run '^TestGetLatestObject'
-
-go test ${race_flag} -count=1 ./internal/canary
-
-# Key-ring variables share the ARMOR_MEK_ prefix with named keys. Keep their
-# parsing in the release gate so a deployable image accepts both empty and
-# populated default/named rings.
-go test -count=1 ./internal/config \
-  -run '^TestLoadWith(KeyRing|EmptyKeyRing|NamedKeyRing|RingValidationErrors)$'
-
-# The S3 API streams multi-gigabyte operations. A server-wide WriteTimeout
-# terminates CompleteMultipartUpload while the backing store is still
-# composing the object, so keep the timeout policy in the release gate.
-go test -count=1 ./cmd/armor \
-	-run '^TestNewS3HTTPServerAllowsLongRunningRequestsAndResponses$'
-
-go test ${race_flag} -count=1 ./internal/server/handlers \
-	-run '^TestMultipartV3HTTPConcurrentShuffledUnalignedRoundTrip$|^TestMultipartV3|^TestV3GetObject|^TestV3FilesystemPutGetRoundTrip$|^TestPutObjectIfNoneMatchCreateOnlySmallAndStreaming$|^TestPutObjectRejectsUnsupportedIfNoneMatchValue$|^TestPutObjectDoesNotEmulateConditionalWrite$'
-
-# Exercise the server and HTTP harness so red package tests block a release.
-# Those tests include the doc-parity pair, which read
-# ../../docs/http-api-reference.md: docs/ must ship in the build context.
-# 0.1.1995 published no image because .dockerignore excluded docs/ and this
-# leg died with a bare "no such file or directory" (armor-81ab7826) — name
-# the real cause here, and let scripts/image-contract-gate.sh catch the same
-# drift on the repository tree before anything is built.
+# Exercise every package's short-test suite so the release gate covers all
+# binaries and libraries, including the dashboards and fleet console.
 if [ ! -f docs/http-api-reference.md ]; then
 	echo "FAIL: docs/http-api-reference.md missing from the build context; the server leg's doc-parity tests read docs/ (.dockerignore drift?)" >&2
 	exit 1
 fi
-go test ${race_flag} -count=1 -short ./internal/server ./internal/server/srvtest
-
-# Compile the credentialed B2 integration suite without contacting a backend.
-go test -count=1 -tags=integration ./tests/integration/... -run '^$'
+go test ${race_flag} -count=1 -short ./...
