@@ -570,6 +570,26 @@ func TestCLIReferenceRequiredFlagAndCredentialExitsMatchBinary(t *testing.T) {
 			name: "check without configuration exits 1", args: []string{"check"}, wantExit: 1,
 			wantStderr: []string{"Config errors"},
 		},
+		{
+			name: "config validate on an invalid configuration exits 1 with grouped errors",
+			args: []string{"config", "validate"}, wantExit: 1,
+			wantStderr: []string{"Configuration invalid", "ARMOR_MEK is required", "ARMOR_BUCKET is required"},
+		},
+		{
+			name: "config show on an unloadable configuration exits 1 pointing at validate",
+			args: []string{"config", "show"}, wantExit: 1,
+			wantStderr: []string{"configuration failed to load", "armor config validate"},
+		},
+		{
+			name: "config with an unknown nested subcommand exits 2",
+			args: []string{"config", "export"}, wantExit: 2,
+			wantStderr: []string{"unexpected arguments", "validate, show"},
+		},
+		{
+			name: "config show with a stray positional exits 2",
+			args: []string{"config", "show", "extra"}, wantExit: 2,
+			wantStderr: []string{"unexpected arguments"},
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -643,6 +663,36 @@ func TestCheckJSONAndProbeFailureExitContract(t *testing.T) {
 		var extra map[string]json.RawMessage
 		if err := decoder.Decode(&extra); err != io.EOF {
 			t.Errorf("JSON output contains more than one object per expected probe: decode error = %v, object = %v", err, extra)
+		}
+	})
+
+	t.Run("json carries the load errors in detail when configuration fails to load", func(t *testing.T) {
+		// A clean environment: Load fails with several named errors, and the
+		// JSON contract is that the first (and only) object reports them in
+		// detail — historically this path emitted a placeholder instead.
+		res := runReference(t, armorReferenceEnv(t), "check", "--json")
+		if res.exitCode != 1 {
+			t.Fatalf("armor check --json without configuration: exit = %d, want 1\nstdout: %s\nstderr: %s", res.exitCode, res.stdout, res.stderr)
+		}
+
+		var object struct {
+			Name   string `json:"name"`
+			Status string `json:"status"`
+			Detail string `json:"detail"`
+		}
+		if err := json.Unmarshal([]byte(strings.TrimSpace(res.stdout)), &object); err != nil {
+			t.Fatalf("check --json load-failure stdout is not one JSON object: %v\nstdout: %s", err, res.stdout)
+		}
+		if object.Name != "config" || object.Status != "FAIL" {
+			t.Errorf("check --json load-failure object = %s/%s, want config/FAIL", object.Name, object.Status)
+		}
+		for _, want := range []string{"configuration failed to load", "ARMOR_MEK is required", "ARMOR_BUCKET is required"} {
+			if !strings.Contains(object.Detail, want) {
+				t.Errorf("check --json load-failure detail missing %q:\n%s", want, object.Detail)
+			}
+		}
+		if strings.Contains(object.Detail, "config is nil") {
+			t.Errorf("check --json load-failure detail still carries the old placeholder:\n%s", object.Detail)
 		}
 	})
 

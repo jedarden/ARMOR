@@ -33,6 +33,12 @@ if ! "$GO" test -count=1 -short ./cmd/armor -run TestCheckJSONAndProbeFailureExi
 	echo "FAILED: armor check JSON and probe exit contract" >&2
 fi
 
+echo "+ $GO test -count=1 -short ./cmd/armor -run 'TestConfigCommandContract|TestConfigValidateExitCodes|TestConfigShowGoldenOutput'"
+if ! "$GO" test -count=1 -short ./cmd/armor -run 'TestConfigCommandContract|TestConfigValidateExitCodes|TestConfigShowGoldenOutput'; then
+	status=1
+	echo "FAILED: armor config validate/show contract" >&2
+fi
+
 echo "+ $GO test -count=1 -short ./tests/cli-contract -run 'TestSecretFlagsAreRejectedNamingEnvVars|TestFlagVocabularyIsUniform'"
 if ! "$GO" test -count=1 -short ./tests/cli-contract -run 'TestSecretFlagsAreRejectedNamingEnvVars|TestFlagVocabularyIsUniform'; then
 	status=1

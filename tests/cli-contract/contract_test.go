@@ -202,7 +202,7 @@ func TestDocumentedHelpContract(t *testing.T) {
 	armorSections := sectionsByHeading(t, armorDoc, armorSectionHeading)
 	companionSections := sectionsByHeading(t, companionDoc, companionSectionHeading)
 
-	wantArmor := []string{"serve", "demo", "check", "decrypt", "verify", "migrate", "client-config", "version", "help"}
+	wantArmor := []string{"serve", "demo", "check", "config", "decrypt", "verify", "migrate", "client-config", "version", "help"}
 	wantCompanions := []string{"restore-verifier", "armor-fleet"}
 	assertNames := func(label string, got map[string]string, want []string) {
 		t.Helper()
@@ -272,7 +272,7 @@ type exitCase struct {
 func TestDocumentedExitContract(t *testing.T) {
 	bins := builtBinaries(t)
 	var cases []exitCase
-	for _, name := range []string{"serve", "demo", "check", "decrypt", "verify", "migrate", "client-config", "version"} {
+	for _, name := range []string{"serve", "demo", "check", "config", "decrypt", "verify", "migrate", "client-config", "version"} {
 		cases = append(cases, exitCase{
 			name: name + " rejects a positional argument", binaryName: "armor",
 			args: []string{name, "cli-contract-positional"}, wantExit: 2,
@@ -292,6 +292,8 @@ func TestDocumentedExitContract(t *testing.T) {
 		exitCase{name: "missing client-config tool", binaryName: "armor", args: []string{"client-config"}, wantExit: 2, wantText: "-for is required"},
 		exitCase{name: "decrypt without a MEK", binaryName: "armor", args: []string{"decrypt"}, wantExit: 1, wantText: "no MEK provided"},
 		exitCase{name: "check without deployment configuration", binaryName: "armor", args: []string{"check"}, wantExit: 1, wantText: "Config errors"},
+		exitCase{name: "config validate reports an invalid configuration", binaryName: "armor", args: []string{"config", "validate"}, wantExit: 1, wantText: "Configuration invalid"},
+		exitCase{name: "config show reports an unloadable configuration", binaryName: "armor", args: []string{"config", "show"}, wantExit: 1, wantText: "configuration failed to load"},
 		exitCase{name: "restore-verifier missing B2 configuration", binaryName: "restore-verifier", wantExit: 1, wantText: "Missing required B2 credentials"},
 		exitCase{name: "armor-fleet missing targets", binaryName: "armor-fleet", wantExit: 2, wantText: "-targets flag is required"},
 	)

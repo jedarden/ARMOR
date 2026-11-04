@@ -1,0 +1,342 @@
+[
+  {
+    "name": "ARMOR_LISTEN",
+    "value": "127.0.0.1:9100",
+    "source": "env"
+  },
+  {
+    "name": "ARMOR_ADMIN_LISTEN",
+    "value": "127.0.0.1:9001",
+    "source": "default"
+  },
+  {
+    "name": "ARMOR_LOG_LEVEL",
+    "value": "info",
+    "source": "default"
+  },
+  {
+    "name": "ARMOR_WRITER_ID",
+    "value": "golden-writer",
+    "source": "env"
+  },
+  {
+    "name": "ARMOR_FORMAT_VERSION",
+    "value": "3",
+    "source": "default"
+  },
+  {
+    "name": "ARMOR_CANARY_DISABLED",
+    "value": "false",
+    "source": "default"
+  },
+  {
+    "name": "ARMOR_ALLOW_NO_CREDENTIALS",
+    "value": "false",
+    "source": "default"
+  },
+  {
+    "name": "ARMOR_BACKEND",
+    "value": "b2",
+    "source": "default"
+  },
+  {
+    "name": "ARMOR_FS_PATH",
+    "value": "",
+    "source": "skipped"
+  },
+  {
+    "name": "ARMOR_B2_REGION",
+    "value": "us-east-005",
+    "source": "env"
+  },
+  {
+    "name": "ARMOR_B2_ENDPOINT",
+    "value": "https://s3.us-east-005.backblazeb2.com",
+    "source": "derived"
+  },
+  {
+    "name": "ARMOR_B2_ACCESS_KEY_ID",
+    "value": "15e49e10cab009bc",
+    "source": "env"
+  },
+  {
+    "name": "ARMOR_B2_SECRET_ACCESS_KEY",
+    "value": "\u003cset\u003e",
+    "source": "env"
+  },
+  {
+    "name": "ARMOR_BUCKET",
+    "value": "3474a1a9bee7b957",
+    "source": "env"
+  },
+  {
+    "name": "ARMOR_BUCKET_ALIASES",
+    "value": "",
+    "source": "default"
+  },
+  {
+    "name": "ARMOR_PREFIX",
+    "value": "tenant/",
+    "source": "env"
+  },
+  {
+    "name": "ARMOR_REQUIRE_PREFIX",
+    "value": "false",
+    "source": "default"
+  },
+  {
+    "name": "ARMOR_CF_DOMAIN",
+    "value": "",
+    "source": "default"
+  },
+  {
+    "name": "ARMOR_MEK",
+    "value": "9a2db2e23f1504cd",
+    "source": "env"
+  },
+  {
+    "name": "ARMOR_MEK_ARCHIVE",
+    "value": "7969ec0fcb8b648d",
+    "source": "env"
+  },
+  {
+    "name": "ARMOR_MEK_RING",
+    "value": "03f1dac17b438f11",
+    "source": "env"
+  },
+  {
+    "name": "ARMOR_KEY_ROUTES",
+    "value": "data/=archive,=default",
+    "source": "env"
+  },
+  {
+    "name": "ARMOR_BLOCK_SIZE",
+    "value": "65536",
+    "source": "default"
+  },
+  {
+    "name": "ARMOR_COMPRESS",
+    "value": "false",
+    "source": "default"
+  },
+  {
+    "name": "ARMOR_COMPRESS_RULES",
+    "value": ".jsonl=zstd,*=none",
+    "source": "env"
+  },
+  {
+    "name": "ARMOR_AUTH_ACCESS_KEY",
+    "value": "6a00e0f14a7e2baf",
+    "source": "env"
+  },
+  {
+    "name": "ARMOR_AUTH_SECRET_KEY",
+    "value": "\u003cset\u003e",
+    "source": "env"
+  },
+  {
+    "name": "ARMOR_AUTH_FILE",
+    "value": "",
+    "source": "default"
+  },
+  {
+    "name": "credential/6a00e0f14a7e2baf",
+    "value": "secret \u003cset\u003e, full access",
+    "source": "env"
+  },
+  {
+    "name": "credential/a09ac590e5bffe70",
+    "value": "secret \u003cset\u003e, full access",
+    "source": "env"
+  },
+  {
+    "name": "ARMOR_READ_CONCURRENCY",
+    "value": "16",
+    "source": "default"
+  },
+  {
+    "name": "ARMOR_READ_FETCH_SIZE",
+    "value": "1048576",
+    "source": "default"
+  },
+  {
+    "name": "ARMOR_READ_REQUEST_TIMEOUT",
+    "value": "1m30s",
+    "source": "env"
+  },
+  {
+    "name": "ARMOR_READ_BACKEND_LIMIT",
+    "value": "64",
+    "source": "default"
+  },
+  {
+    "name": "ARMOR_SMALL_OBJECT_FETCH_BYTES",
+    "value": "1048576",
+    "source": "default"
+  },
+  {
+    "name": "ARMOR_UPLOAD_PART_MEMORY_BUDGET",
+    "value": "536870912",
+    "source": "default"
+  },
+  {
+    "name": "ARMOR_READ_RETRY_ATTEMPTS",
+    "value": "3",
+    "source": "default"
+  },
+  {
+    "name": "ARMOR_READ_RETRY_BACKOFF",
+    "value": "100ms",
+    "source": "default"
+  },
+  {
+    "name": "ARMOR_READ_RETRY_MAX_BACKOFF",
+    "value": "2s",
+    "source": "default"
+  },
+  {
+    "name": "ARMOR_CF_STALE_FALLBACK",
+    "value": "true",
+    "source": "default"
+  },
+  {
+    "name": "ARMOR_CF_VERSION_PINNED",
+    "value": "false",
+    "source": "default"
+  },
+  {
+    "name": "ARMOR_CF_DISABLE_HTTP2",
+    "value": "false",
+    "source": "default"
+  },
+  {
+    "name": "ARMOR_CACHE_MAX_ENTRIES",
+    "value": "10000",
+    "source": "default"
+  },
+  {
+    "name": "ARMOR_CACHE_TTL",
+    "value": "300",
+    "source": "default"
+  },
+  {
+    "name": "ARMOR_CACHE_MAX_BYTES",
+    "value": "0",
+    "source": "default"
+  },
+  {
+    "name": "ARMOR_LIST_CACHE_MAX_ENTRIES",
+    "value": "1000",
+    "source": "default"
+  },
+  {
+    "name": "ARMOR_LIST_CACHE_TTL",
+    "value": "60",
+    "source": "default"
+  },
+  {
+    "name": "ARMOR_LIST_HEAD_FANOUT",
+    "value": "128",
+    "source": "default"
+  },
+  {
+    "name": "ARMOR_MANIFEST_ENABLED",
+    "value": "true",
+    "source": "default"
+  },
+  {
+    "name": "ARMOR_MANIFEST_PREFIX",
+    "value": "tenant/.armor/manifest",
+    "source": "default"
+  },
+  {
+    "name": "ARMOR_MANIFEST_COMPACTION_INTERVAL",
+    "value": "3600",
+    "source": "default"
+  },
+  {
+    "name": "ARMOR_MANIFEST_COMPACTION_THRESHOLD",
+    "value": "1000",
+    "source": "default"
+  },
+  {
+    "name": "ARMOR_MANIFEST_LOAD_TIMEOUT",
+    "value": "480",
+    "source": "default"
+  },
+  {
+    "name": "ARMOR_DASHBOARD_USER",
+    "value": "",
+    "source": "default"
+  },
+  {
+    "name": "ARMOR_DASHBOARD_PASS",
+    "value": "\u003cunset\u003e",
+    "source": "default"
+  },
+  {
+    "name": "ARMOR_DASHBOARD_TOKEN",
+    "value": "\u003cunset\u003e",
+    "source": "default"
+  },
+  {
+    "name": "ARMOR_DASHBOARD_CREDENTIAL",
+    "value": "",
+    "source": "default"
+  },
+  {
+    "name": "ARMOR_ADMIN_TOKEN",
+    "value": "\u003cset\u003e",
+    "source": "env"
+  },
+  {
+    "name": "ARMOR_PRESIGN_ENABLED",
+    "value": "false",
+    "source": "default"
+  },
+  {
+    "name": "ARMOR_PRESIGN_SECRET",
+    "value": "\u003cunset\u003e",
+    "source": "default"
+  },
+  {
+    "name": "ARMOR_PRESIGN_BASE_URL",
+    "value": "",
+    "source": "default"
+  },
+  {
+    "name": "ARMOR_SECONDARY_BACKEND",
+    "value": "",
+    "source": "default"
+  },
+  {
+    "name": "ARMOR_SECONDARY_BACKEND_PATH",
+    "value": "",
+    "source": "default"
+  },
+  {
+    "name": "ARMOR_SECONDARY_BACKEND_TYPE",
+    "value": "",
+    "source": "default"
+  },
+  {
+    "name": "ARMOR_SECONDARY_B2_ENDPOINT",
+    "value": "",
+    "source": "skipped"
+  },
+  {
+    "name": "ARMOR_SECONDARY_B2_KEY_ID",
+    "value": "",
+    "source": "skipped"
+  },
+  {
+    "name": "ARMOR_SECONDARY_B2_KEY",
+    "value": "",
+    "source": "skipped"
+  },
+  {
+    "name": "ARMOR_SECONDARY_B2_BUCKET",
+    "value": "",
+    "source": "skipped"
+  }
+]

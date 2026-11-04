@@ -1,0 +1,69 @@
+SETTING                              VALUE                                   SOURCE
+ARMOR_LISTEN                         127.0.0.1:9100                          env
+ARMOR_ADMIN_LISTEN                   127.0.0.1:9001                          default
+ARMOR_LOG_LEVEL                      info                                    default
+ARMOR_WRITER_ID                      golden-writer                           env
+ARMOR_FORMAT_VERSION                 3                                       default
+ARMOR_CANARY_DISABLED                false                                   default
+ARMOR_ALLOW_NO_CREDENTIALS           false                                   default
+ARMOR_BACKEND                        b2                                      default
+ARMOR_FS_PATH                                                                skipped
+ARMOR_B2_REGION                      us-east-005                             env
+ARMOR_B2_ENDPOINT                    https://s3.us-east-005.backblazeb2.com  derived
+ARMOR_B2_ACCESS_KEY_ID               15e49e10cab009bc                        env
+ARMOR_B2_SECRET_ACCESS_KEY           <set>                                   env
+ARMOR_BUCKET                         3474a1a9bee7b957                        env
+ARMOR_BUCKET_ALIASES                                                         default
+ARMOR_PREFIX                         tenant/                                 env
+ARMOR_REQUIRE_PREFIX                 false                                   default
+ARMOR_CF_DOMAIN                                                              default
+ARMOR_MEK                            9a2db2e23f1504cd                        env
+ARMOR_MEK_ARCHIVE                    7969ec0fcb8b648d                        env
+ARMOR_MEK_RING                       03f1dac17b438f11                        env
+ARMOR_KEY_ROUTES                     data/=archive,=default                  env
+ARMOR_BLOCK_SIZE                     65536                                   default
+ARMOR_COMPRESS                       false                                   default
+ARMOR_COMPRESS_RULES                 .jsonl=zstd,*=none                      env
+ARMOR_AUTH_ACCESS_KEY                6a00e0f14a7e2baf                        env
+ARMOR_AUTH_SECRET_KEY                <set>                                   env
+ARMOR_AUTH_FILE                                                              default
+credential/6a00e0f14a7e2baf          secret <set>, full access               env
+credential/a09ac590e5bffe70          secret <set>, full access               env
+ARMOR_READ_CONCURRENCY               16                                      default
+ARMOR_READ_FETCH_SIZE                1048576                                 default
+ARMOR_READ_REQUEST_TIMEOUT           1m30s                                   env
+ARMOR_READ_BACKEND_LIMIT             64                                      default
+ARMOR_SMALL_OBJECT_FETCH_BYTES       1048576                                 default
+ARMOR_UPLOAD_PART_MEMORY_BUDGET      536870912                               default
+ARMOR_READ_RETRY_ATTEMPTS            3                                       default
+ARMOR_READ_RETRY_BACKOFF             100ms                                   default
+ARMOR_READ_RETRY_MAX_BACKOFF         2s                                      default
+ARMOR_CF_STALE_FALLBACK              true                                    default
+ARMOR_CF_VERSION_PINNED              false                                   default
+ARMOR_CF_DISABLE_HTTP2               false                                   default
+ARMOR_CACHE_MAX_ENTRIES              10000                                   default
+ARMOR_CACHE_TTL                      300                                     default
+ARMOR_CACHE_MAX_BYTES                0                                       default
+ARMOR_LIST_CACHE_MAX_ENTRIES         1000                                    default
+ARMOR_LIST_CACHE_TTL                 60                                      default
+ARMOR_LIST_HEAD_FANOUT               128                                     default
+ARMOR_MANIFEST_ENABLED               true                                    default
+ARMOR_MANIFEST_PREFIX                tenant/.armor/manifest                  default
+ARMOR_MANIFEST_COMPACTION_INTERVAL   3600                                    default
+ARMOR_MANIFEST_COMPACTION_THRESHOLD  1000                                    default
+ARMOR_MANIFEST_LOAD_TIMEOUT          480                                     default
+ARMOR_DASHBOARD_USER                                                         default
+ARMOR_DASHBOARD_PASS                 <unset>                                 default
+ARMOR_DASHBOARD_TOKEN                <unset>                                 default
+ARMOR_DASHBOARD_CREDENTIAL                                                   default
+ARMOR_ADMIN_TOKEN                    <set>                                   env
+ARMOR_PRESIGN_ENABLED                false                                   default
+ARMOR_PRESIGN_SECRET                 <unset>                                 default
+ARMOR_PRESIGN_BASE_URL                                                       default
+ARMOR_SECONDARY_BACKEND                                                      default
+ARMOR_SECONDARY_BACKEND_PATH                                                 default
+ARMOR_SECONDARY_BACKEND_TYPE                                                 default
+ARMOR_SECONDARY_B2_ENDPOINT                                                  skipped
+ARMOR_SECONDARY_B2_KEY_ID                                                    skipped
+ARMOR_SECONDARY_B2_KEY                                                       skipped
+ARMOR_SECONDARY_B2_BUCKET                                                    skipped

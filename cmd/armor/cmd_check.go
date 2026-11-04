@@ -53,8 +53,12 @@ func check(fs *flag.FlagSet) {
 	// Load configuration (collects all errors at once)
 	cfg, err := config.Load()
 	if err != nil {
-		// Config errors should exit 1
-		if printCheckResults(runConfigProbe(nil)) != nil {
+		// Config errors should exit 1. The probe result carries the real
+		// validation errors in its detail — including on the --json stream,
+		// which scripts read — rather than the opaque "config is nil" the
+		// nil-config probe used to report; the joined newline list is
+		// flattened to one line so a probe object stays one line.
+		if printCheckResults(configLoadFailureResult(err)) != nil {
 			fmt.Fprintf(os.Stderr, "Error: unable to encode check results as JSON\n")
 		}
 		fmt.Fprintf(os.Stderr, "\nConfig errors: %v\n", err)
@@ -193,6 +197,21 @@ func runAllProbes(cfg *config.Config) []CheckResult {
 	results = append(results, runFingerprintProbe(ctx, b2, cfg)...)
 
 	return results
+}
+
+// configLoadFailureResult is the config probe result when config.Load itself
+// fails: the probe's detail names the actual validation errors (joined with
+// "; ") so both the human line and the --json object carry them.
+func configLoadFailureResult(err error) []CheckResult {
+	msg := "configuration failed to load"
+	if err != nil {
+		msg = fmt.Sprintf("configuration failed to load: %s", strings.ReplaceAll(err.Error(), "\n", "; "))
+	}
+	return []CheckResult{{
+		Name:    "config",
+		Status:  "FAIL",
+		Message: msg,
+	}}
 }
 
 // runConfigProbe runs config validation probe

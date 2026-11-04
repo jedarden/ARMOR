@@ -165,6 +165,48 @@ MEK rotation is an admin API operation, not a CLI command. Follow the
 active MEK first, then send `POST /admin/key/rotate` with an empty body.
 The endpoint rejects a supplied MEK body with HTTP 400.
 
+## `armor config`
+
+Inspect the resolved configuration offline. Neither nested action touches the
+network — both load exactly what `armor serve` would and nothing more, so they
+work anywhere the deployment's environment is available and are most useful
+before the deployment is reachable.
+
+- **Inputs:** exactly one nested subcommand, `validate` or `show`. The group's
+  `--json` flag may sit on either side of it (`armor config --json show` and
+  `armor config show --json` are equivalent) and only affects `show`. Any other
+  nested name, a missing one, or extra positional arguments are usage errors.
+- **Outputs:** `validate` prints `Configuration valid` on stdout, or
+  `Configuration invalid: N errors` plus one bullet per validation error on
+  stderr. `show` prints every resolved setting on stdout as a three-column
+  table (setting, value, source) — or, with `--json`, one JSON array of
+  `{name, value, source}` rows — plus any unrecognized-`ARMOR_*` warnings on
+  stderr, the same warnings `armor check` prints. Per-credential settings have
+  no fixed variable name and appear as `credential/<fingerprint>` rows, sorted
+  by fingerprint.
+- **Redaction:** secret material — the `ARMOR_MEK` family, client secret keys,
+  the admin token — renders only as `<set>`/`<unset>` or, for key material, its
+  fingerprint (the same one `armor check`'s fingerprint probe prints).
+  Unpublished identifiers (bucket names, bucket aliases, access-key IDs) render
+  as fingerprints. Output is safe to paste into a ticket.
+- **Sources:** `env` (the environment set the variable), `default` (unset,
+  holding its documented default), `derived` (computed from other settings —
+  the B2 endpoint composed from the region, the writer ID taken from the
+  hostname), `skipped` (a variable this deployment's backend choice never
+  reads — the `ARMOR_B2_*` set under `ARMOR_BACKEND=filesystem`, the
+  filesystem path under b2). A skipped row carries an empty value: naming it
+  "set" would claim an input that has no effect.
+- **Exit codes:** 0 the configuration loads (warnings included); 1 `validate`
+  finds errors or `show` cannot load; 2 an undefined flag, an unknown or
+  missing nested subcommand, or an unexpected positional argument.
+- **Credentials/keys:** none beyond the environment being inspected — and none
+  are ever echoed. Run with the same environment the deployment runs with
+  ([Configuration](configuration.md)).
+- **Safe use:** entirely offline, read-only, nothing secret in its output.
+  `validate` is the pre-deploy gate (its exit code is the verdict for scripts
+  and init containers); `show` answers "what will ARMOR actually read from
+  what I set?" without starting a server.
+
 ## `armor decrypt`
 
 Decrypt one ARMOR-encrypted object offline — break-glass recovery with no
