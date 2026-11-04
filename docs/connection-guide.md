@@ -313,11 +313,14 @@ never commit the result. The required minimum comes from the [Configuration
 Reference](configuration.md), which documents every variable ARMOR reads.
 
 Both profiles pin the image tag through `ARMOR_VERSION`, which defaults to
-the repository [`VERSION`](../VERSION) value — `scripts/cut-release.sh`
-bumps the defaults in the release commit and
-`scripts/compose-version-parity.sh` fails any drift; set `ARMOR_VERSION` to
-that value or to any published tag before
-starting either profile.
+the release the [release-status register](release-status.md) records as the
+latest fully published, compat-green one — the same tag the README Quick
+Start exports, so an unset `ARMOR_VERSION` never lands on a cut whose
+publication is incomplete. `scripts/record-green-release.sh` moves the
+default (with the README export and the register marker) once a publication
+is verified green, and `scripts/compose-version-parity.sh` fails any drift;
+set `ARMOR_VERSION` to any other published tag before starting either
+profile.
 
 Start and stop the demo profile:
 

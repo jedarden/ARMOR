@@ -3,25 +3,29 @@
 Tests for scripts/cut-release.sh — the release-cut mutation workflow,
 exercised in isolated throwaway git repositories.
 
-cut-release.sh is the sole writer of VERSION, compose.yaml's
-${ARMOR_VERSION:-...} defaults and CHANGELOG.md's newest entry, all in one
-`release: armor <version>` commit. The other release-path suites pin what
-happens around that commit — test_compose_version_parity.py the drift gate,
-test_publish_release.py the CI publisher — while these tests pin the cut
-itself, against a real git fixture seeded with a previous v* tag: the
-release commit carries exactly VERSION, CHANGELOG.md and compose.yaml even
-over a dirty shared-style checkout, the defaults land in parity, the
-changelog entry is generated from the commit subjects since the previous
-tag (bead-checkpoint and release commits filtered, maintenance fallback
-when nothing is left), malformed and non-newer versions are refused, the
-repository state gates (staged index, off-main) refuse without a commit,
---dry-run touches nothing, and re-cutting the same version is refused
-rather than duplicated. The lint gate — the lesson of 0.1.2003 and
-0.1.2005, where CI's golangci-lint step sank cuts on code already on
-main — refuses a cut (a dry run included) when golangci-lint is missing,
-drifts from the pinned major.minor, or reports findings, before anything
-is written. Every invocation uses --no-push or --dry-run; the
-push is armor-build's half of the workflow, not the script's.
+cut-release.sh is the sole writer of VERSION and CHANGELOG.md's newest
+entry, all in one `release: armor <version>` commit. The consumer image
+pins — the README export, the compose.yaml defaults and the release-status
+latest-green marker — deliberately do not ride in that commit: a fresh cut
+is not a green release yet, and scripts/record-green-release.sh moves them
+once publication is verified (armor-19792903). The other release-path
+suites pin what happens around the commit — test_compose_version_parity.py
+the pin-parity gate and the green-record script, test_publish_release.py
+the CI publisher — while these tests pin the cut itself, against a real
+git fixture seeded with a previous v* tag: the release commit carries
+exactly VERSION and CHANGELOG.md even over a dirty shared-style checkout
+and leaves every consumer pin where it was, the changelog entry is
+generated from the commit subjects since the previous tag (bead-checkpoint
+and release commits filtered, maintenance fallback when nothing is left),
+malformed and non-newer versions are refused, the repository state gates
+(staged index, off-main) refuse without a commit, --dry-run touches
+nothing, and re-cutting the same version is refused rather than duplicated.
+The lint gate — the lesson of 0.1.2003 and 0.1.2005, where CI's
+golangci-lint step sank cuts on code already on main — refuses a cut (a dry
+run included) when golangci-lint is missing, drifts from the pinned
+major.minor, or reports findings, before anything is written. Every
+invocation uses --no-push or --dry-run; the push is armor-build's half of
+the workflow, not the script's.
 
 Run: python3 -m pytest tests/test_cut_release.py -q
 """
@@ -94,6 +98,20 @@ services:
 """
 
 
+def readme_md(version=OLD):
+    """The README's pin-bearing export line, nothing else."""
+    return f"# fixture\n\n```bash\nexport ARMOR_VERSION={version}\n```\n"
+
+
+def release_status_md(version=OLD):
+    """The release-status register's pin-bearing marker, nothing else."""
+    return (
+        "# fixture status\n\n"
+        f"<!-- release: latest-green version: {version} evidence: armor-aaa1111 -->\n\n"
+        "fixture prose\n"
+    )
+
+
 def seed_changelog():
     return f"""\
 {PREAMBLE}
@@ -131,7 +149,8 @@ def make_repo(tmp_path, version=OLD, compose="default", changelog="default",
     The script resolves the repository from its own location, so it (and the
     parity gate used to verify the result) are copied into the fixture — the
     same layout they see in the real checkout. The seed commit carries
-    VERSION/compose.yaml/CHANGELOG.md/README.md and is tagged v<version>, so
+    VERSION/compose.yaml/CHANGELOG.md/README.md/docs/release-status.md with
+    every consumer pin at the old version and is tagged v<version>, so
     post-seed commits exercise the since-previous-tag range the way the real
     previous release tag does.
     """
@@ -149,14 +168,16 @@ def make_repo(tmp_path, version=OLD, compose="default", changelog="default",
         changelog = seed_changelog()
     if changelog is not None:
         (root / "CHANGELOG.md").write_text(changelog)
-    (root / "README.md").write_text("fixture readme\n")
+    (root / "README.md").write_text(readme_md())
+    (root / "docs").mkdir()
+    (root / "docs" / "release-status.md").write_text(release_status_md())
     git(root, "init")
     git(root, "symbolic-ref", "HEAD", "refs/heads/main")
     git(root, "config", "user.email", "fixture@example.com")
     git(root, "config", "user.name", "Fixture")
     git(root, "config", "commit.gpgsign", "false")
     git(root, "config", "tag.gpgsign", "false")
-    tracked = [name for name in ("VERSION", "compose.yaml", "CHANGELOG.md", "README.md", "scripts")
+    tracked = [name for name in ("VERSION", "compose.yaml", "CHANGELOG.md", "README.md", "docs", "scripts")
                if (root / name).exists()]
     git(root, "add", *tracked)
     git(root, "commit", "-m", "chore: seed fixture")
@@ -205,13 +226,13 @@ def entry_date(text, version=NEW):
 
 
 # ---------------------------------------------------------------------------
-# the canonical cut: one commit, exactly the three release files
+# the canonical cut: one commit, exactly the release files, pins untouched
 # ---------------------------------------------------------------------------
 
-def test_cut_commits_exactly_the_three_release_files(tmp_path):
-    """The release commit carries only VERSION, CHANGELOG.md and
-    compose.yaml — a shared checkout's unstaged edits and untracked files
-    stay out of it and survive in the worktree."""
+def test_cut_commits_exactly_the_release_files(tmp_path):
+    """The release commit carries only VERSION and CHANGELOG.md — a shared
+    checkout's unstaged edits and untracked files stay out of it and survive
+    in the worktree."""
     root = make_repo(tmp_path)
     (root / "README.md").write_text("fixture readme\nin-flight edit by another agent\n")
     (root / "stray.txt").write_text("someone's scratch file\n")
@@ -223,7 +244,7 @@ def test_cut_commits_exactly_the_three_release_files(tmp_path):
     assert "not pushed (--no-push)" in proc.stdout
 
     committed = git_out(root, "diff-tree", "--no-commit-id", "--name-only", "-r", "HEAD")
-    assert committed.splitlines() == ["CHANGELOG.md", "VERSION", "compose.yaml"]
+    assert committed.splitlines() == ["CHANGELOG.md", "VERSION"]
     assert git_out(root, "log", "-1", "--format=%s") == f"release: armor {NEW}"
     assert git_out(root, "rev-parse", "HEAD^") == head_before
     assert (root / "VERSION").read_text() == NEW + "\n"
@@ -239,21 +260,28 @@ def test_cut_commits_exactly_the_three_release_files(tmp_path):
     ]
 
 
-def test_cut_rewrites_compose_defaults_into_parity(tmp_path):
-    """Cutting from defaults pinned at the old version leaves the tracked
-    composition passing the parity gate that guards every other change."""
+def test_cut_leaves_consumer_pins_at_the_recorded_green_release(tmp_path):
+    """A fresh cut is not a green release: the README export, the compose
+    defaults and the release-status marker stay at the old version, and the
+    tree still passes the parity gate (armor-19792903). record-green-release.sh
+    is what moves them once publication is verified."""
     root = make_repo(tmp_path, compose=compose_yaml(OLD))
-    assert "0.1.9998" in (root / "compose.yaml").read_text()
+    pins_before = {
+        "compose.yaml": (root / "compose.yaml").read_text(),
+        "README.md": (root / "README.md").read_text(),
+        "docs/release-status.md": (root / "docs" / "release-status.md").read_text(),
+    }
 
     proc = cut(root, NEW, "--no-push")
     assert proc.returncode == 0, proc.stdout + proc.stderr
 
     gate = run_parity_gate(root)
     assert gate.returncode == 0, gate.stdout + gate.stderr
-    assert NEW in gate.stdout
-    compose = (root / "compose.yaml").read_text()
-    assert compose.count(f"ARMOR_VERSION:-{NEW}") == 2
-    assert f"ARMOR_VERSION:-{OLD}" not in compose
+    assert OLD in gate.stdout
+    assert NEW not in gate.stdout
+    assert (root / "compose.yaml").read_text() == pins_before["compose.yaml"]
+    assert (root / "README.md").read_text() == pins_before["README.md"]
+    assert (root / "docs" / "release-status.md").read_text() == pins_before["docs/release-status.md"]
 
 
 def test_cut_prepends_changelog_entry_from_commits_since_the_tag(tmp_path):
@@ -326,8 +354,13 @@ def test_cut_without_any_prior_tag_uses_the_whole_history(tmp_path):
 def test_dry_run_changes_nothing(tmp_path):
     root = make_repo(tmp_path)
     head_before = git_out(root, "rev-parse", "HEAD")
-    files = {name: (root / name).read_text()
-             for name in ("VERSION", "compose.yaml", "CHANGELOG.md")}
+    files = {
+        "VERSION": (root / "VERSION").read_text(),
+        "compose.yaml": (root / "compose.yaml").read_text(),
+        "CHANGELOG.md": (root / "CHANGELOG.md").read_text(),
+        "README.md": (root / "README.md").read_text(),
+        "docs/release-status.md": (root / "docs" / "release-status.md").read_text(),
+    }
 
     proc = cut(root, NEW, "--dry-run")
     assert proc.returncode == 0, proc.stdout + proc.stderr
@@ -476,32 +509,6 @@ def test_off_main_is_refused(tmp_path):
     assert proc.returncode == 2
     assert "releases are cut from main" in proc.stderr
     assert "feature-x" in proc.stderr
-    assert git_out(root, "rev-parse", "HEAD") == head
-
-
-def test_missing_compose_is_refused(tmp_path):
-    root = make_repo(tmp_path, compose=None)
-    head = git_out(root, "rev-parse", "HEAD")
-    proc = cut(root, NEW, "--no-push")
-    assert proc.returncode == 2
-    assert "compose.yaml not found" in proc.stderr
-    assert git_out(root, "rev-parse", "HEAD") == head
-    assert (root / "VERSION").read_text() == OLD + "\n"
-
-
-def test_compose_without_a_default_is_refused(tmp_path):
-    """A compose.yaml with no ${ARMOR_VERSION:-...} default is a structural
-    break — nothing could ride in the release commit."""
-    root = make_repo(
-        tmp_path,
-        compose=compose_yaml().replace(f"${{ARMOR_VERSION:-{OLD}}}", OLD),
-    )
-    assert "ARMOR_VERSION" not in (root / "compose.yaml").read_text()
-    head = git_out(root, "rev-parse", "HEAD")
-    proc = cut(root, NEW, "--no-push")
-    assert proc.returncode == 2
-    assert "carries no ${ARMOR_VERSION:-...} default" in proc.stderr
-    assert "nothing to pin to" in proc.stderr
     assert git_out(root, "rev-parse", "HEAD") == head
 
 

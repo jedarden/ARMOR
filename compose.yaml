@@ -4,14 +4,19 @@
 #   docker compose --profile production up -d   # real backend; copy .env.example to .env first
 #
 # The image tag is pinned through ARMOR_VERSION. The default below is the
-# repository's VERSION-file value: cut-release.sh bumps it in the release
-# commit, and scripts/compose-version-parity.sh fails any drift from VERSION
-# (tests/docker-demo-smoke re-checks it with a daemon). Set
-# ARMOR_VERSION in the environment (or in .env) to use any other published
-# tag. There is no floating :latest tag to fall back to.
+# release docs/release-status.md records as the latest fully published,
+# compat-green one — the same tag the README Quick Start exports, so an
+# unset ARMOR_VERSION never lands on a cut whose publication is incomplete.
+# scripts/record-green-release.sh moves the default (with the README export
+# and the release-status marker) once a publication is verified green, and
+# scripts/compose-version-parity.sh fails any drift between the three
+# (tests/docker-demo-smoke re-checks the rendered pin with a daemon). The
+# checkout's VERSION file runs ahead of this pin between a cut and its green
+# record. Set ARMOR_VERSION in the environment (or in .env) to use any other
+# published tag. There is no floating :latest tag to fall back to.
 services:
   armor-demo:
-    image: ghcr.io/jedarden/armor:${ARMOR_VERSION:-0.1.2006}
+    image: ghcr.io/jedarden/armor:${ARMOR_VERSION:-0.1.2004}
     profiles: [demo]
     environment:
       # Demo-only fixed credential; never reuse for production.
@@ -27,7 +32,7 @@ services:
       - "9001:9001"
 
   armor-production:
-    image: ghcr.io/jedarden/armor:${ARMOR_VERSION:-0.1.2006}
+    image: ghcr.io/jedarden/armor:${ARMOR_VERSION:-0.1.2004}
     profiles: [production]
     # Configuration reaches the container from the shell environment and from
     # a root .env (compose interpolates the ${...} references below from the

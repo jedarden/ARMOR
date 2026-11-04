@@ -8,8 +8,9 @@
 #
 # --fast is the hermetic lane: everything it runs is deterministic, quick,
 # and offline — no network, no browser. It runs the toolchain parity gate
-# (scripts/toolchain-parity.sh), the compose.yaml ↔ VERSION parity gate
-# (scripts/compose-version-parity.sh), the prohibited deployment constructs
+# (scripts/toolchain-parity.sh), the consumer image-pin parity gate
+# (scripts/compose-version-parity.sh: README export, compose defaults and
+# the release-status latest-green marker name one release), the prohibited deployment constructs
 # gate (scripts/prohibited-constructs-gate.sh), the Dockerfile image
 # contract gate (scripts/image-contract-gate.sh), the documentation status
 # gate (scripts/documentation-status-gate.sh), the executable CLI and

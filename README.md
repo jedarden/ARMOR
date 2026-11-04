@@ -24,12 +24,14 @@ cd ARMOR
 Select an image tag that has been published. The [release-status
 register](docs/release-status.md) is the evidence boundary: it records which
 tags have published images and what each publication does and does not
-prove. The checkout's [`VERSION`](VERSION) and the Compose default move
-together at release time, and Compose uses that default when
-`ARMOR_VERSION` is unset. For the commands below, set the tag once:
+prove. The export below and the Compose default both pin the release the
+register records as the latest fully published, compat-green one, so an
+unset `ARMOR_VERSION` gets the same tag (the checkout's
+[`VERSION`](VERSION) runs ahead of it between a cut and its green record).
+For the commands below, set the tag once:
 
 ```bash
-export ARMOR_VERSION=0.1.2001
+export ARMOR_VERSION=0.1.2004
 docker pull ghcr.io/jedarden/armor:"$ARMOR_VERSION"
 ```
 

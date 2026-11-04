@@ -30,7 +30,7 @@ The release-image boundary and known limitations are maintained in
 | `docs/` | ADRs, runbooks, notes, plan. `docs/plan/plan.md` is the architecture and phase record |
 | `config/drift-config.json` | Fleet drift-check configuration |
 | `Dockerfile`, `Dockerfile.test` | The published image (multi-stage; the final stage MUST stay the armor server — enforced by `scripts/image-contract-gate.sh`) and the test image |
-| `VERSION`, `CHANGELOG.md`, `compose.yaml` | The release counter, its notes, and the Compose image pin; only `scripts/cut-release.sh` changes them |
+| `VERSION`, `CHANGELOG.md`, `compose.yaml` | The release counter and its notes (only `scripts/cut-release.sh` changes them), and the Compose image pin (moved with the README export and the release-status marker by `scripts/record-green-release.sh`; held to the register's latest-green release by `scripts/compose-version-parity.sh`) |
 | `.beads/` | bead-rs work tracking. Never hand-edit |
 
 Deployment manifests do **not** live here. They live in
@@ -145,7 +145,7 @@ any of these set. The gates:
 | `ARMOR_PERF_RUN=1` (with `ARMOR_PERF_OUT`, `ARMOR_PERF_SIZES`, `ARMOR_PERF_WRITE_VERSION`) | `tests/performance` measurement matrix |
 | `ARMOR_SMALL_OBJECT_BENCH=1` | Latency-injected small-object GET benchmark (`internal/server/handlers`) |
 | `ARMOR_B2_TEST_ENDPOINT`, `ARMOR_B2_TEST_REGION`, `ARMOR_B2_TEST_KEY_ID`, `ARMOR_B2_TEST_SECRET`, `ARMOR_B2_TEST_BUCKET` | Live secondary-backend B2 test (`internal/backend`) |
-| `ARMOR_SMOKE_IMAGE`, `ARMOR_SMOKE_PULL`, `ARMOR_SMOKE_VERSION` | Demo-smoke image selection (`tests/docker-demo-smoke`); defaults to the repo `VERSION` pin |
+| `ARMOR_SMOKE_IMAGE`, `ARMOR_SMOKE_PULL`, `ARMOR_SMOKE_VERSION` | Demo-smoke image selection (`tests/docker-demo-smoke`); the docker-run leg defaults to the repo `VERSION` pin, and the compose parse check pins the release-status latest-green tag |
 
 ## Build, test, and the gates
 
@@ -274,15 +274,12 @@ The short form:
 
 1. `scripts/definition-of-done.sh` is green on `main`.
 2. `scripts/cut-release.sh <version>` (or `make release V=<version>`) writes
-   `VERSION`, bumps the `compose.yaml` `ARMOR_VERSION` defaults to match, and
-   writes a `CHANGELOG.md` entry generated from the commits since the
+   `VERSION` and a `CHANGELOG.md` entry generated from the commits since the
    previous tag — one `release: armor <version>` commit, which it pushes.
    Before writing anything it lints the tree with golangci-lint (v2.13.x,
    the major.minor armor-build's lint step pins; same command) and refuses
    to cut when the binary is missing, its version drifts from the pin, or
    the run is red — `--dry-run` lints too, and there is no skip flag.
-   `scripts/compose-version-parity.sh` (definition of done, release gate,
-   `make docker`) fails any tree where the defaults lag `VERSION`.
 3. CI does everything else: builds and publishes `ronaldraygun/armor`,
    `ronaldraygun/armor-restore-verifier`, `ronaldraygun/armor-fleet` and the
    public mirror `ghcr.io/jedarden/armor` (the server image is the only
@@ -292,7 +289,16 @@ The short form:
    `scripts/publish_release.py`, which creates the annotated git tag
    `v<version>`, the Forgejo release and the GitHub release (idempotent; the
    same script backfills a version by hand).
-4. Roll the fleet forward by editing image tags in declarative-config.
+4. Once the publication is verified green, `scripts/record-green-release.sh
+   <version>` moves the consumer image pins — the README export, the
+   `compose.yaml` `ARMOR_VERSION` defaults and the release-status
+   `latest-green` marker — together, in the same change as the
+   release-status evidence prose. A fresh cut is not a green release yet:
+   the pins stay at the previous verified release through a cut, and a
+   publication that dies midway leaves them there.
+   `scripts/compose-version-parity.sh` (definition of done, release gate,
+   `make docker`) fails any tree where the three surfaces disagree.
+5. Roll the fleet forward by editing image tags in declarative-config.
 
 Versions are `0.1.<counter>`: the third component only increases and carries
 no SemVer meaning. Never bump `VERSION` without `cut-release.sh`, never create

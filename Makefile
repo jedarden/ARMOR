@@ -51,7 +51,7 @@ toolchain-check:
 toolchain-parity:
 	scripts/toolchain-parity.sh
 
-## compose-version-parity: Fail when a compose.yaml ARMOR_VERSION default differs from the VERSION file
+## compose-version-parity: Fail when the README export, compose defaults and release-status latest-green marker disagree
 compose-version-parity:
 	scripts/compose-version-parity.sh
 
@@ -124,7 +124,7 @@ dod:
 dod-full:
 	scripts/definition-of-done.sh
 
-## release: Cut a release commit (VERSION + compose.yaml bump + CHANGELOG entry). Usage: make release V=0.1.1970
+## release: Cut a release commit (VERSION + CHANGELOG entry). Usage: make release V=0.1.1970
 release:
 	@test -n "$(V)" || { echo "usage: make release V=<MAJOR.MINOR.PATCH>"; exit 2; }
 	scripts/cut-release.sh $(V)

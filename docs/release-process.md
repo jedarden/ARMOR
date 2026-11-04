@@ -19,11 +19,12 @@ fleet, and how a correctness fix is proven to have reached every deployment.
 
 | Artifact | Where | Made by |
 |---|---|---|
-| `VERSION` (`0.1.<counter>`), the `compose.yaml` `ARMOR_VERSION` defaults and a `CHANGELOG.md` entry | this repo, one commit `release: armor <version>` | `scripts/cut-release.sh` |
+| `VERSION` (`0.1.<counter>`) and a `CHANGELOG.md` entry | this repo, one commit `release: armor <version>` | `scripts/cut-release.sh` |
 | `ronaldraygun/armor:<version>` (server), `ronaldraygun/armor-restore-verifier:<version>`, `ronaldraygun/armor-fleet:<version>` | Docker Hub (private namespace) | CI |
 | `ghcr.io/jedarden/armor:<version>` (server) | GHCR (public, anonymous-pull mirror; the only public image — `armor-restore-verifier` and `armor-fleet` stay private by operator decision, 2026-09-19) | CI |
 | Annotated git tag `v<version>` at the release commit | Forgejo, mirrored to GitHub | CI |
 | Release `ARMOR v<version>` with the CHANGELOG entry as body | Forgejo and GitHub | CI |
+| The consumer image pins: the README Quick Start export, the `compose.yaml` `ARMOR_VERSION` defaults and the [release-status](release-status.md) `latest-green` marker | this repo, moved together in the green-record change | `scripts/record-green-release.sh` |
 
 The version is a counter: the third component only increases and carries no
 SemVer meaning, so every release may contain fixes and features. `CHANGELOG.md`
@@ -57,10 +58,9 @@ scripts/cut-release.sh 0.1.1970        # or: make release V=0.1.1970
 The script
 
 - refuses a version that is not `MAJOR.MINOR.PATCH` or not newer than `VERSION`,
-- refuses to run off `main` or with anything already staged (the release commit
-  must contain nothing but `VERSION`, the `compose.yaml` `ARMOR_VERSION`
-  defaults and `CHANGELOG.md`; other agents' unstaged
-  edits in the shared checkout are left alone),
+- refuses to run off `main` or with anything already staged (the release
+  commit must contain nothing but `VERSION` and `CHANGELOG.md`; other
+  agents' unstaged edits in the shared checkout are left alone),
 - checks the newest reachable local release tag against origin and refuses
   stale tags with a `git fetch --tags origin` instruction, so a published
   release cannot be repeated in the next changelog entry,
@@ -71,16 +71,18 @@ The script
   `resolve-version` pins the VERSION commit, so a cut that fails CI's lint
   step publishes nothing and burns the version number — 0.1.2003 and
   0.1.2005 both died exactly there, which is why this gate exists,
-- rewrites every `${ARMOR_VERSION:-...}` default in `compose.yaml` to the new
-  version, so the tracked demo and production compositions ship pinned to this
-  release (`scripts/compose-version-parity.sh` — in the definition of done,
-  the release gate and `make docker` — fails any drift left anywhere else, and
-  `tests/docker-demo-smoke` re-checks it with a daemon),
 - prepends a `## <version> (<date>)` entry to `CHANGELOG.md` listing every
   non-merge commit subject since the previous `v*` tag, minus bead-checkpoint
   and release commits (edit the entry afterwards if a subject needs rewording,
   then amend before pushing, or accept it as is),
 - commits `release: armor <version>` and pushes to `origin main`.
+
+The consumer image pins — the README Quick Start's `export ARMOR_VERSION=`
+line, the `compose.yaml` `${ARMOR_VERSION:-...}` defaults and the
+[release-status](release-status.md) `latest-green` marker — deliberately do
+**not** ride in the release commit: a fresh cut is not a green release yet,
+and a publication that dies midway (0.1.2006) must leave consumers on the
+last verified release. They move once, in the green-record change below.
 
 `--dry-run` prints the entry without touching anything; `--no-push` commits
 but leaves the push to you.
@@ -180,6 +182,28 @@ awk "/^## $V /{f=1;next} /^## /{f=0} f" CHANGELOG.md | head           # the note
 
 `gh release view` also matches drafts, so check `isDraft` rather than mere
 existence.
+
+### Recording a green release
+
+When the verification above passes, move the repository's consumer image
+pins to the release — three surfaces that must always name one version:
+the README Quick Start's `export ARMOR_VERSION=` line, the `compose.yaml`
+`${ARMOR_VERSION:-...}` defaults, and the `latest-green` marker in
+[release-status.md](release-status.md):
+
+```bash
+scripts/record-green-release.sh <version>
+```
+
+The script refuses a version that was never cut (newer than `VERSION`) or
+is already recorded, rewrites exactly those three surfaces, and verifies
+`scripts/compose-version-parity.sh` (definition of done, release gate,
+`make docker`) afterwards — that gate fails any tree where the three
+disagree, including a README left at an older release. Finish the change by
+writing the release's evidence prose in `docs/release-status.md` (what the
+publication proves, image digests, beads) and commit the pin surfaces
+together with it. Until this step runs, the pins intentionally stay at the
+previous green release however many cuts happened in between.
 
 ### Repairing image-backed cuts without release metadata
 

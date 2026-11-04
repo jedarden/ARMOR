@@ -26,6 +26,7 @@ non-draft releases after the image appeared. GitOps commits `810b34733` and
 artifact checks do not prove a green end-to-end client gate or fleet rollout.
 The table identifies the last specific image proof where one is recorded.
 
+<!-- release: latest-green version: 0.1.2004 evidence: armor-fdab65fe -->
 **`v0.1.2004`** (`armor-fdab65fe`) is the latest fully published, compat-green
 release. Revision `76117a5045bafb9580504eb149f61d37aee2a08a` carries the Barman
 pipe fixes (`f90e2a82`, `bb09ced0`) plus every accumulated fix through the
@@ -228,3 +229,13 @@ live or DR probe. Update this page and the status manifest in the same change,
 with the image version and evidence. Until then, use the
 `active-regression`, `release-pending`, `repository-tested`, or `scope-limited`
 wording above; never turn an active regression into a historical-only note.
+
+The `latest-green` marker near the top of this page is the machine-read
+record of the newest fully published, compat-green release. The README Quick
+Start's `export ARMOR_VERSION=` line and every `compose.yaml`
+`${ARMOR_VERSION:-...}` default must pin that same version — a cut whose
+publication has not completed leaves them where they are, so consumers never
+land on a tag without releases. `scripts/record-green-release.sh <version>`
+moves the marker and both pin surfaces in one edit once a publication is
+verified green, and `scripts/compose-version-parity.sh` (definition of done,
+release gate, `make docker`) fails any tree where the three disagree.

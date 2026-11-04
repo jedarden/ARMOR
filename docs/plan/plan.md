@@ -1525,9 +1525,15 @@ armor-4a03c2f6, armor-b00ee40c, armor-c01708aa):
   carries no SemVer meaning; `CHANGELOG.md` says what changed. Cutting 1.0.0
   is a deliberate future decision, not a side effect.
 - **One release commit, written by `scripts/cut-release.sh`** (`VERSION` +
-  the `compose.yaml` `ARMOR_VERSION` defaults + `CHANGELOG.md`, message
+  `CHANGELOG.md`, message
   `release: armor <version>`). CI never bumps
-  `VERSION`; nobody creates a `v*` tag by hand.
+  `VERSION`; nobody creates a `v*` tag by hand. (Originally the release
+  commit also bumped the `compose.yaml` `ARMOR_VERSION` defaults; since
+  armor-19792903, 2026-11-04, those defaults — with the README export and
+  the `docs/release-status.md` latest-green marker — pin the latest fully
+  published, compat-green release instead and move via
+  `scripts/record-green-release.sh` after publication is verified, so a cut
+  whose publication dies midway never becomes the consumer default.)
 - **CI publishes the release** (`publish-release` step running
   `scripts/publish_release.py`): annotated tag at the released revision via
   the Forgejo API, Forgejo release with the image digests, GitHub release

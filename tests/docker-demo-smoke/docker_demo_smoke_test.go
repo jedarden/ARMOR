@@ -10,8 +10,14 @@
 // published 0.1.1969 image exited 2 on "docker run ... demo --listen ...").
 //
 // The image under test is pinned, never floating: by default it is
-// ghcr.io/jedarden/armor:<contents of the repo's VERSION file>, exactly the
-// tag the README points at. ARMOR_SMOKE_IMAGE overrides the reference wholesale.
+// ghcr.io/jedarden/armor:<contents of the repo's VERSION file> — the
+// checkout's own version, which this suite can build locally. The tag the
+// README points consumers at is the release docs/release-status.md records
+// as latest-green; a VERSION cut is not a green release yet, so that pin
+// lags VERSION by design and is held on every surface (README export,
+// compose defaults, release-status marker) by
+// scripts/compose-version-parity.sh. ARMOR_SMOKE_IMAGE overrides the
+// reference wholesale.
 //
 // The image is made available in one of two ways:
 //
@@ -28,8 +34,10 @@
 // A second test keeps the tracked compose.yaml (repository root, documented
 // in docs/connection-guide.md) working: both profiles must render with
 // `docker compose config` — a client-side check that needs no daemon — the
-// rendered demo image must stay pinned to the repo's VERSION file, and, when
-// a daemon is available, the demo profile must come up and answer the same
+// rendered demo image must stay pinned to the release-status latest-green
+// release, and, when a daemon is available, the demo profile must come up
+// (with ARMOR_VERSION overridden to the locally provisioned image, so a HEAD
+// build is never tagged as an already-published release) and answer the same
 // README connectivity check.
 //
 // Like tests/aws-cli-compatibility, every test skips cleanly — via t.Skip,
@@ -43,6 +51,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -178,13 +187,17 @@ func TestDockerDemoWorkflow(t *testing.T) {
 // TestDockerComposeDemoWorkflow keeps the tracked compose.yaml at the
 // repository root working. The parse checks render each profile with
 // `docker compose config`, which is client-side only and needs no daemon:
-// the demo profile must come out with its image pinned to exactly the repo's
-// VERSION-file value (compose.yaml's ARMOR_VERSION default is bumped with
-// VERSION or this test fails the drift), and the production profile must
-// keep the admin port loopback-only with its variables passed by reference.
-// When a daemon is available, the demo profile is then brought up as its own
-// compose project and driven through the same README AWS CLI connectivity
-// check as TestDockerDemoWorkflow.
+// the demo profile must come out with its image pinned to exactly the
+// release docs/release-status.md records as latest-green (the same version
+// the README exports; compose.yaml's ARMOR_VERSION default moves with that
+// record via scripts/record-green-release.sh, or this test fails the drift),
+// and the production profile must keep the admin port loopback-only with its
+// variables passed by reference. When a daemon is available, the demo
+// profile is then brought up as its own compose project — with ARMOR_VERSION
+// overridden to the locally provisioned VERSION image, because the suite
+// must never tag a HEAD build as the already-published green release — and
+// driven through the same README AWS CLI connectivity check as
+// TestDockerDemoWorkflow.
 func TestDockerComposeDemoWorkflow(t *testing.T) {
 	if testing.Short() {
 		t.Skip("docker compose smoke test needs Docker; skipped in -short mode")
@@ -207,26 +220,21 @@ func TestDockerComposeDemoWorkflow(t *testing.T) {
 		return append([]string{"compose", "-f", composeFile, "-p", project}, args...)
 	}
 
-	// Parse check, demo profile: must render, pinned to the VERSION file.
-	// (The raw file, deliberately not versionForBuild: ARMOR_SMOKE_VERSION
-	// exists for custom ARMOR_SMOKE_IMAGE builds and must not redefine what
-	// compose.yaml's default is checked against.)
-	raw, err := os.ReadFile(filepath.Join(root, "VERSION"))
-	if err != nil {
-		t.Fatalf("cannot read the repo VERSION file to check compose.yaml's pinned image: %v", err)
-	}
-	version := strings.TrimSpace(string(raw))
-	if version == "" {
-		t.Fatal("repo VERSION file is empty; refusing to reason about compose.yaml's pinned image")
-	}
-	wantImage := "ghcr.io/jedarden/armor:" + version
+	// Parse check, demo profile: must render, pinned to the release the
+	// register records as latest-green (docs/release-status.md) — the pin
+	// the README exports and scripts/compose-version-parity.sh holds on
+	// every surface. (The raw marker, deliberately not versionForBuild: the
+	// checkout's VERSION is the development counter and may run ahead of
+	// the recorded green release.)
+	green := latestGreenRelease(t, root)
+	wantImage := "ghcr.io/jedarden/armor:" + green
 	demoOut, err := dockerRun(t, dockerBin, 60*time.Second, compose("--profile", "demo", "config")...)
 	if err != nil {
 		t.Fatalf("docker compose --profile demo config failed; compose.yaml is not a runnable demo compose file: %v\noutput: %s",
 			err, tailLines(demoOut, 30))
 	}
 	if image := renderedImage(t, demoOut); image != wantImage {
-		t.Fatalf("compose.yaml's rendered demo image is %q, not the VERSION-file pin %q; bump the ARMOR_VERSION default in compose.yaml in the same change as VERSION",
+		t.Fatalf("compose.yaml's rendered demo image is %q, not the release-status latest-green pin %q; move the ARMOR_VERSION default with scripts/record-green-release.sh",
 			image, wantImage)
 	}
 
@@ -257,8 +265,20 @@ func TestDockerComposeDemoWorkflow(t *testing.T) {
 			err, firstLine(string(out)))
 	}
 
-	ensureImage(t, dockerBin, wantImage)
+	// The default pin (latest-green) is proven by the parse check above; the
+	// daemon leg overrides ARMOR_VERSION to the image this suite can
+	// provision — the checkout's VERSION build, or ARMOR_SMOKE_VERSION —
+	// because a HEAD build must never be tagged as the already-published
+	// green release. docker compose interpolates ARMOR_VERSION from this
+	// process's environment (every parse check above already ran with it
+	// unset); the compose-down cleanup registers after this un-setenv
+	// cleanup, so LIFO order still tears the project down with the override
+	// in place.
+	localVersion := versionForBuild(t, root)
+	ensureImage(t, dockerBin, "ghcr.io/jedarden/armor:"+localVersion)
 	ensureAWSCLIImage(t, dockerBin)
+	os.Setenv("ARMOR_VERSION", localVersion)
+	t.Cleanup(func() { os.Unsetenv("ARMOR_VERSION") })
 
 	// The compose project's containers never outlive the test, even when a
 	// documented step fails midway.
@@ -326,6 +346,31 @@ func TestDockerComposeDemoWorkflow(t *testing.T) {
 		t.Fatalf("docker compose --profile demo down failed: %v\noutput: %s", err, out)
 	}
 }
+
+// latestGreenRelease reads the version docs/release-status.md records as
+// the latest fully published, compat-green release — the one pin the README
+// export and compose.yaml's ARMOR_VERSION defaults must carry, held there by
+// scripts/compose-version-parity.sh. Exactly one marker may carry the pin;
+// anything else is a tree this suite must not silently pass on.
+func latestGreenRelease(t *testing.T, root string) string {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join(root, "docs", "release-status.md"))
+	if err != nil {
+		t.Fatalf("cannot read docs/release-status.md to resolve the latest-green pin: %v", err)
+	}
+	matches := latestGreenMarker.FindAllStringSubmatch(string(raw), -1)
+	if len(matches) != 1 {
+		t.Fatalf("docs/release-status.md carries %d 'release: latest-green version:' markers, want exactly 1",
+			len(matches))
+	}
+	version := matches[0][1]
+	if version == "" {
+		t.Fatal("docs/release-status.md latest-green marker carries no version")
+	}
+	return version
+}
+
+var latestGreenMarker = regexp.MustCompile(`release: latest-green version: ([0-9][0-9A-Za-z._-]*)`)
 
 // renderedImage extracts the image reference from `docker compose config`
 // output. A single-profile render describes exactly one service, so exactly
