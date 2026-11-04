@@ -76,6 +76,10 @@ func TestCodeDefaults(t *testing.T) {
 	write("config.go", `package config
 var _ = getEnv("ARMOR_LISTEN", "0.0.0.0:9000")
 var _ = getEnvInt("ARMOR_CACHE_TTL", 300)
+var _ = getEnvInt("ARMOR_CACHE_MAX_ENTRIES", 10000, &errs)
+var _ = getEnvInt64("ARMOR_CACHE_MAX_BYTES", 0, &errs)
+var _ = getEnvBool("ARMOR_COMPRESS", false, &errs)
+var _ = getEnvBool("ARMOR_CF_STALE_FALLBACK", true, &errs)
 var _ = os.Getenv("ARMOR_CANARY_DISABLED") == "true"
 var _ = os.Getenv("ARMOR_COMPUTED")
 var _ = getEnv("ARMOR_DYNAMIC", someVar)
@@ -93,8 +97,12 @@ var _ = getEnv("ARMOR_ONLY_IN_TESTS", "x")
 		t.Fatal(err)
 	}
 	want := []CodeDefault{
+		{Var: "ARMOR_CACHE_MAX_BYTES", Kind: "int", Value: "0"},
+		{Var: "ARMOR_CACHE_MAX_ENTRIES", Kind: "int", Value: "10000"},
 		{Var: "ARMOR_CACHE_TTL", Kind: "int", Value: "300"},
 		{Var: "ARMOR_CANARY_DISABLED", Kind: "bool", Value: "false"},
+		{Var: "ARMOR_CF_STALE_FALLBACK", Kind: "bool", Value: "true"},
+		{Var: "ARMOR_COMPRESS", Kind: "bool", Value: "false"},
 		{Var: "ARMOR_LISTEN", Kind: "string", Value: "0.0.0.0:9000"},
 		{Var: "ARMOR_PRESIGN_ENABLED", Kind: "bool", Value: "false"},
 	}

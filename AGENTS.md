@@ -80,7 +80,17 @@ pushing.
    it omits a bound or accepted value the validation enforces. A variable
    consumed outside `internal/config` (companion binaries, handlers) is
    additionally held by `TestConsumerReferenceParity`.
-3. Verify: `go build ./... && go test ./internal/docsindex/ -short` (the
+3. Add the variable's name to `knownEnvVars` (`internal/config/env_known.go`)
+   in the same change. `TestKnownEnvVarsMatchesSource` holds the list to the
+   ARMOR_* literals the package sources contain, and the list feeds the
+   startup warning for unrecognized ARMOR_* variables — a variable missing
+   from the list false-warns at startup; `armor check` and `armor serve` both
+   surface the warnings. Integers and booleans parse through getEnvInt /
+   getEnvInt64 / getEnvBool, which append an error naming the variable when a
+   set value does not parse (accepted boolean spellings: true/false/1/0/yes/no,
+   case-insensitive — see the "Value parsing" section of the configuration
+   reference).
+4. Verify: `go build ./... && go test ./internal/docsindex/ -short` (the
    parity tests live there, not in `internal/config`).
 
 ### Adding an admin route

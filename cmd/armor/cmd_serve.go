@@ -226,6 +226,13 @@ func serve(fs *flag.FlagSet) {
 	logger := logging.New("armor")
 	logging.SetDefault(logger)
 
+	// Surface environment variables ARMOR does not recognize before the
+	// startup banner. config.Load cannot log — it runs before the logger
+	// exists — so the warnings ride on the config struct.
+	for _, warning := range cfg.EnvWarnings {
+		logger.Warn(warning)
+	}
+
 	// Log startup info with full redacted configuration
 	logger.WithField("config", cfg.Redacted()).Info("ARMOR starting")
 

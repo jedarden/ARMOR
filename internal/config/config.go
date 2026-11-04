@@ -170,9 +170,21 @@ type Config struct {
 	// Writer ID for provenance chain
 	WriterID string
 
+	// EnvWarnings carries one entry per ARMOR_* variable set in the process
+	// environment that no known variable or family prefix covers (see
+	// env_known.go). These are not errors: the process starts — an
+	// unrecognized variable has no effect — but a misspelled name otherwise
+	// silently disables the setting it was meant to configure. The serve
+	// command logs each entry at startup and `armor check` prints them.
+	EnvWarnings []string
+
 	// Cache configuration
 	CacheMaxEntries int
 	CacheTTL        int
+	// CacheMaxBytes caps the object metadata cache by total cached bytes,
+	// overriding the backend's built-in byte backstop. 0 keeps the backend
+	// default (64 MiB).
+	CacheMaxBytes int64
 
 	// List cache configuration
 	ListCacheMaxEntries int
@@ -332,13 +344,13 @@ func Load() (*Config, error) {
 	// fails startup loudly instead of writing to the root. The check runs
 	// against the normalized prefix, so any spelling that normalizes to a
 	// non-empty namespace passes; only a genuinely missing prefix trips it.
-	cfg.RequirePrefix = os.Getenv("ARMOR_REQUIRE_PREFIX") == "true"
+	cfg.RequirePrefix = getEnvBool("ARMOR_REQUIRE_PREFIX", false, &errs)
 	if cfg.RequirePrefix && cfg.Prefix == "" {
 		errs = append(errs, fmt.Errorf("ARMOR_REQUIRE_PREFIX is set but ARMOR_PREFIX is empty: refusing to start a shared-bucket deployment that would write objects to the bucket root (ADR-001)"))
 	}
 
 	// Canary disabled flag
-	cfg.CanaryDisabled = os.Getenv("ARMOR_CANARY_DISABLED") == "true"
+	cfg.CanaryDisabled = getEnvBool("ARMOR_CANARY_DISABLED", false, &errs)
 
 	// Master encryption key (required)
 	mekHex := os.Getenv("ARMOR_MEK")
@@ -355,15 +367,16 @@ func Load() (*Config, error) {
 	}
 
 	// Block size (default 64KB)
-	cfg.BlockSize = getEnvInt("ARMOR_BLOCK_SIZE", 65536)
+	cfg.BlockSize = getEnvInt("ARMOR_BLOCK_SIZE", 65536, &errs)
 	if cfg.BlockSize < 4096 || (cfg.BlockSize&(cfg.BlockSize-1)) != 0 {
 		errs = append(errs, fmt.Errorf("ARMOR_BLOCK_SIZE must be a power of 2 >= 4096"))
 	}
 
 	// Compression (default disabled per ADR-007)
-	// ARMOR_COMPRESS=true is a legacy alias for "*=zstd" in ARMOR_COMPRESS_RULES
+	// ARMOR_COMPRESS=true (any accepted boolean spelling) is a legacy alias
+	// for "*=zstd" in ARMOR_COMPRESS_RULES
 	compressRulesStr := os.Getenv("ARMOR_COMPRESS_RULES")
-	compressAlias := os.Getenv("ARMOR_COMPRESS") == "true"
+	compressAlias := getEnvBool("ARMOR_COMPRESS", false, &errs)
 
 	// Parse compress rules with alias support
 	var err error
@@ -376,12 +389,12 @@ func Load() (*Config, error) {
 	cfg.Compress = compressAlias
 
 	// Number of ranged reads allowed in flight for a backend read.
-	cfg.ReadConcurrency = getEnvInt("ARMOR_READ_CONCURRENCY", 16)
+	cfg.ReadConcurrency = getEnvInt("ARMOR_READ_CONCURRENCY", 16, &errs)
 	if cfg.ReadConcurrency < 1 {
 		errs = append(errs, fmt.Errorf("ARMOR_READ_CONCURRENCY must be at least 1"))
 	}
 
-	cfg.ReadFetchSize = int64(getEnvInt("ARMOR_READ_FETCH_SIZE", 1<<20))
+	cfg.ReadFetchSize = int64(getEnvInt("ARMOR_READ_FETCH_SIZE", 1<<20, &errs))
 	if cfg.ReadFetchSize < 64*1024 || cfg.ReadFetchSize > 16<<20 {
 		errs = append(errs, fmt.Errorf("ARMOR_READ_FETCH_SIZE must be between 65536 and 16777216 bytes"))
 	}
@@ -394,7 +407,7 @@ func Load() (*Config, error) {
 			cfg.ReadRequestTimeout = d
 		}
 	}
-	cfg.ReadBackendLimit = getEnvInt("ARMOR_READ_BACKEND_LIMIT", 64)
+	cfg.ReadBackendLimit = getEnvInt("ARMOR_READ_BACKEND_LIMIT", 64, &errs)
 	if cfg.ReadBackendLimit < 1 {
 		errs = append(errs, fmt.Errorf("ARMOR_READ_BACKEND_LIMIT must be at least 1"))
 	}
@@ -404,7 +417,7 @@ func Load() (*Config, error) {
 	// The default covers the small-object population the baseline was cut for
 	// (docs/performance/small-object-get-baseline.md: median ~23 KiB) while
 	// staying at or below the default single backend fetch of ReadFetchSize.
-	cfg.SmallObjectFetchBytes = int64(getEnvInt("ARMOR_SMALL_OBJECT_FETCH_BYTES", 1<<20))
+	cfg.SmallObjectFetchBytes = int64(getEnvInt("ARMOR_SMALL_OBJECT_FETCH_BYTES", 1<<20, &errs))
 	if cfg.SmallObjectFetchBytes < 0 {
 		errs = append(errs, fmt.Errorf("ARMOR_SMALL_OBJECT_FETCH_BYTES must be at least 0 (0 disables the single-fetch path)"))
 	}
@@ -412,7 +425,7 @@ func Load() (*Config, error) {
 	// Aggregate v3 UploadPart memory budget (armor-cb2b0731). The default
 	// admits eight pooled 64 MiB parts — the iad-ci workload the budget was
 	// sized against — inside a 1 GiB pod.
-	cfg.UploadPartMemoryBudget = int64(getEnvInt("ARMOR_UPLOAD_PART_MEMORY_BUDGET", 536870912))
+	cfg.UploadPartMemoryBudget = int64(getEnvInt("ARMOR_UPLOAD_PART_MEMORY_BUDGET", 536870912, &errs))
 	if cfg.UploadPartMemoryBudget < 1048576 {
 		errs = append(errs, fmt.Errorf("ARMOR_UPLOAD_PART_MEMORY_BUDGET must be at least 1048576 bytes (1 MiB)"))
 	}
@@ -420,7 +433,7 @@ func Load() (*Config, error) {
 	// Read-retry policy (armor-f1791426). Retries stay inside the per-request
 	// read deadline, so attempts beyond the first mainly help when the
 	// transient failure answers fast (Cloudflare 52x does).
-	cfg.ReadRetryAttempts = getEnvInt("ARMOR_READ_RETRY_ATTEMPTS", 3)
+	cfg.ReadRetryAttempts = getEnvInt("ARMOR_READ_RETRY_ATTEMPTS", 3, &errs)
 	if cfg.ReadRetryAttempts < 1 || cfg.ReadRetryAttempts > 10 {
 		errs = append(errs, fmt.Errorf("ARMOR_READ_RETRY_ATTEMPTS must be between 1 and 10"))
 	}
@@ -443,10 +456,8 @@ func Load() (*Config, error) {
 		}
 	}
 
-	cfStaleFallbackStr := os.Getenv("ARMOR_CF_STALE_FALLBACK")
-	cfg.CFStaleFallback = cfStaleFallbackStr != "false" && cfStaleFallbackStr != "0"
-	cfVersionPinnedStr := os.Getenv("ARMOR_CF_VERSION_PINNED")
-	cfg.CFVersionPinned = cfVersionPinnedStr == "true" || cfVersionPinnedStr == "1"
+	cfg.CFStaleFallback = getEnvBool("ARMOR_CF_STALE_FALLBACK", true, &errs)
+	cfg.CFVersionPinned = getEnvBool("ARMOR_CF_VERSION_PINNED", false, &errs)
 
 	// Auth credentials
 	cfg.AuthAccessKey = os.Getenv("ARMOR_AUTH_ACCESS_KEY")
@@ -487,7 +498,7 @@ func Load() (*Config, error) {
 
 	// AllowNoCredentials escape hatch (for demo mode only)
 	// This environment variable should only be set by the demo subcommand
-	cfg.AllowNoCredentials = os.Getenv("ARMOR_ALLOW_NO_CREDENTIALS") == "true"
+	cfg.AllowNoCredentials = getEnvBool("ARMOR_ALLOW_NO_CREDENTIALS", false, &errs)
 
 	// Writer ID (default to hostname)
 	cfg.WriterID = os.Getenv("ARMOR_WRITER_ID")
@@ -499,12 +510,16 @@ func Load() (*Config, error) {
 	}
 
 	// Cache configuration
-	cfg.CacheMaxEntries = getEnvInt("ARMOR_CACHE_MAX_ENTRIES", 10000)
-	cfg.CacheTTL = getEnvInt("ARMOR_CACHE_TTL", 300)
+	cfg.CacheMaxEntries = getEnvInt("ARMOR_CACHE_MAX_ENTRIES", 10000, &errs)
+	cfg.CacheTTL = getEnvInt("ARMOR_CACHE_TTL", 300, &errs)
+	cfg.CacheMaxBytes = getEnvInt64("ARMOR_CACHE_MAX_BYTES", 0, &errs)
+	if cfg.CacheMaxBytes < 0 {
+		errs = append(errs, fmt.Errorf("ARMOR_CACHE_MAX_BYTES must be at least 0 (0 keeps the built-in byte backstop)"))
+	}
 
 	// List cache configuration
-	cfg.ListCacheMaxEntries = getEnvInt("ARMOR_LIST_CACHE_MAX_ENTRIES", 1000)
-	cfg.ListCacheTTL = getEnvInt("ARMOR_LIST_CACHE_TTL", 60)
+	cfg.ListCacheMaxEntries = getEnvInt("ARMOR_LIST_CACHE_MAX_ENTRIES", 1000, &errs)
+	cfg.ListCacheTTL = getEnvInt("ARMOR_LIST_CACHE_TTL", 60, &errs)
 
 	// Concurrent backend HEADs one ListObjectsV2 page may issue to resolve
 	// plaintext sizes for keys missing from the in-memory indexes. B2
@@ -522,14 +537,13 @@ func Load() (*Config, error) {
 	// http_429 responses were observed at 16 over a multi-day production
 	// window (armor_backend_retries_total), so this still has headroom
 	// before the existing retry-with-backoff path would need to absorb any.
-	cfg.ListHeadFanout = getEnvInt("ARMOR_LIST_HEAD_FANOUT", 128)
+	cfg.ListHeadFanout = getEnvInt("ARMOR_LIST_HEAD_FANOUT", 128, &errs)
 	if cfg.ListHeadFanout < 1 {
 		errs = append(errs, fmt.Errorf("ARMOR_LIST_HEAD_FANOUT must be at least 1"))
 	}
 
 	// Manifest index configuration
-	manifestEnabledStr := os.Getenv("ARMOR_MANIFEST_ENABLED")
-	cfg.ManifestEnabled = manifestEnabledStr != "false" && manifestEnabledStr != "0"
+	cfg.ManifestEnabled = getEnvBool("ARMOR_MANIFEST_ENABLED", true, &errs)
 	cfg.ManifestPrefix = getEnv("ARMOR_MANIFEST_PREFIX", ".armor/manifest")
 	// Manifest objects are internal bookkeeping, so they share the ADR-001
 	// tenant namespace rather than sitting at the bucket root: with
@@ -556,8 +570,8 @@ func Load() (*Config, error) {
 	if cfg.Prefix != "" {
 		cfg.ManifestPrefix = cfg.Prefix + cfg.ManifestPrefix
 	}
-	cfg.ManifestCompactionInterval = getEnvInt("ARMOR_MANIFEST_COMPACTION_INTERVAL", 3600)
-	cfg.ManifestCompactionThreshold = getEnvInt("ARMOR_MANIFEST_COMPACTION_THRESHOLD", 1000)
+	cfg.ManifestCompactionInterval = getEnvInt("ARMOR_MANIFEST_COMPACTION_INTERVAL", 3600, &errs)
+	cfg.ManifestCompactionThreshold = getEnvInt("ARMOR_MANIFEST_COMPACTION_THRESHOLD", 1000, &errs)
 	// The startup manifest load runs before the listener binds, so the k8s
 	// startupProbe sees nothing but a closed port while it runs. The probe's
 	// failure budget (periodSeconds*failureThreshold — 600s in the shipped
@@ -572,12 +586,12 @@ func Load() (*Config, error) {
 	// guaranteed availability. 480s leaves ~2 min of the 600s budget for
 	// listener bind, probe period alignment, and probe round-trip. Set 0 to
 	// restore the unbounded load.
-	cfg.ManifestLoadTimeout = getEnvInt("ARMOR_MANIFEST_LOAD_TIMEOUT", 480)
+	cfg.ManifestLoadTimeout = getEnvInt("ARMOR_MANIFEST_LOAD_TIMEOUT", 480, &errs)
 
 	// Pre-signed URL configuration
-	// ARMOR_PRESIGN_ENABLED must be explicitly set to "true" to enable presign functionality
-	presignEnabledStr := os.Getenv("ARMOR_PRESIGN_ENABLED")
-	cfg.PresignEnabled = presignEnabledStr == "true" || presignEnabledStr == "1"
+	// ARMOR_PRESIGN_ENABLED must be set to an accepted truthy boolean spelling
+	// to enable presign functionality
+	cfg.PresignEnabled = getEnvBool("ARMOR_PRESIGN_ENABLED", false, &errs)
 
 	if cfg.PresignEnabled {
 		// Require a dedicated presign secret when enabled
@@ -822,6 +836,11 @@ func Load() (*Config, error) {
 		}
 	}
 
+	// Warn (never fail) about ARMOR_* variables the environment sets that
+	// nothing in this package reads. Computed only on the success path: a
+	// deployment with config errors has a fatal report to fix first.
+	cfg.EnvWarnings = unknownEnvVarWarnings(os.Environ())
+
 	// Return all errors collected during validation
 	if len(errs) > 0 {
 		return nil, errors.Join(errs...)
@@ -837,12 +856,67 @@ func getEnv(key, defaultVal string) string {
 	return defaultVal
 }
 
-func getEnvInt(key string, defaultVal int) int {
+// getEnvInt reads an integer environment variable. An unset variable yields
+// defaultVal; a set but unparsable value appends an error naming the variable
+// to errs and yields defaultVal. Silently falling back (the previous
+// behavior) let ARMOR_BLOCK_SIZE=64k or ARMOR_READ_CONCURRENCY=sixteen run on
+// the defaults while `armor check` passed.
+func getEnvInt(key string, defaultVal int, errs *[]error) int {
 	if val := os.Getenv(key); val != "" {
-		if i, err := strconv.Atoi(val); err == nil {
-			return i
+		i, err := strconv.Atoi(val)
+		if err != nil {
+			*errs = append(*errs, fmt.Errorf("%s must be an integer, got '%s'", key, val))
+			return defaultVal
+		}
+		return i
+	}
+	return defaultVal
+}
+
+// getEnvInt64 is getEnvInt for 64-bit values.
+func getEnvInt64(key string, defaultVal int64, errs *[]error) int64 {
+	if val := os.Getenv(key); val != "" {
+		i, err := strconv.ParseInt(val, 10, 64)
+		if err != nil {
+			*errs = append(*errs, fmt.Errorf("%s must be an integer, got '%s'", key, val))
+			return defaultVal
+		}
+		return i
+	}
+	return defaultVal
+}
+
+// boolTruthy and boolFalsy are the accepted spellings of getEnvBool,
+// case-insensitively.
+var (
+	boolTruthy = []string{"true", "1", "yes"}
+	boolFalsy  = []string{"false", "0", "no"}
+)
+
+// getEnvBool reads a boolean environment variable. An unset variable yields
+// defaultVal; a set variable is matched against the accepted spellings
+// true/false/1/0/yes/no case-insensitively, and any other non-empty value
+// appends an error naming the variable to errs and yields defaultVal. Before
+// the unified parser, CANARY_DISABLED, COMPRESS and REQUIRE_PREFIX accepted
+// only the exact string "true" while CF_VERSION_PINNED and PRESIGN_ENABLED
+// also accepted "1" — ARMOR_COMPRESS=1 silently meant false.
+func getEnvBool(key string, defaultVal bool, errs *[]error) bool {
+	val := os.Getenv(key)
+	if val == "" {
+		return defaultVal
+	}
+	lower := strings.ToLower(val)
+	for _, t := range boolTruthy {
+		if lower == t {
+			return true
 		}
 	}
+	for _, f := range boolFalsy {
+		if lower == f {
+			return false
+		}
+	}
+	*errs = append(*errs, fmt.Errorf("%s must be a boolean (true/false/1/0/yes/no, case-insensitive), got '%s'", key, val))
 	return defaultVal
 }
 
@@ -1287,8 +1361,9 @@ type RedactedConfig struct {
 	WriterID string `json:"writer_id"`
 
 	// Cache configuration
-	CacheMaxEntries int `json:"cache_max_entries"`
-	CacheTTL        int `json:"cache_ttl"`
+	CacheMaxEntries int   `json:"cache_max_entries"`
+	CacheTTL        int   `json:"cache_ttl"`
+	CacheMaxBytes   int64 `json:"cache_max_bytes"`
 
 	// List cache configuration
 	ListCacheMaxEntries int `json:"list_cache_max_entries"`
@@ -1396,6 +1471,7 @@ func (c *Config) Redacted() *RedactedConfig {
 		WriterID:                    c.WriterID,
 		CacheMaxEntries:             c.CacheMaxEntries,
 		CacheTTL:                    c.CacheTTL,
+		CacheMaxBytes:               c.CacheMaxBytes,
 		ListCacheMaxEntries:         c.ListCacheMaxEntries,
 		ListCacheTTL:                c.ListCacheTTL,
 		ListHeadFanout:              c.ListHeadFanout,

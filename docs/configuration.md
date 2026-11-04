@@ -7,6 +7,20 @@ a test (`internal/docsindex`) fails when one is missing, when a Default column
 disagrees with the default the code declares, or when a row omits a bound or
 accepted value the code enforces. Names in `<angle brackets>` are placeholders.
 
+## Value parsing and unrecognized variables
+
+Boolean variables accept `true`, `false`, `1`, `0`, `yes` and `no`,
+case-insensitively, through one shared parser. Integer variables parse with
+Go's integer syntax. A set but unparsable value fails startup — and `armor
+check` — with an error naming the variable; it never falls back to the
+default. Rows whose Description spells out specific spellings (such as
+"`false` or `0` disables") are describing the common cases, not the full
+accepted set. Setting an `ARMOR_*` variable this process does not read
+produces a startup warning and a `WARN` in `armor check` output: a
+misspelled name (`ARMOR_CF_DOMIAN` for `ARMOR_CF_DOMAIN`) otherwise silently
+disables the very setting it was meant to configure, because nothing reads
+it.
+
 The required minimum for a new deployment is the README's
 [Required configuration](../README.md#required-configuration) table; everything
 else on this page is optional or backend-dependent.
@@ -90,8 +104,8 @@ the operator chooses a single-writer deployment arrangement.
 | `ARMOR_MEK_<NAME>_RING` | No | — | The same for a named key; requires `ARMOR_MEK_<NAME>` |
 | `ARMOR_KEY_ROUTES` | No | — | Prefix-to-key routes, e.g. `data/pii/*=sensitive,archive/*=archive,*=default` (see [Multi-key routing](#multi-key-routing)) |
 | `ARMOR_BLOCK_SIZE` | No | `65536` | Encryption block size in bytes; a power of two, at least 4096 |
-| `ARMOR_COMPRESS` | No | `false` | Legacy alias for `ARMOR_COMPRESS_RULES="*=zstd"`. Multipart uploads are rejected and byte-range reads are unsupported for compressed objects ([ADR-007](adr/007-zstd-compression.md)) |
-| `ARMOR_COMPRESS_RULES` | No | — | Comma-separated rules `<suffix>|<content-type>=zstd|none`, first match wins, e.g. `.jsonl=zstd,application/json=zstd,*=none`. Per-request override via `x-amz-meta-armor-compress: true|false`. Single-PUT v3 objects only |
+| `ARMOR_COMPRESS` | No | `false` | Legacy alias for `ARMOR_COMPRESS_RULES="*=zstd"`. Multipart uploads are rejected and byte-range reads are unsupported for compressed objects ([ADR-007](adr/007-zstd-compression.md)). Same buffered-path size bound as `ARMOR_COMPRESS_RULES` |
+| `ARMOR_COMPRESS_RULES` | No | — | Comma-separated rules `<suffix>|<content-type>=zstd|none`, first match wins, e.g. `.jsonl=zstd,application/json=zstd,*=none`. Per-request override via `x-amz-meta-armor-compress: true|false`. Single-PUT v3 objects only. Compression applies only to single-PUTs within the in-memory buffer (declared size ≤ 10 MiB): larger or unknown-length uploads always stream and store uncompressed — rules and the override never force whole-body buffering |
 
 ## Client authentication
 
@@ -120,6 +134,7 @@ for the ACL syntax.
 | `ARMOR_CF_STALE_FALLBACK` | No | `true` | `false` or `0` disables re-reading a range directly from B2, at the version the request's HEAD saw, when Cloudflare served a different version (a stale edge copy after an overwrite). Only affects reads that would otherwise fail |
 | `ARMOR_CF_VERSION_PINNED` | No | `false` | `true` or `1` reads through Cloudflare by B2 file ID (`/b2api/v1/b2_download_file_by_id`) instead of by key, so each version has its own immutable URL. Requires that path to pass through the Cloudflare CNAME and cache rule |
 | `ARMOR_CACHE_MAX_ENTRIES` | No | `10000` | Object metadata cache entries |
+| `ARMOR_CACHE_MAX_BYTES` | No | `0` | Object metadata cache cap by total cached bytes; at least 0, and `0` keeps the backend's built-in byte backstop |
 | `ARMOR_CACHE_TTL` | No | `300` | Metadata cache TTL in seconds |
 | `ARMOR_LIST_CACHE_MAX_ENTRIES` | No | `1000` | List-result cache entries |
 | `ARMOR_LIST_CACHE_TTL` | No | `60` | List-result cache TTL in seconds |

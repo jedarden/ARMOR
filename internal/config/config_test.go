@@ -6,11 +6,13 @@ import (
 	"fmt"
 	"os"
 	"reflect"
+	"sort"
 	"strings"
 	"testing"
 
 	"github.com/jedarden/armor/internal/acl"
 	"github.com/jedarden/armor/internal/crypto"
+	"github.com/jedarden/armor/internal/docsindex"
 )
 
 func TestParseACL(t *testing.T) {
@@ -1940,5 +1942,231 @@ func TestCFReadPathFlags(t *testing.T) {
 	}
 	if !cfg.CFVersionPinned {
 		t.Error("ARMOR_CF_VERSION_PINNED=true did not enable pinning")
+	}
+}
+
+// TestLoadRejectsUnparsableIntegers pins the parse-helper contract: a set but
+// unparsable integer is a configuration error naming the variable, never a
+// silent fall-back to the default (ARMOR_BLOCK_SIZE=64k and
+// ARMOR_READ_CONCURRENCY=sixteen used to start on the defaults while `armor
+// check` passed).
+func TestLoadRejectsUnparsableIntegers(t *testing.T) {
+	cases := []struct{ env, value string }{
+		{"ARMOR_BLOCK_SIZE", "64k"},
+		{"ARMOR_READ_CONCURRENCY", "sixteen"},
+		{"ARMOR_READ_FETCH_SIZE", "1MB"},
+		{"ARMOR_READ_BACKEND_LIMIT", "many"},
+		{"ARMOR_SMALL_OBJECT_FETCH_BYTES", "big"},
+		{"ARMOR_UPLOAD_PART_MEMORY_BUDGET", "512mb"},
+		{"ARMOR_READ_RETRY_ATTEMPTS", "three"},
+		{"ARMOR_CACHE_MAX_ENTRIES", "lots"},
+		{"ARMOR_CACHE_TTL", "forever"},
+		{"ARMOR_CACHE_MAX_BYTES", "64k"},
+		{"ARMOR_LIST_CACHE_MAX_ENTRIES", "many"},
+		{"ARMOR_LIST_CACHE_TTL", "minute"},
+		{"ARMOR_LIST_HEAD_FANOUT", "wide"},
+		{"ARMOR_MANIFEST_COMPACTION_INTERVAL", "hour"},
+		{"ARMOR_MANIFEST_COMPACTION_THRESHOLD", "lots"},
+		{"ARMOR_MANIFEST_LOAD_TIMEOUT", "long"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.env, func(t *testing.T) {
+			setEnv(t, minimalEnv()...)
+			t.Setenv(tc.env, tc.value)
+			_, err := Load()
+			if err == nil {
+				t.Fatalf("Load() with %s=%q succeeded; want an error naming the variable", tc.env, tc.value)
+			}
+			if !strings.Contains(err.Error(), tc.env) {
+				t.Errorf("Load() error %q does not name %s", err, tc.env)
+			}
+		})
+	}
+}
+
+// boolConfigCheckers maps each variable parsed by getEnvBool to the Config
+// field its value lands in.
+func boolConfigCheckers() map[string]func(*Config) bool {
+	return map[string]func(*Config) bool{
+		"ARMOR_CANARY_DISABLED":      func(c *Config) bool { return c.CanaryDisabled },
+		"ARMOR_REQUIRE_PREFIX":       func(c *Config) bool { return c.RequirePrefix },
+		"ARMOR_COMPRESS":             func(c *Config) bool { return c.CompressRules != nil && len(c.CompressRules.Rules) > 0 },
+		"ARMOR_CF_STALE_FALLBACK":    func(c *Config) bool { return c.CFStaleFallback },
+		"ARMOR_CF_VERSION_PINNED":    func(c *Config) bool { return c.CFVersionPinned },
+		"ARMOR_ALLOW_NO_CREDENTIALS": func(c *Config) bool { return c.AllowNoCredentials },
+		"ARMOR_MANIFEST_ENABLED":     func(c *Config) bool { return c.ManifestEnabled },
+		"ARMOR_PRESIGN_ENABLED":      func(c *Config) bool { return c.PresignEnabled },
+	}
+}
+
+// boolExtraEnv returns the additional variables a truthy value for env needs
+// for Load to succeed (minimalEnv alone has no prefix and no presign secret).
+func boolExtraEnv(env string) []string {
+	switch env {
+	case "ARMOR_REQUIRE_PREFIX":
+		return []string{"ARMOR_PREFIX", "tenant/"}
+	case "ARMOR_PRESIGN_ENABLED":
+		return []string{
+			"ARMOR_PRESIGN_SECRET", "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+			"ARMOR_PRESIGN_BASE_URL", "https://share.example.com",
+		}
+	}
+	return nil
+}
+
+// TestLoadBoolAcceptedSpellings pins the one boolean parser: every variable
+// read through getEnvBool accepts true/false/1/0/yes/no case-insensitively.
+// Before the unified parser CANARY_DISABLED, COMPRESS and REQUIRE_PREFIX
+// accepted only the exact string "true" while CF_VERSION_PINNED and
+// PRESIGN_ENABLED also accepted "1" — ARMOR_COMPRESS=1 silently meant false.
+func TestLoadBoolAcceptedSpellings(t *testing.T) {
+	truthy := []string{"true", "TRUE", "True", "1", "yes", "YES", "Yes"}
+	falsy := []string{"false", "FALSE", "False", "0", "no", "NO", "No"}
+	checkers := boolConfigCheckers()
+	for env, check := range checkers {
+		for _, spelling := range truthy {
+			t.Run(env+"="+spelling, func(t *testing.T) {
+				pairs := append(minimalEnv(), boolExtraEnv(env)...)
+				setEnv(t, pairs...)
+				t.Setenv(env, spelling)
+				cfg, err := Load()
+				if err != nil {
+					t.Fatalf("Load() with %s=%q error: %v", env, spelling, err)
+				}
+				if !check(cfg) {
+					t.Errorf("%s=%q did not take effect", env, spelling)
+				}
+			})
+		}
+		for _, spelling := range falsy {
+			t.Run(env+"="+spelling, func(t *testing.T) {
+				pairs := append(minimalEnv(), boolExtraEnv(env)...)
+				setEnv(t, pairs...)
+				t.Setenv(env, spelling)
+				cfg, err := Load()
+				if err != nil {
+					t.Fatalf("Load() with %s=%q error: %v", env, spelling, err)
+				}
+				if check(cfg) {
+					t.Errorf("%s=%q did not take effect", env, spelling)
+				}
+			})
+		}
+	}
+}
+
+// TestLoadRejectsUnparsableBooleans covers the other half of the parser's
+// contract: a value outside the accepted spellings is a configuration error
+// naming the variable. ARMOR_CF_STALE_FALLBACK and ARMOR_MANIFEST_ENABLED
+// previously treated any unrecognized value as true.
+func TestLoadRejectsUnparsableBooleans(t *testing.T) {
+	junk := []string{"ban", "on", "off", "2", "enable", "TRUE ", " true"}
+	for env := range boolConfigCheckers() {
+		for _, value := range junk {
+			t.Run(env+"="+value, func(t *testing.T) {
+				setEnv(t, minimalEnv()...)
+				t.Setenv(env, value)
+				_, err := Load()
+				if err == nil {
+					t.Fatalf("Load() with %s=%q succeeded; want an error naming the variable", env, value)
+				}
+				if !strings.Contains(err.Error(), env) {
+					t.Errorf("Load() error %q does not name %s", err, env)
+				}
+			})
+		}
+	}
+}
+
+// TestUnknownEnvVars covers the matcher behind the startup warning: exact
+// known names and family prefixes are covered, empty values and non-ARMOR_
+// names are skipped, and everything else is reported sorted.
+func TestUnknownEnvVars(t *testing.T) {
+	known := []string{"ARMOR_BUCKET", "ARMOR_MEK_", "ARMOR_AUTH_"}
+	environ := []string{
+		"PATH=/usr/bin",
+		"ARMOR_BUCKET=testbucket",         // exact match
+		"ARMOR_MEK_ARCHIVE=abcd",          // family prefix
+		"ARMOR_AUTH_CRED1_ACCESS_KEY=k",   // family prefix
+		"ARMOR_MEK=",                      // empty value: equivalent to unset
+		"ARMOR_TYPO=",                     // empty, not reported
+		"ARMOR_CF_DOMIAN=cdn.example.com", // unknown: reported
+		"ARMOR_ZZZ=surprise",              // unknown: reported
+		"NOEQUALS",                        // malformed, skipped
+	}
+	got := unknownEnvVars(environ, known)
+	want := []string{"ARMOR_CF_DOMIAN", "ARMOR_ZZZ"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("unknownEnvVars() = %q, want %q", got, want)
+	}
+}
+
+// TestLoadWarnsUnknownEnvVars covers the warning end to end: a misspelled
+// Cloudflare domain reaches cfg.EnvWarnings while Load still succeeds.
+func TestLoadWarnsUnknownEnvVars(t *testing.T) {
+	setEnv(t, minimalEnv()...)
+	t.Setenv("ARMOR_CF_DOMIAN", "cdn.example.com")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+	found := false
+	for _, w := range cfg.EnvWarnings {
+		if strings.Contains(w, "ARMOR_CF_DOMIAN") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("cfg.EnvWarnings = %q, want an entry naming ARMOR_CF_DOMIAN", cfg.EnvWarnings)
+	}
+}
+
+// TestLoadNoWarningsForKnownEnv verifies the inverse: a fully known minimal
+// environment produces no warnings.
+func TestLoadNoWarningsForKnownEnv(t *testing.T) {
+	setEnv(t, minimalEnv()...)
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+	if len(cfg.EnvWarnings) != 0 {
+		t.Errorf("cfg.EnvWarnings = %q, want none", cfg.EnvWarnings)
+	}
+}
+
+// TestKnownEnvVarsMatchesSource holds knownEnvVars to the ARMOR_* literals the
+// package's non-test sources actually contain, via the same docsindex
+// extraction the configuration-reference parity check uses. Adding an ARMOR_*
+// variable to this package without a matching knownEnvVars entry fails here —
+// the list feeds the unknown-variable startup warning, so a stale list both
+// false-warns and misses typos.
+func TestKnownEnvVarsMatchesSource(t *testing.T) {
+	fromSource, err := docsindex.ConfigEnvVars(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := append([]string(nil), knownEnvVars...)
+	sort.Strings(want)
+	if !reflect.DeepEqual(fromSource, want) {
+		var missing, stale []string
+		src := make(map[string]bool, len(fromSource))
+		for _, v := range fromSource {
+			src[v] = true
+		}
+		list := make(map[string]bool, len(knownEnvVars))
+		for _, v := range knownEnvVars {
+			list[v] = true
+		}
+		for _, v := range fromSource {
+			if !list[v] {
+				missing = append(missing, v)
+			}
+		}
+		for _, v := range knownEnvVars {
+			if !src[v] {
+				stale = append(stale, v)
+			}
+		}
+		t.Errorf("knownEnvVars disagrees with the package sources\n  missing from knownEnvVars: %q\n  stale in knownEnvVars: %q", missing, stale)
 	}
 }

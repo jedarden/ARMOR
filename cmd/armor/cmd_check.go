@@ -61,6 +61,14 @@ func check(fs *flag.FlagSet) {
 		os.Exit(1)
 	}
 
+	// Unrecognized ARMOR_* variables are not config errors — the setting they
+	// were meant for simply stays at its default — but `armor check` is where
+	// an operator validates an environment, so surface them before the
+	// probes. They do not affect the exit code.
+	for _, warning := range cfg.EnvWarnings {
+		fmt.Fprintf(os.Stderr, "[WARN] %s\n", warning)
+	}
+
 	// Print redacted configuration
 	fmt.Fprintf(os.Stderr, "=== ARMOR Configuration (redacted) ===\n")
 	printRedactedConfig(cfg.Redacted())

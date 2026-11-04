@@ -17,10 +17,10 @@ import (
 // does, and ConfigRefProblems reports every place the two disagree.
 
 // CodeDefault is a default value the code declares mechanically, as extracted
-// from the source: the second argument of a getEnv/getEnvInt call, a helper
-// fallback of the form parseInt(os.Getenv("ARMOR_X"), 16), or a bool env flag
-// compared against "true", either inline or through the local the env read
-// was assigned to.
+// from the source: the second argument of a getEnv/getEnvInt/getEnvInt64
+// call, a getEnvBool call's default, a helper fallback of the form
+// parseInt(os.Getenv("ARMOR_X"), 16), or a bool env flag compared against
+// "true", either inline or through the local the env read was assigned to.
 type CodeDefault struct {
 	Var   string // the ARMOR_* variable name
 	Kind  string // "string", "int" or "bool"
@@ -55,14 +55,22 @@ var (
 	goStringBody = `(?:[^"\\\n]|\\.)*`
 	// envStringDefault matches getEnv("ARMOR_X", "default").
 	envStringDefault = regexp.MustCompile(`getEnv\(\s*"(ARMOR_[A-Z0-9_]+)"\s*,\s*"(` + goStringBody + `)"\s*\)`)
-	// envIntDefault matches getEnvInt("ARMOR_X", 100).
-	envIntDefault = regexp.MustCompile(`getEnvInt\(\s*"(ARMOR_[A-Z0-9_]+)"\s*,\s*(\d+)\s*\)`)
+	// envIntDefault matches getEnvInt("ARMOR_X", 100) and
+	// getEnvInt64("ARMOR_X", 0), including the trailing `, &errs` argument the
+	// error-reporting helpers take. A third argument other than a plain
+	// expression without parens does not match: the default must stay a
+	// literal.
+	envIntDefault = regexp.MustCompile(`getEnvInt(?:64)?\(\s*"(ARMOR_[A-Z0-9_]+)"\s*,\s*(\d+)\s*(?:,[^()]*)?\)`)
 	// envIntFallback matches parseInt(os.Getenv("ARMOR_X"), 16) — any helper
 	// whose second argument is the value used when the variable is unset or
 	// unparseable, as the companion binaries wire flag defaults.
 	envIntFallback = regexp.MustCompile(`[A-Za-z_][A-Za-z0-9_]*\(\s*os\.Getenv\(\s*"(ARMOR_[A-Z0-9_]+)"\s*\)\s*,\s*(\d+)\s*\)`)
 	// envBoolFlag matches os.Getenv("ARMOR_X") == "true".
 	envBoolFlag = regexp.MustCompile(`os\.Getenv\(\s*"(ARMOR_[A-Z0-9_]+)"\s*\)\s*==\s*"true"`)
+	// envBoolDefault matches getEnvBool("ARMOR_X", false) — the unified
+	// boolean parser — including its trailing `, &errs` argument. The default
+	// is captured, so a default-true flag states "true".
+	envBoolDefault = regexp.MustCompile(`getEnvBool\(\s*"(ARMOR_[A-Z0-9_]+)"\s*,\s*(true|false)\s*(?:,[^()]*)?\)`)
 	// envBoolAssign matches `name := os.Getenv("ARMOR_X")` — the first half of
 	// the two-line boolean idiom whose "true" comparison happens on the named
 	// local rather than on the call itself.
@@ -118,9 +126,10 @@ func forEachConfigSource(configDir string, visit func(src []byte) error) error {
 
 // CodeDefaults extracts, sorted by variable, every default internal/config
 // declares in a mechanically recognizable way: the second argument of a
-// getEnv/getEnvInt call, a helper fallback of the form
-// parseInt(os.Getenv("ARMOR_X"), 16), or a bool env flag compared against
-// "true", either inline or through the local the env read was assigned to.
+// getEnv/getEnvInt/getEnvInt64 call, a getEnvBool call's default, a helper
+// fallback of the form parseInt(os.Getenv("ARMOR_X"), 16), or a bool env flag
+// compared against "true", either inline or through the local the env read
+// was assigned to.
 // Variables whose default is computed (derived from the hostname, a tri-state
 // string, ...) are simply absent: parity is enforced only where the code
 // itself states a literal.
@@ -157,6 +166,9 @@ func extractDefaults(src []byte, seen map[string]CodeDefault) {
 	}
 	for _, m := range envBoolFlag.FindAllStringSubmatch(text, -1) {
 		seen[m[1]] = CodeDefault{Var: m[1], Kind: "bool", Value: "false"}
+	}
+	for _, m := range envBoolDefault.FindAllStringSubmatch(text, -1) {
+		seen[m[1]] = CodeDefault{Var: m[1], Kind: "bool", Value: m[2]}
 	}
 	// The two-line boolean idiom: the local assigned from the env read is
 	// the thing later compared against "true". Both halves must be in the
