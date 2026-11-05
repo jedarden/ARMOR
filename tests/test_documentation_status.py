@@ -55,7 +55,8 @@ def make_tree(tmp_path: Path) -> Path:
         status_lines.append(line)
         for bead in beads:
             states[bead] = "closed"
-    states["armor-8317f313"] = "deferred"
+    # Keep the remaining active-regression capability (range-reads) backed by
+    # a non-closed evidence bead, as the live register requires.
     states["armor-73564f97"] = "in_progress"
     write_checkpoint(root, states)
     (root / status_doc).write_text("\n".join(status_lines) + "\n")
@@ -123,7 +124,7 @@ def test_active_regression_cannot_be_described_only_as_historical(tmp_path):
     root = make_tree(tmp_path)
     readme = root / "README.md"
     readme.write_text(
-        f"Named-key reads have a historical failure: armor-8317f313. "
+        f"Byte-range reads have a historical failure: armor-817d9d92. "
         f"See {STATUS.name}.\n"
     )
     result = run_gate(root)
@@ -136,8 +137,8 @@ def test_active_status_requires_current_evidence(tmp_path):
     status_doc = root / json.loads(STATUS.read_text())["status_document"]
     status_doc.write_text(
         status_doc.read_text().replace(
-            "named-key-read active regression not currently supported",
-            "named-key-read historical failure",
+            "range-reads active regression not currently supported",
+            "range-reads historical failure",
         )
     )
     result = run_gate(root)
@@ -155,7 +156,7 @@ def test_all_cited_beads_closed_cannot_remain_active_regression(tmp_path):
     )
     result = run_gate(root)
     assert result.returncode == 1
-    assert "named-key-read: active-regression has only closed evidence beads" in result.stderr
+    assert "range-reads: active-regression has only closed evidence beads" in result.stderr
 
 
 def test_repository_tested_cannot_cite_open_bead(tmp_path):
@@ -163,18 +164,14 @@ def test_repository_tested_cannot_cite_open_bead(tmp_path):
     config_path = root / "config" / STATUS.name
     config = json.loads(config_path.read_text())
     named = next(cap for cap in config["capabilities"] if cap["id"] == "named-key-read")
-    named["status"] = "repository-tested"
-    config_path.write_text(json.dumps(config))
-    status_doc = root / config["status_document"]
-    status_doc.write_text(
-        status_doc.read_text().replace(
-            "capability: named-key-read status: active-regression",
-            "capability: named-key-read status: repository-tested",
-        ).replace(
-            "| Named-key and ring-key reads | `active-regression` |",
-            "| Named-key and ring-key reads | `repository-tested` |",
-        )
-    )
+    assert named["status"] == "repository-tested"
+    # Reopen named-key-read's evidence bead: a repository-tested row must not
+    # cite it while it is open.
+    states = {bead: "closed" for cap in config["capabilities"]
+              for bead in cap.get("evidence_beads", [])}
+    states["armor-73564f97"] = "in_progress"
+    states["armor-8317f313"] = "deferred"
+    write_checkpoint(root, states)
     result = run_gate(root)
     assert result.returncode == 1
     assert "repository-tested cites non-closed bead armor-8317f313" in result.stderr
