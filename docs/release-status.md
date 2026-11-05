@@ -57,7 +57,7 @@ tag alone.
 
 ## Current release posture
 
-<!-- capability: named-key-read status: active-regression evidence: armor-8317f313 -->
+<!-- capability: named-key-read status: repository-tested evidence: armor-8317f313 -->
 <!-- capability: wrapped-dek-decoding status: repository-tested evidence: armor-4b1b6c64 armor-da67956d -->
 <!-- capability: multipart-hmac-read status: repository-tested evidence: armor-1b272971 armor-7edd1237 -->
 <!-- capability: v3-multipart-verification status: repository-tested evidence: armor-86a90341 armor-da67956d -->
@@ -69,7 +69,7 @@ tag alone.
 
 | Capability | Status | Current source evidence | Published-image evidence | Operator boundary |
 |---|---|---|---|---|
-| Named-key and ring-key reads | `active-regression` | Real key-manager and multi-key routing tests cover fingerprint selection and unknown metadata. The fix shipped, but `armor-8317f313` remains deferred. | **0.1.1969:** the bead records a published-image named-key PUT/GET round trip and image digest. | Active regression record: reconcile the deferred bead and recheck the target deployment's named-key/ring configuration before claiming fleet-wide support. |
+| Named-key and ring-key reads | `repository-tested` | Real key-manager and multi-key routing tests cover fingerprint selection and unknown metadata. The fix (`e67804d6`) shipped in 0.1.1969 and `armor-8317f313` is closed. | **0.1.1969:** the bead records a published-image named-key PUT/GET round trip and image digest. | Recheck the target deployment's image version and named-key/ring configuration before relying on it for a specific fleet member. |
 | Fingerprinted wrapped-DEK decoding | `repository-tested` | CLI, server, and restore-verifier tests cover the `v2:<fingerprint>:<base64>` form and legacy values. `armor-4b1b6c64` and `armor-da67956d` are closed. | **None recorded** for the DR/escrow path; the client image matrix does not exercise it. | Verify the exact escrow package, key ring, and object population in a DR drill before making a deployment claim. |
 | Multipart HMAC sidecar and read paths | `repository-tested` | V2/v3 full-read, range-read, prefix, sidecar, and corruption tests cover the current layouts. The prefix lookup fixes in `armor-1b272971` and `armor-7edd1237` are closed. | **None recorded** for v3 sidecar/DR behavior. The 0.1.1975 client harness writes v2 objects. | Preserve `.armor/hmac/` and verify existing multipart objects before migration or failover. |
 | V3 multipart verification in CLI and DR | `repository-tested` | `armor verify`, `armor decrypt`, and restore-verifier tests cover manifest fallback, sidecar HMACs, part counters, and digests. `armor-86a90341` and `armor-da67956d` are closed. | **None recorded** for the CLI/DR path; the client image matrix exercises server S3 operations. | A server GET is not a DR drill. Run the verifier against real objects with the intended image and credentials. |

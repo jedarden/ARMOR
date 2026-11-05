@@ -13,7 +13,7 @@
     {
       "id": "named-key-read",
       "table_label": "Named-key and ring-key reads",
-      "status": "active-regression",
+      "status": "repository-tested",
       "tokens": ["named key", "named-key"],
       "evidence_beads": ["armor-8317f313"],
       "active_evidence_terms": ["active regression", "not currently supported", "currently unverified"],
