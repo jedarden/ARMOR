@@ -9,10 +9,12 @@ import (
 )
 
 // adminPublicExact is the set of admin-mux paths that stay token-free because
-// they are hit by kubelet probes or Prometheus scrapers.
+// they are hit by kubelet probes, expose harmless build metadata, or are
+// scraped by Prometheus.
 var adminPublicExact = map[string]bool{
 	"/healthz":      true, // liveness probe
 	"/readyz":       true, // readiness probe
+	"/version":      true, // build metadata (public on both listeners)
 	"/armor/canary": true, // canary status (read-only health signal)
 	"/metrics":      true, // Prometheus scrape
 }

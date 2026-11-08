@@ -71,7 +71,8 @@ func TestVersionEndpoint(t *testing.T) {
 	}
 }
 
-// TestVersionEndpointOnAdminListener tests that GET /version works on the admin listener.
+// TestVersionEndpointOnAdminListener tests that unauthenticated GET /version
+// works on the admin listener, matching the public API contract.
 func TestVersionEndpointOnAdminListener(t *testing.T) {
 	cfg := &config.Config{
 		Backend:            "filesystem",
@@ -88,10 +89,9 @@ func TestVersionEndpointOnAdminListener(t *testing.T) {
 
 	handler := s.AdminHandler()
 
-	// Test admin API listener
-	// c4b0f671 gates admin-listener routes before dispatch.
+	// Test admin API listener without the bearer token: /version is public on
+	// both listeners and carries only harmless build metadata.
 	req := httptest.NewRequest(http.MethodGet, "/version", nil)
-	req.Header.Set("Authorization", "Bearer test-admin-token")
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
 

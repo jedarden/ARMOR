@@ -1,6 +1,8 @@
 package server
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"regexp"
 	"sort"
@@ -41,6 +43,76 @@ func TestHTTPAPIReferenceCoversRegisteredRoutes(t *testing.T) {
 		marker := "<!-- endpoint: " + route + " -->"
 		if !strings.Contains(string(doc), marker) {
 			t.Errorf("registered route %q is missing from docs/http-api-reference.md (expected marker %q)", route, marker)
+		}
+	}
+}
+
+// TestAdminRouteAuthCoverage keeps the admin listener's auth boundary tied to
+// the route inventory. Every route registered by AdminHandler must either be
+// in the explicit public exemption list or require the admin bearer token;
+// dashboard routes are the only other exception because they carry their own
+// configured auth. The fixed exemption list also makes a code/docs change
+// deliberate when a future public admin route is added.
+func TestAdminRouteAuthCoverage(t *testing.T) {
+	serverSource, err := os.ReadFile("server.go")
+	if err != nil {
+		t.Fatalf("read server.go: %v", err)
+	}
+
+	const adminHandlerStart = "func (s *Server) AdminHandler() http.Handler {"
+	start := strings.Index(string(serverSource), adminHandlerStart)
+	if start < 0 {
+		t.Fatalf("could not find AdminHandler in server.go")
+	}
+	adminSource := string(serverSource)[start:]
+	end := strings.Index(adminSource, "\n// healthz returns")
+	if end < 0 {
+		t.Fatalf("could not find end of AdminHandler in server.go")
+	}
+	adminSource = adminSource[:end]
+
+	routeRE := regexp.MustCompile(`mux\.HandleFunc\("([^"]+)"`)
+	registered := make(map[string]bool)
+	for _, match := range routeRE.FindAllStringSubmatch(adminSource, -1) {
+		registered[match[1]] = true
+	}
+	if len(registered) == 0 {
+		t.Fatal("found no admin mux registrations in AdminHandler")
+	}
+
+	public := map[string]bool{
+		"/healthz":      true,
+		"/readyz":       true,
+		"/version":      true,
+		"/armor/canary": true,
+		"/metrics":      true,
+	}
+	for path := range public {
+		if !adminPublicExact[path] {
+			t.Errorf("public admin route %q is missing from adminPublicExact", path)
+		}
+	}
+	for path := range adminPublicExact {
+		if !public[path] {
+			t.Errorf("adminPublicExact contains undocumented test exemption %q", path)
+		}
+	}
+
+	s := newAdminAuthServerWithDashboard(t, "sekrit", "admin", "pw", "", nil)
+	h := s.adminAuthMiddleware(stubOK())
+	for path := range registered {
+		isDashboardRoute := path == "/dashboard" || strings.HasPrefix(path, "/dashboard/")
+		isPublic := public[path] || isDashboardRoute
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+
+		want := http.StatusUnauthorized
+		if isPublic {
+			want = http.StatusOK
+		}
+		if rec.Code != want {
+			t.Errorf("admin route %s without token: got %d, want %d", path, rec.Code, want)
 		}
 	}
 }

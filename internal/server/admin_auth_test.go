@@ -47,10 +47,10 @@ func stubOK() http.HandlerFunc {
 	}
 }
 
-// TestAdminPublicPathsBypassToken confirms the probe and scrape paths are
-// reachable without a bearer token (kubelet/Prometheus). The dashboard paths
-// are covered separately, because their exemption is conditional — see
-// TestDashboardBypassesTokenGateOnlyWhenConfigured.
+// TestAdminPublicPathsBypassToken confirms the probe, version, and scrape
+// paths are reachable without a bearer token (kubelet/Prometheus). The
+// dashboard paths are covered separately, because their exemption is
+// conditional — see TestDashboardBypassesTokenGateOnlyWhenConfigured.
 func TestAdminPublicPathsBypassToken(t *testing.T) {
 	s := newAdminAuthServer(t, "sekrit", nil)
 	h := s.adminAuthMiddleware(stubOK())
@@ -58,6 +58,7 @@ func TestAdminPublicPathsBypassToken(t *testing.T) {
 	public := []string{
 		"/healthz",
 		"/readyz",
+		"/version",
 		"/armor/canary",
 		"/metrics",
 	}
@@ -139,8 +140,11 @@ func TestDashboardBypassesTokenGateOnlyWhenConfigured(t *testing.T) {
 	})
 }
 
-// TestAdminRoutesRequireToken confirms every gated route is 401 without a token
-// and 200 with the valid bearer token.
+// TestAdminRoutesRequireToken is the admin route-auth inventory. Every route
+// registered on the admin mux that is not in the public exemption list or the
+// dashboard's own-auth prefix must be 401 without a token and 200 with the
+// valid bearer token. Keep this list in sync with AdminHandler when adding a
+// route; public exemptions belong in TestAdminPublicPathsBypassToken too.
 func TestAdminRoutesRequireToken(t *testing.T) {
 	const token = "sekrit"
 	s := newAdminAuthServer(t, token, nil)
@@ -149,7 +153,15 @@ func TestAdminRoutesRequireToken(t *testing.T) {
 	gated := []string{
 		"/admin/key/verify",
 		"/admin/key/rotate",
+		"/admin/key/ring",
 		"/admin/key/export",
+		"/admin/format/migrate",
+		"/admin/manifest",
+		"/admin/manifest/repair",
+		"/admin/manifest/quarantine",
+		"/admin/manifest/release",
+		"/admin/creds",
+		"/admin/provenance/compact",
 		"/armor/audit",
 		"/admin/presign",
 		"/admin/b2/keys",
@@ -366,6 +378,7 @@ func TestIsAdminPathPublic(t *testing.T) {
 		// Probe/scrape paths are public regardless of dashboard configuration.
 		{name: "healthz", dashConfigured: false, path: "/healthz", public: true},
 		{name: "readyz", dashConfigured: false, path: "/readyz", public: true},
+		{name: "version", dashConfigured: false, path: "/version", public: true},
 		{name: "canary", dashConfigured: true, path: "/armor/canary", public: true},
 		{name: "metrics", dashConfigured: true, path: "/metrics", public: true},
 
