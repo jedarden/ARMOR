@@ -25,6 +25,10 @@ The required minimum for a new deployment is the README's
 [Required configuration](../README.md#required-configuration) table; everything
 else on this page is optional or backend-dependent.
 
+Before starting a deployment, use `armor config validate` to check the resolved
+environment without contacting the backend. Use `armor config show` to inspect
+each resolved setting and its source.
+
 ## Listeners and operation
 
 | Variable | Required | Default | Description |
@@ -193,6 +197,30 @@ its own `VERIFIER_*` settings are documented in the
 | `ARMOR_SECONDARY_BACKEND_TYPE` | No | — | Legacy selector; only `filesystem` is accepted and it pairs with `ARMOR_SECONDARY_BACKEND_PATH` |
 | `ARMOR_SECONDARY_B2_ENDPOINT`, `ARMOR_SECONDARY_B2_KEY_ID`, `ARMOR_SECONDARY_B2_KEY`, `ARMOR_SECONDARY_B2_BUCKET` | With a B2 secondary | — | B2 secondary credentials kept out of the selector string. `ARMOR_SECONDARY_BACKEND` takes precedence when both forms are set |
 
+ARMOR supports an optional secondary backend for disaster recovery, backup, or
+multi-region replication ([ADR-006](adr/006-dual-backend-replication.md)).
+Writes are replicated asynchronously through a queue; reads always come from
+the primary.
+
+```bash
+ARMOR_SECONDARY_BACKEND="filesystem:/backup/armor"
+ARMOR_SECONDARY_BACKEND="b2:us-east-005:https://s3.us-east-005.backblazeb2.com:KEYID:SECRET:mybucket"
+```
+
+To keep credentials out of the selector string, use the individual variables:
+
+```bash
+ARMOR_SECONDARY_BACKEND=b2
+ARMOR_SECONDARY_B2_ENDPOINT=https://s3.us-east-005.backblazeb2.com
+ARMOR_SECONDARY_B2_KEY_ID=your-key-id
+ARMOR_SECONDARY_B2_KEY=your-key-secret
+ARMOR_SECONDARY_B2_BUCKET=your-bucket
+```
+
+The compact `ARMOR_SECONDARY_BACKEND` form takes precedence over the individual
+variables when both are configured. The failover procedure is in
+[Disaster Recovery](disaster-recovery.md).
+
 ## Bucket aliases
 
 `ARMOR_BUCKET_ALIASES` accepts a comma-separated list of legacy bucket names
@@ -238,29 +266,3 @@ path prefix (`data/pii/` and `archive/` above). Objects without a matching
 route use the default key. Rotate one key at a time with
 `POST /admin/key/rotate?key-id=sensitive`; omitting `key-id` rotates only the
 default key. See the [key rotation runbook](key-rotation-runbook.md).
-
-## Secondary backend
-
-ARMOR supports an optional secondary backend for disaster recovery, backup, or
-multi-region replication ([ADR-006](adr/006-dual-backend-replication.md)).
-Writes are replicated asynchronously through a queue; reads always come from
-the primary.
-
-```bash
-ARMOR_SECONDARY_BACKEND="filesystem:/backup/armor"
-ARMOR_SECONDARY_BACKEND="b2:us-east-005:https://s3.us-east-005.backblazeb2.com:KEYID:SECRET:mybucket"
-```
-
-To keep credentials out of the selector string, use the individual variables:
-
-```bash
-ARMOR_SECONDARY_BACKEND=b2
-ARMOR_SECONDARY_B2_ENDPOINT=https://s3.us-east-005.backblazeb2.com
-ARMOR_SECONDARY_B2_KEY_ID=your-key-id
-ARMOR_SECONDARY_B2_KEY=your-key-secret
-ARMOR_SECONDARY_B2_BUCKET=your-bucket
-```
-
-The compact `ARMOR_SECONDARY_BACKEND` form takes precedence over the individual
-variables when both are configured. The failover procedure is in
-[Disaster Recovery](disaster-recovery.md).

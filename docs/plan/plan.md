@@ -512,38 +512,10 @@ The unwrapped DEK is also cached (it's derived from the wrapped DEK + MEK, which
 
 ## Configuration
 
-ARMOR is configured exclusively via environment variables. No config files.
-
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `ARMOR_LISTEN` | No | `0.0.0.0:9000` | S3 API listen address |
-| `ARMOR_ADMIN_LISTEN` | No | `127.0.0.1:9001` | Admin API listen address (key rotation, canary, audit). Localhost-only by default — never expose externally. |
-| `ARMOR_B2_REGION` | Yes | — | B2 region (e.g., `us-east-005`) |
-| `ARMOR_B2_ENDPOINT` | No | `https://s3.{region}.backblazeb2.com` | B2 S3 endpoint (auto-derived from region) |
-| `ARMOR_B2_ACCESS_KEY_ID` | Yes | — | B2 application key ID |
-| `ARMOR_B2_SECRET_ACCESS_KEY` | Yes | — | B2 application key |
-| `ARMOR_BUCKET` | Yes | — | B2 bucket name. Used for both uploads (direct to B2) and downloads (Cloudflare URL assembly). |
-| `ARMOR_PREFIX` | No | (none) | Optional key prefix applied to all S3 operations before they reach B2. Enables multiple ARMOR deployments to share a single bucket without key collisions. Normalized to a single trailing slash with no leading slash (e.g. `kalshi-tape` → `kalshi-tape/`). When unset or empty, no prefix is applied and behavior is identical to previous versions. See ADR-001. |
-| `ARMOR_CF_DOMAIN` | No | (none) | Cloudflare domain CNAME'd to B2 bucket (e.g., `armor-b2.example.com`). When unset, downloads fall back to direct B2 reads — the zero-egress path is skipped, which is fine for test instances. |
-| `ARMOR_MEK` | Yes | — | Master encryption key, hex-encoded 32 bytes. Generate with `openssl rand -hex 32`. |
-| `ARMOR_AUTH_ACCESS_KEY` | Yes* | — | S3 access key ID for client auth to ARMOR (the default credential). Required unless using named credentials or `ARMOR_AUTH_FILE`. |
-| `ARMOR_AUTH_SECRET_KEY` | Yes* | — | S3 secret access key for client auth to ARMOR (the default credential). Required unless using named credentials or `ARMOR_AUTH_FILE`. |
-| `ARMOR_AUTH_<NAME>_ACCESS_KEY` | No | — | Access key ID for an additional named credential. Any number of named credentials may be defined. |
-| `ARMOR_AUTH_<NAME>_SECRET_KEY` | No | — | Secret key for the named credential (required with its access key) |
-| `ARMOR_AUTH_<NAME>_ACL` | No | (full access) | Prefix ACL for the named credential (see `parseACL`). Empty means full access to the configured bucket. Action verbs: ADR-012, Phase 7. |
-| `ARMOR_BLOCK_SIZE` | No | `65536` | Encryption block size for new uploads (power of 2, ≥4096). Existing files use their own block size from the envelope header. |
-| `ARMOR_WRITER_ID` | No | (hostname) | Provenance chain writer ID. Set per cluster for multi-writer deployments. |
-| `ARMOR_CACHE_MAX_ENTRIES` | No | `10000` | Metadata cache max entries |
-| `ARMOR_CACHE_TTL` | No | `300` | Metadata cache TTL in seconds |
-| `ARMOR_DASHBOARD_USER` | No | (empty) | Dashboard HTTP Basic Auth username |
-| `ARMOR_DASHBOARD_PASS` | No | (empty) | Dashboard HTTP Basic Auth password |
-| `ARMOR_DASHBOARD_TOKEN` | No | (empty) | Dashboard Bearer token for authentication |
-
-ARMOR assembles the Cloudflare download URL as:
-```
-https://${ARMOR_CF_DOMAIN}/file/${ARMOR_BUCKET}/<prefix><key>
-```
-where `<prefix>` is empty when `ARMOR_PREFIX` is unset.
+The current environment-variable reference, including `ARMOR_AUTH_FILE`, is in
+[Configuration Reference](../configuration.md). Use `armor config validate` to
+check a deployment environment offline, or `armor config show` to inspect the
+resolved settings and their sources.
 
 ### Deployment
 

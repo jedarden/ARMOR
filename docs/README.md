@@ -2,6 +2,13 @@
 
 This index organizes all durable documentation by audience. Every file under `docs/` (excluding `archive/`) is linked exactly once. The consistency test in `internal/docsindex` enforces this: it fails when a document is missing from the index, linked more than once, or when a link no longer resolves.
 
+New here? Follow the quickstart path: [README](../README.md) → [60-second
+demo](../README.md#60-second-demo) → [production setup](../README.md#production)
+→ [configuration reference](configuration.md) (the full `ARMOR_*` reference for
+listeners, backend, encryption and keys, client authentication, caches, manifest
+index, dashboard, pre-signed URLs, secondary backend, bucket aliases, and
+multi-key routing), then [operations and runbooks](#operate).
+
 ## Operate
 
 **For operators running and maintaining ARMOR in production.**
@@ -18,7 +25,6 @@ This index organizes all durable documentation by audience. Every file under `do
 - **[Drift Check](drift-check.md)** — Version drift detection between ARMOR instances and rollback coordination
 - **[Fleet Drift Checker](armor-drift-checker.md)** — Continuously scheduled Deployment, live pod comparison, metrics, and escalation
 - **[Authentication](authentication.md)** — Client credential model: default and named credentials, the ACL grammar (`bucket:prefix[:actions]`) and action verbs, append-only writers and the overwrite-as-destruction risk, and the YAML credentials file (`ARMOR_AUTH_FILE`) with its merge rules
-- **[Configuration Reference](configuration.md)** — Full `ARMOR_*` environment-variable reference: listeners, backend, encryption and keys, client authentication, caches, manifest index, dashboard and pre-signed URLs, secondary backend, plus the bucket-alias and multi-key-routing guides; the README keeps only the required minimum
 - **[CLI Command Reference](cli-reference.md)** — Per-command contract for every `armor` subcommand (`serve`, `demo`, `check`, `decrypt`, `verify`, `migrate`, `client-config`, `version`, `help`): flags, inputs and outputs, exit codes, credential/key requirements, and safe-use notes; kept in sync with the binary by smoke tests
 - **[Companion Binary CLI Reference](companion-cli-reference.md)** — Per-binary contract for the two companion binaries (`cmd/restore-verifier`, `cmd/armor-fleet`): flags, environment variables, HTTP surfaces, log output, exit codes, deployment behavior, and safe-use constraints; kept in sync with the binaries by smoke tests
 - **[HTTP API Reference](http-api-reference.md)** — Complete S3, multipart, health/readiness, canary, metrics, presigned/share, admin, and dashboard HTTP contract: methods, authentication, statuses, errors, prefixes, and safe-use constraints; kept in sync with the registered server routes by an inventory test
