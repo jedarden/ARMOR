@@ -151,7 +151,7 @@ plaintext sizes.
 | `DeleteBucket` | `DELETE /<bucket>` | 204 | 403/500. This is destructive and backend-dependent; verify the target bucket before issuing it. |
 | `GetObject` | `GET /<bucket>/<key>`; supports `Range`, conditional headers, and S3 metadata response headers | 200 plaintext; 206 for a valid uncompressed range; 304 for a satisfied not-modified condition | 403/404/412/416/500. Compressed objects do not support byte ranges; ARMOR verifies block HMACs while decrypting. |
 | `HeadObject` | `HEAD /<bucket>/<key>`; supports conditional headers | 200 headers only; 304 for a satisfied not-modified condition | 403/404/412/500. `Content-Length`, ETag, and metadata describe the plaintext object where ARMOR has encryption metadata. |
-| `PutObject` | `PUT /<bucket>/<key>` with plaintext body; optional `If-None-Match: *` | 200 | 400 for invalid compression/arguments, 403, 412 for create-only collision, 500, or 501 when the backend cannot provide atomic conditional writes. Overwrite is replacement, not version-safe archival. The precondition is checked before the body is read when the manifest/HEAD sees an existing object; `If-None-Match: *` is atomic only within one ARMOR process, so create-only writers must be pinned to a single replica. An append-only credential (put without delete) is create-only on every write: a conflict on its own explicit `If-None-Match: *` is 412 `PreconditionFailed`, while an unconditional overwrite attempt is 403 `AccessDenied` (ADR-017). |
+| `PutObject` | `PUT /<bucket>/<key>` with plaintext body; optional `If-None-Match: *` | 200 | 400 for invalid compression/arguments, 403, 412 for create-only collision, 500, or 501 when the backend cannot provide atomic conditional writes or the request carries an unsupported Object Lock header. Overwrite is replacement, not version-safe archival. The precondition is checked before the body is read when the manifest/HEAD sees an existing object; `If-None-Match: *` is atomic only within one ARMOR process, so create-only writers must be pinned to a single replica. An append-only credential (put without delete) is create-only on every write: a conflict on its own explicit `If-None-Match: *` is 412 `PreconditionFailed`, while an unconditional overwrite attempt is 403 `AccessDenied` (ADR-017). |
 | `DeleteObject` | `DELETE /<bucket>/<key>` | 204 | 403/500. It removes the logical object and updates ARMOR bookkeeping; it is not an abort operation. |
 | `CopyObject` | `PUT /<bucket>/<destination>` with `x-amz-copy-source: /<source-bucket>/<source-key>` | 200 XML | 400 invalid/missing source, 403 source or destination ACL denial, 404 source missing, 500. ARMOR re-wraps encrypted object key material for the destination key; authorize both source read and destination write. |
 | `DeleteObjects` | `POST /<bucket>?delete` with S3 `Delete` XML | 200 XML; per-key `AccessDenied` entries can be returned inside a successful batch response | 400 malformed/empty XML, 403/500. ACLs are checked per key. Treat the response's `<Error>` entries as failures even when HTTP is 200. |
@@ -160,12 +160,12 @@ plaintext sizes.
 | `GetBucketLifecycleConfiguration` | `GET /<bucket>?lifecycle` | 200 XML | 403/500. Lifecycle is passed through and is not encrypted by ARMOR. |
 | `PutBucketLifecycleConfiguration` | `PUT /<bucket>?lifecycle` with lifecycle XML | 200 | 403/500. Validate retention policy before applying it; it can delete ciphertext needed for recovery. |
 | `DeleteBucketLifecycleConfiguration` | `DELETE /<bucket>?lifecycle` | 204 | 403/500. Destructive configuration change. |
-| `GetObjectLockConfiguration` | `GET /<bucket>?object-lock` | 200 XML | 403/404/500. Backend configuration is passed through. |
-| `PutObjectLockConfiguration` | `PUT /<bucket>?object-lock` with XML | 200 | 403/500. Use the backend's object-lock semantics; this does not encrypt or version data itself. |
-| `GetObjectRetention` | `GET /<bucket>/<key>?retention` | 200 XML | 403/500. Retention is backend metadata, not an ARMOR envelope field. |
-| `PutObjectRetention` | `PUT /<bucket>/<key>?retention` with XML | 200 | 403/500. Treat changes as a compliance operation. |
-| `GetObjectLegalHold` | `GET /<bucket>/<key>?legal-hold` | 200 XML | 403/500. Backend metadata read. |
-| `PutObjectLegalHold` | `PUT /<bucket>/<key>?legal-hold` with XML | 200 | 403/500. Backend metadata write. |
+| `GetObjectLockConfiguration` | `GET /<bucket>?object-lock` | — | 403/501. Object Lock is unsupported; ARMOR rejects the subresource before calling the backend. |
+| `PutObjectLockConfiguration` | `PUT /<bucket>?object-lock` with XML | — | 403/501. Object Lock is unsupported; ARMOR rejects the subresource before reading or forwarding the XML. |
+| `GetObjectRetention` | `GET /<bucket>/<key>?retention` | — | 403/501. Retention is unsupported and is not an ARMOR envelope field. |
+| `PutObjectRetention` | `PUT /<bucket>/<key>?retention` with XML | — | 403/501. Retention is unsupported; ARMOR rejects the request before reading or forwarding the XML. |
+| `GetObjectLegalHold` | `GET /<bucket>/<key>?legal-hold` | — | 403/501. Legal holds are unsupported. |
+| `PutObjectLegalHold` | `PUT /<bucket>/<key>?legal-hold` with XML | — | 403/501. Legal holds are unsupported; ARMOR rejects the request before reading or forwarding the XML. |
 
 `OPTIONS` on the S3 catch-all is handled as a CORS preflight and returns 200
 without SigV4 authentication. It advertises `GET, PUT, DELETE, HEAD, POST,

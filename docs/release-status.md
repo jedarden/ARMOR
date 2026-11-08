@@ -125,24 +125,20 @@ tag alone.
   classified in `s3_operation.go` for metrics), but a backend denial under a
   bucket-scoped key surfaces as a generic `500 InternalError`, not a
   client-scoped error — observed in the `armor-integration` nightly on the
-  iad-ci scope. Object lock is further limited in two ways. First, the
-  `?object-lock` / `?retention` / `?legal-hold` subresources forward raw XML
-  to B2, so they only behave where the underlying B2 bucket itself is
-  object-lock enabled (B2 allows object lock only at bucket creation).
-  Second, the PUT path does not consume `x-amz-object-lock-mode`,
-  `x-amz-object-lock-retain-until-date`, or `x-amz-object-lock-legal-hold`
-  request headers: a client that asks for WORM retention or a legal hold
-  receives success while the object is stored unprotected and remains
-  deletable — the nightly shows a compliance-mode object deleted without a
-  bypass header. Do not point S3 clients that depend on object lock at
-  ARMOR. Both families are excluded from the exact-SHA `armor-integration`
+  iad-ci scope. Object Lock is unsupported: `?object-lock`, `?retention`,
+  and `?legal-hold` return `501 NotImplemented`, as do
+  `x-amz-object-lock-mode`, `x-amz-object-lock-retain-until-date`, and
+  `x-amz-object-lock-legal-hold` request headers. ARMOR rejects these
+  requests before reading or forwarding their bodies, so clients cannot
+  mistake an unprotected object for a WORM-protected one. Do not point S3
+  clients that depend on object lock at ARMOR. Both families are excluded
+  from the exact-SHA `armor-integration`
   gate's default `skip-tests` (scope decision 2026-10-31, armor-be3d322a;
   pattern in `k8s/iad-ci/argo-workflows/armor-integration-workflowtemplate.yml`)
   so the gate's remaining failures are all claimed-operation failures — the
   exclusion is not evidence that these operations work, and claimed-operation
-  tests must never be added to that pattern. Returning a loud `NotImplemented`
-  for lock headers and subresources instead of silently accepting them is a
-  candidate future change, not a current claim.
+  tests must never be added to that pattern. The explicit rejection is a
+  safety boundary, not an object-lock support claim.
 - **Restore-verifier alerting is not yet a fleet-wide release claim.** The
   GitOps rollout now contains the scrape, rule-evaluation, Alertmanager route,
   and tailnet verification surfaces for all five verifier scopes. The live

@@ -29,11 +29,22 @@ func TestS3OperationForRequest(t *testing.T) {
 		{"get object tagging", httptest.NewRequest(http.MethodGet, "/bucket/key.dat?tagging", nil), "GetObjectTagging"},
 		{"put object tagging", httptest.NewRequest(http.MethodPut, "/bucket/key.dat?tagging", nil), "PutObjectTagging"},
 		{"delete object tagging", httptest.NewRequest(http.MethodDelete, "/bucket/key.dat?tagging", nil), "DeleteObjectTagging"},
+		{"get object retention", httptest.NewRequest(http.MethodGet, "/bucket/key.dat?retention", nil), "GetObjectRetention"},
+		{"get object legal hold", httptest.NewRequest(http.MethodGet, "/bucket/key.dat?legal-hold", nil), "GetObjectLegalHold"},
+		{"get object lock configuration", httptest.NewRequest(http.MethodGet, "/bucket?object-lock", nil), "GetObjectLockConfiguration"},
+		{"put object retention", httptest.NewRequest(http.MethodPut, "/bucket/key.dat?retention", nil), "PutObjectRetention"},
+		{"put object legal hold", httptest.NewRequest(http.MethodPut, "/bucket/key.dat?legal-hold", nil), "PutObjectLegalHold"},
+		{"put object lock configuration", httptest.NewRequest(http.MethodPut, "/bucket?object-lock", nil), "PutObjectLockConfiguration"},
 		{"copy object", func() *http.Request {
 			r := httptest.NewRequest(http.MethodPut, "/bucket/dst", nil)
 			r.Header.Set("x-amz-copy-source", "/bucket/src")
 			return r
 		}(), "CopyObject"},
+		{"put object with object lock header", func() *http.Request {
+			r := httptest.NewRequest(http.MethodPut, "/bucket/key.dat", nil)
+			r.Header.Set("x-amz-object-lock-mode", "COMPLIANCE")
+			return r
+		}(), "PutObject"},
 		{"list objects v2", httptest.NewRequest(http.MethodGet, "/bucket?list-type=2", nil), "ListObjectsV2"},
 		{"list buckets", httptest.NewRequest(http.MethodGet, "/", nil), "ListBuckets"},
 		{"head bucket", httptest.NewRequest(http.MethodHead, "/bucket", nil), "HeadBucket"},

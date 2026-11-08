@@ -17,7 +17,9 @@ import (
 // method, bare host root) so callers can skip labeling rather than invent one.
 //
 // Keep in sync with HandleRoot: every branch there that can reach writeError
-// must map to the handler's operation name here.
+// must map to the handler's operation name here. Unsupported Object Lock
+// requests still use the canonical operation they attempted, so their 501
+// responses remain attributable in armor_errors_total.
 func s3OperationForRequest(r *http.Request) string {
 	q := r.URL.Query()
 

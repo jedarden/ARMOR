@@ -258,10 +258,10 @@ armor-be3d322a; evidence boundary in docs/release-status.md):
   outside the release claim: the integration credential — like every fleet
   credential — is a B2 application key scoped to one existing bucket, so
   bucket create/delete is denied outright and root listing is unclaimed;
-  object-lock subresources require a lock-enabled B2 bucket and ARMOR does
-  not consume `x-amz-object-lock-*` request headers (see the
-  "Bucket administration and S3 object lock are outside the release claim"
-  limitation in docs/release-status.md).
+  ARMOR rejects object-lock subresources and `x-amz-object-lock-*` request
+  headers with `501 NotImplemented` before forwarding them (see the "Bucket
+  administration and S3 object lock are outside the release claim" limitation
+  in docs/release-status.md).
 
 Excluding those families keeps every remaining red a claimed-operation
 failure; the exclusion is not evidence that they work. Claimed-operation

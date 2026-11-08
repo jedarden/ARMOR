@@ -121,8 +121,9 @@ docs/release-status.md, "Bucket administration and S3 object lock are
 outside the release claim"): the opt-in 6 GiB `TestMultipart5GB*` boundary
 pair, and the bucket-administration + object-lock families, which the
 gate's bucket-scoped B2 credential cannot exercise meaningfully (bucket
-create/delete is denied outright by the credential; root `ListBuckets` and
-object lock are outside the release claim). Everything else that fails is a
+create/delete is denied outright by the credential; root `ListBuckets` is
+unclaimed, and ARMOR explicitly rejects object-lock requests with
+`501 NotImplemented`). Everything else that fails is a
 claimed-operation failure and blocks the release. The exact pattern lives
 in the workflow template
 (`k8s/iad-ci/argo-workflows/armor-integration-workflowtemplate.yml`,

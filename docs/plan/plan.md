@@ -787,7 +787,8 @@ ARMOR implements its own S3 XML request/response handling for the ~15 operations
 - [x] ListObjectVersions with per-version decryption
 - [x] Pre-signed URL proxy (ARMOR-signed URLs that trigger decrypt-on-fetch)
 - [x] Streaming encryption for very large uploads (>5 GB)
-- [x] Object Lock / retention passthrough
+- [ ] Object Lock / retention support (out of scope; unsupported headers and
+  subresources return `501 NotImplemented`)
 - [x] Lifecycle rule passthrough
 - [x] Admin API: key management via B2 native API
 - [x] Web dashboard (bucket browser, encryption status, cache stats) — fully implemented with authentication, key rotation UI, and encryption coverage visualization

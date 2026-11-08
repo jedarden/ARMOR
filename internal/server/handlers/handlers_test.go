@@ -3081,10 +3081,11 @@ func TestGetObjectLockConfiguration(t *testing.T) {
 
 	h := handlers.New(cfg, mb, cache, footerCache, km, nil)
 
-	// Test 1: Get object lock config when not set - should return error
+	// The public router rejects this subresource; exercise the lower-level
+	// passthrough method directly so its backend adapter remains covered.
 	req := httptest.NewRequest(http.MethodGet, "/test-bucket?object-lock", nil)
 	w := httptest.NewRecorder()
-	h.HandleRoot(w, req)
+	h.GetObjectLockConfiguration(w, req, "test-bucket")
 
 	// Should return 500 because our mock returns an error when config doesn't exist
 	if w.Code != http.StatusInternalServerError {
@@ -3107,7 +3108,7 @@ func TestGetObjectLockConfiguration(t *testing.T) {
 	req = httptest.NewRequest(http.MethodPut, "/test-bucket?object-lock", strings.NewReader(objectLockXML))
 	req.Header.Set("Content-Type", "application/xml")
 	w = httptest.NewRecorder()
-	h.HandleRoot(w, req)
+	h.PutObjectLockConfiguration(w, req, "test-bucket")
 
 	if w.Code != http.StatusOK {
 		t.Errorf("PUT object-lock: expected status 200, got %d", w.Code)
@@ -3116,7 +3117,7 @@ func TestGetObjectLockConfiguration(t *testing.T) {
 	// GET object lock configuration
 	req = httptest.NewRequest(http.MethodGet, "/test-bucket?object-lock", nil)
 	w = httptest.NewRecorder()
-	h.HandleRoot(w, req)
+	h.GetObjectLockConfiguration(w, req, "test-bucket")
 
 	if w.Code != http.StatusOK {
 		t.Errorf("GET object-lock: expected status 200, got %d", w.Code)
@@ -3165,7 +3166,7 @@ func TestPutObjectLockConfiguration(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPut, "/test-bucket?object-lock", strings.NewReader(objectLockXML))
 	req.Header.Set("Content-Type", "application/xml")
 	w := httptest.NewRecorder()
-	h.HandleRoot(w, req)
+	h.PutObjectLockConfiguration(w, req, "test-bucket")
 
 	if w.Code != http.StatusOK {
 		t.Errorf("PUT object-lock: expected status 200, got %d", w.Code)
@@ -3200,10 +3201,11 @@ func TestGetObjectRetention(t *testing.T) {
 
 	h := handlers.New(cfg, mb, cache, footerCache, km, nil)
 
-	// Test 1: Get retention when not set - should return error
+	// The public router rejects this subresource; exercise the lower-level
+	// passthrough methods directly so their backend adapters remain covered.
 	req := httptest.NewRequest(http.MethodGet, "/test-bucket/test-object.txt?retention", nil)
 	w := httptest.NewRecorder()
-	h.HandleRoot(w, req)
+	h.GetObjectRetention(w, req, "test-bucket", "test-object.txt")
 
 	// Should return 500 because our mock returns an error when config doesn't exist
 	if w.Code != http.StatusInternalServerError {
@@ -3221,7 +3223,7 @@ func TestGetObjectRetention(t *testing.T) {
 	req = httptest.NewRequest(http.MethodPut, "/test-bucket/test-object.txt?retention", strings.NewReader(retentionXML))
 	req.Header.Set("Content-Type", "application/xml")
 	w = httptest.NewRecorder()
-	h.HandleRoot(w, req)
+	h.PutObjectRetention(w, req, "test-bucket", "test-object.txt")
 
 	if w.Code != http.StatusOK {
 		t.Errorf("PUT retention: expected status 200, got %d", w.Code)
@@ -3230,7 +3232,7 @@ func TestGetObjectRetention(t *testing.T) {
 	// GET retention
 	req = httptest.NewRequest(http.MethodGet, "/test-bucket/test-object.txt?retention", nil)
 	w = httptest.NewRecorder()
-	h.HandleRoot(w, req)
+	h.GetObjectRetention(w, req, "test-bucket", "test-object.txt")
 
 	if w.Code != http.StatusOK {
 		t.Errorf("GET retention: expected status 200, got %d", w.Code)
@@ -3274,7 +3276,7 @@ func TestPutObjectRetention(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPut, "/test-bucket/retained-file.txt?retention", strings.NewReader(retentionXML))
 	req.Header.Set("Content-Type", "application/xml")
 	w := httptest.NewRecorder()
-	h.HandleRoot(w, req)
+	h.PutObjectRetention(w, req, "test-bucket", "retained-file.txt")
 
 	if w.Code != http.StatusOK {
 		t.Errorf("PUT retention: expected status 200, got %d", w.Code)
@@ -3310,10 +3312,11 @@ func TestGetObjectLegalHold(t *testing.T) {
 
 	h := handlers.New(cfg, mb, cache, footerCache, km, nil)
 
-	// Test 1: Get legal hold when not set - should return error
+	// The public router rejects this subresource; exercise the lower-level
+	// passthrough methods directly so their backend adapters remain covered.
 	req := httptest.NewRequest(http.MethodGet, "/test-bucket/test-object.txt?legal-hold", nil)
 	w := httptest.NewRecorder()
-	h.HandleRoot(w, req)
+	h.GetObjectLegalHold(w, req, "test-bucket", "test-object.txt")
 
 	// Should return 500 because our mock returns an error when config doesn't exist
 	if w.Code != http.StatusInternalServerError {
@@ -3330,7 +3333,7 @@ func TestGetObjectLegalHold(t *testing.T) {
 	req = httptest.NewRequest(http.MethodPut, "/test-bucket/test-object.txt?legal-hold", strings.NewReader(legalHoldXML))
 	req.Header.Set("Content-Type", "application/xml")
 	w = httptest.NewRecorder()
-	h.HandleRoot(w, req)
+	h.PutObjectLegalHold(w, req, "test-bucket", "test-object.txt")
 
 	if w.Code != http.StatusOK {
 		t.Errorf("PUT legal-hold: expected status 200, got %d", w.Code)
@@ -3339,7 +3342,7 @@ func TestGetObjectLegalHold(t *testing.T) {
 	// GET legal hold
 	req = httptest.NewRequest(http.MethodGet, "/test-bucket/test-object.txt?legal-hold", nil)
 	w = httptest.NewRecorder()
-	h.HandleRoot(w, req)
+	h.GetObjectLegalHold(w, req, "test-bucket", "test-object.txt")
 
 	if w.Code != http.StatusOK {
 		t.Errorf("GET legal-hold: expected status 200, got %d", w.Code)
@@ -3382,7 +3385,7 @@ func TestPutObjectLegalHold(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPut, "/test-bucket/legal-hold-file.txt?legal-hold", strings.NewReader(legalHoldOnXML))
 	req.Header.Set("Content-Type", "application/xml")
 	w := httptest.NewRecorder()
-	h.HandleRoot(w, req)
+	h.PutObjectLegalHold(w, req, "test-bucket", "legal-hold-file.txt")
 
 	if w.Code != http.StatusOK {
 		t.Errorf("PUT legal-hold ON: expected status 200, got %d", w.Code)
@@ -3403,7 +3406,7 @@ func TestPutObjectLegalHold(t *testing.T) {
 	req = httptest.NewRequest(http.MethodPut, "/test-bucket/legal-hold-file.txt?legal-hold", strings.NewReader(legalHoldOffXML))
 	req.Header.Set("Content-Type", "application/xml")
 	w = httptest.NewRecorder()
-	h.HandleRoot(w, req)
+	h.PutObjectLegalHold(w, req, "test-bucket", "legal-hold-file.txt")
 
 	if w.Code != http.StatusOK {
 		t.Errorf("PUT legal-hold OFF: expected status 200, got %d", w.Code)

@@ -48,6 +48,7 @@ const (
 	opOverwriteDelete compatOperation = "overwrite/delete"
 	opMultipart       compatOperation = "multipart"
 	opObjectTagging   compatOperation = "object tagging"
+	opObjectLock      compatOperation = "object lock"
 )
 
 // allOperations is the full column set; the union of the client legs and
@@ -60,6 +61,7 @@ var allOperations = []compatOperation{
 	opOverwriteDelete,
 	opMultipart,
 	opObjectTagging,
+	opObjectLock,
 }
 
 // clientLeg is one row of the matrix: a real S3 client, the package file
@@ -192,6 +194,9 @@ var conformanceFloor = map[compatOperation][]string{
 	// The tagging subresource APIs and the copy tagging directive; no real
 	// client leg exercises them, so the SDK floor is the sole pin.
 	opObjectTagging: {"TestVerify_ObjectTagging"},
+	// Object Lock is intentionally unsupported; the SDK floor pins the loud
+	// 501 response for its headers and subresources.
+	opObjectLock: {"TestVerify_ObjectLockUnsupported"},
 }
 
 // floorFiles hold the conformance floor. They must contain no presence

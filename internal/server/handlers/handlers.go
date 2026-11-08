@@ -359,6 +359,13 @@ func (h *Handlers) HandleRoot(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Object Lock is outside ARMOR's supported S3 contract. Reject its request
+	// headers and subresources before any handler can silently accept them or
+	// pass their XML through to the backend.
+	if h.rejectUnsupportedObjectLock(w, r) {
+		return
+	}
+
 	// Route based on method and path
 	switch r.Method {
 	case http.MethodGet:

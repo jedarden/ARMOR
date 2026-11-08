@@ -23,6 +23,7 @@ import (
 	"io"
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
@@ -509,6 +510,90 @@ func TestVerify_ObjectTagging(t *testing.T) {
 		_, _ = client.DeleteObject(ctx, &s3.DeleteObjectInput{Bucket: &bucket, Key: &dk})
 	}
 	t.Logf("object tagging OK: header round-trip, PUT/GET/DELETE ?tagging, copy COPY/REPLACE, payload intact")
+}
+
+// TestVerify_ObjectLockUnsupported pins the negative contract for every
+// object-lock request shape ARMOR currently sees. A 501 is required instead
+// of a successful PUT or a backend-shaped 500 so clients cannot mistake an
+// unprotected object for a WORM-protected one.
+func TestVerify_ObjectLockUnsupported(t *testing.T) {
+	endpoint := startArmorServer(t)
+	client := newSDKClient(t, endpoint)
+	ctx := context.Background()
+	bucket := compatBucket(t)
+
+	retainUntil := time.Now().UTC().Add(24 * time.Hour)
+	headerCases := []struct {
+		name string
+		fill func(*s3.PutObjectInput)
+	}{
+		{
+			name: "mode",
+			fill: func(input *s3.PutObjectInput) {
+				input.ObjectLockMode = types.ObjectLockModeCompliance
+			},
+		},
+		{
+			name: "retain-until-date",
+			fill: func(input *s3.PutObjectInput) {
+				input.ObjectLockRetainUntilDate = &retainUntil
+			},
+		},
+		{
+			name: "legal-hold",
+			fill: func(input *s3.PutObjectInput) {
+				input.ObjectLockLegalHoldStatus = types.ObjectLockLegalHoldStatusOn
+			},
+		},
+	}
+	for _, tc := range headerCases {
+		t.Run("header-"+tc.name, func(t *testing.T) {
+			key := "verify/conformance/object-lock-" + tc.name
+			input := &s3.PutObjectInput{
+				Bucket: &bucket,
+				Key:    &key,
+				Body:   bytes.NewReader([]byte("must not be stored")),
+			}
+			tc.fill(input)
+			_, err := client.PutObject(ctx, input)
+			assertS3Error(t, err, "NotImplemented", http.StatusNotImplemented)
+		})
+	}
+
+	lockConfig := &types.ObjectLockConfiguration{
+		ObjectLockEnabled: types.ObjectLockEnabledEnabled,
+	}
+	_, err := client.GetObjectLockConfiguration(ctx, &s3.GetObjectLockConfigurationInput{Bucket: &bucket})
+	assertS3Error(t, err, "NotImplemented", http.StatusNotImplemented)
+	_, err = client.PutObjectLockConfiguration(ctx, &s3.PutObjectLockConfigurationInput{
+		Bucket:                  &bucket,
+		ObjectLockConfiguration: lockConfig,
+	})
+	assertS3Error(t, err, "NotImplemented", http.StatusNotImplemented)
+
+	key := "verify/conformance/object-lock-subresource"
+	_, err = client.GetObjectRetention(ctx, &s3.GetObjectRetentionInput{Bucket: &bucket, Key: &key})
+	assertS3Error(t, err, "NotImplemented", http.StatusNotImplemented)
+	_, err = client.PutObjectRetention(ctx, &s3.PutObjectRetentionInput{
+		Bucket: &bucket,
+		Key:    &key,
+		Retention: &types.ObjectLockRetention{
+			Mode:            types.ObjectLockRetentionModeCompliance,
+			RetainUntilDate: &retainUntil,
+		},
+	})
+	assertS3Error(t, err, "NotImplemented", http.StatusNotImplemented)
+
+	_, err = client.GetObjectLegalHold(ctx, &s3.GetObjectLegalHoldInput{Bucket: &bucket, Key: &key})
+	assertS3Error(t, err, "NotImplemented", http.StatusNotImplemented)
+	_, err = client.PutObjectLegalHold(ctx, &s3.PutObjectLegalHoldInput{
+		Bucket: &bucket,
+		Key:    &key,
+		LegalHold: &types.ObjectLockLegalHold{
+			Status: types.ObjectLockLegalHoldStatusOn,
+		},
+	})
+	assertS3Error(t, err, "NotImplemented", http.StatusNotImplemented)
 }
 
 // awsString is a tiny helper for the &str pattern the SDK inputs need.

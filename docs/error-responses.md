@@ -251,6 +251,8 @@ Access-Control-Allow-Headers: Authorization, Content-Type, Range, Content-Length
 | Error Code | Log Detail | When Returned |
 |------------|---------|---------------|
 | `NotImplemented` | The storage backend does not support atomic conditional/append-only writes | A conditional PUT (`If-None-Match: *`) or append-only write targets a backend without atomic create-only support |
+| `NotImplemented` | Object Lock request headers are not supported | A request carries `x-amz-object-lock-mode`, `x-amz-object-lock-retain-until-date`, or `x-amz-object-lock-legal-hold` |
+| `NotImplemented` | Object Lock subresources are not supported | A request uses the `?object-lock`, `?retention`, or `?legal-hold` subresource |
 
 **Headers:** `Content-Type: application/xml` (no CORS headers)
 
