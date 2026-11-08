@@ -143,6 +143,60 @@ Interpretation:
   served uncached; the Cloudflare rows measure edge + origin, not a
   cache-hit path.
 
+## Candidate validation — 2026-11-08
+
+The latest fully published throughput-bearing image was rechecked against the
+live `iad-ci/armor` deployment. This is a valid candidate result, but it is
+not a paired before/after experiment: the object was newly generated, the
+cache and network conditions were different, and the older 0.1.1993 run above
+used different sample counts.
+
+| Field | Value |
+|---|---|
+| Deployment/image | `iad-ci/armor`, `ronaldraygun/armor:0.1.2004@sha256:f39dbcaca179968764324127f15c98233970e5eaae90aaaacacc1a3a517466ab` |
+| Published release commit | `76117a5045bafb9580504eb149f61d37aee2a08a` (`v0.1.2004`) |
+| Harness source | clean ARMOR archive at `7d2b917d`; report VCS stamping was disabled in the temporary export |
+| Runner / object | `codinghome`, Linux amd64, GOMAXPROCS=20; 64 MiB synthetic payload, v3 envelope, 64 KiB blocks |
+| Samples | 1 single-PUT upload, 3 warm full GETs, 2 samples for each of 5 range shapes |
+| Correctness | all 19 ARMOR/B2/Cloudflare rows `verified=true`; multipart read-back SHA-256 `b657d87c...5883bf` matched the source |
+| Cleanup | four concurrent multipart keys deleted; exact-prefix incomplete-upload count: 0 |
+
+Candidate latency and throughput:
+
+| Path / scenario | p50 | p95 | TTFB p50 | Payload MB/s p50 | CF cache |
+|---|---:|---:|---:|---:|---|
+| ARMOR single-PUT upload | 20.87 s | 20.87 s | 20.87 s | 3.1 | — |
+| ARMOR full GET | 20.35 s | 21.07 s | 986 ms | 3.1 | — |
+| ARMOR aligned 64 KiB range | 551 ms | 1.15 s | 442 ms | 0.1 | — |
+| ARMOR unaligned 32 KiB range | 398 ms | 837 ms | 395 ms | <0.1 | — |
+| ARMOR aligned 1 MiB range | 825 ms | 1.68 s | 551 ms | 0.6 | — |
+| ARMOR aligned 8 MiB range | 3.60 s | 4.62 s | 987 ms | 1.7 | — |
+| ARMOR suffix 64 KiB range | 396 ms | 538 ms | 390 ms | 0.1 | — |
+| direct B2 full ciphertext GET | 3.96 s | 4.67 s | 185 ms | 16.2 | — |
+| Cloudflare full ciphertext GET | 3.64 s | 5.54 s | 215 ms | 17.6 | `DYNAMIC` |
+| Cloudflare aligned 8 MiB range | 593 ms | 775 ms | 201 ms | 10.3 | `DYNAMIC` |
+
+Four concurrent clients each uploaded eight 8 MiB parts through the same
+service. Each multipart completed successfully, was read back through an
+ordinary ARMOR GET, and matched the source hash; this run did not retain a
+per-client completion timer, so it is correctness and concurrency evidence,
+not a multipart throughput number.
+
+The remote harness does not observe ARMOR's server CPU/RSS/temp-I/O counters
+or backend request counts. The live resource snapshot recorded zero restarts;
+pod budgets were 2 CPU/2 GiB for `iad-ci`, 1 CPU/1 GiB for `rs-manager`, and
+1 CPU/1 GiB per `ord-devimprint` replica. These are limits, not measured
+consumption, and must not be presented as resource results. The separate
+2026-11-04 transport sweep remains the setting evidence: 1/4/8 MiB fetches
+and h1/h2 were exercised, with warm CF hits near 100 MB/s and MISS-path
+throughput scaling with fetch size. The default remains 1 MiB pending a
+paired production sweep within the pod memory budgets.
+
+Rollback remains the previously deployed `0.1.1993` image
+(`sha256:1845b2b4...fddc9a60`). No speedup claim is made from the 0.1.1993
+comparison until the same-object, same-network baseline/candidate run records
+request counts, variance, CPU/RSS/temp-I/O, and concurrent multipart timings.
+
 ## Release-status boundary
 
 The register cites the 2026-10-24 figures with these limits: one runner and
