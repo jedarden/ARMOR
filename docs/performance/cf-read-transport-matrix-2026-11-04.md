@@ -115,9 +115,72 @@ supported locally.
   (h1 ≈ h2; fetch-size scaling; HIT ≫ MISS) are the robust findings — same
   caveat as ADR-013's original measurements.
 
-## In-cluster confirmation
+## Live `iad-ci` confirmation — 2026-11-08
 
-Filled from the `armor-cf-read-probe` workflow run on iad-ci (see the bead
-for the exact commands); it anchors the local vantage to the production one:
-same fixed object, direct-CF arms from an iad-ci pod, plus through-armor
-arms against the live `iad-ci/armor` service.
+The named one-shot `armor-cf-read-probe-mwdc6` workflow is no longer present
+in the Argo API, and its archive endpoint requires credentials unavailable to
+the read-only observer. No result from that run is claimed here. A bounded
+live confirmation was run against the deployed `iad-ci/armor` service over its
+tailnet S3 endpoint, using the same probe harness and a temporary ARMOR-written
+object. This anchors the production path, but the runner was `codinghome`, not
+an in-cluster pod; the distinction matters for absolute network numbers.
+
+Object and deployment:
+
+- ARMOR-managed object: `probe/armor-409733e3/via-armor-32m.bin`, 32 MiB
+  plaintext, uploaded and deleted through the live ARMOR S3 endpoint.
+- Deployment: `iad-ci/armor`, image `ronaldraygun/armor:0.1.2004`, one pod,
+  current default transport (HTTP/2); `ARMOR_CF_DISABLE_HTTP2` was not set.
+- Direct-CF controls used the 256 MiB raw object
+  `probe/armor-409733e3/cfread-256mib.bin` before cleanup.
+
+Commands (credentials were read into a mode-600 temporary environment file
+from OpenBao `secret/rs-manager/iad-ci/armor`; values are intentionally not
+shown):
+
+```bash
+# Direct Cloudflare h1/h2 matrix used for the protocol comparison.
+go run ./tests/performance/cfreadprobe -mode=matrix \
+  -cf-base https://b2-us-west-002.ardenone.com/file/iad-ci \
+  -key probe/armor-409733e3/cfread-256mib.bin -object-mib 256 \
+  -proto h2,h1 -concurrency 4,16,32 -fetch-mib 1,4,8 \
+  -nocache -duration 15
+
+# Live ARMOR production-path confirmation (current H2 deployment).
+go run ./tests/performance/cfreadprobe -mode=matrix \
+  -cf-base https://b2-us-west-002.ardenone.com/file/iad-ci \
+  -armor-base https://armor-iad-ci-ts.ardenone.com:8444 \
+  -bucket iad-ci -key probe/armor-409733e3/via-armor-32m.bin \
+  -object-mib 32 -proto h2 -concurrency 16 -fetch-mib 1,8 \
+  -duration 5
+```
+
+The live results that completed were:
+
+| Path | concurrency | fetch | protocol | MB/s | requests / bytes | cache / status |
+|---|---:|---:|---|---:|---:|---|
+| direct CF control | 16 | 1 MiB | HTTP/2 | 84.79 | 424 / 424 MiB | HIT / 2xx |
+| direct CF control | 16 | 8 MiB | HTTP/2 | 105.59 | 66 / 528 MiB | HIT / 2xx |
+| live ARMOR | 16 | 1 MiB | HTTP/2 | **3.20** | 16 / 16 MiB | uncached ARMOR path / 2xx |
+
+The live ARMOR 8 MiB arm did not finish inside the 80-second bounded command
+timeout and is deliberately recorded as incomplete, not as a zero or an
+imputed rate. The live 1 MiB result reproduces the production ceiling shape:
+16 successful backend-sized reads in five seconds, with TTFB p50 4.73 s and
+p90 4.86 s. The direct-CF control is fast because it was a warm edge HIT; it
+is not a comparison against the ARMOR MISS path.
+
+The complete protocol matrix above remains the decision evidence: h1 and h2
+were within noise for all 18 MISS arms and the HIT controls, including the
+upload-burst arms. The live ARMOR endpoint was left unchanged, so no live h1
+through-ARMOR arm was authorized or claimed. The temporary ARMOR object was
+deleted through ARMOR; the raw probe prefix cleanup deleted 225 B2 objects
+with status 204.
+
+Decision: keep HTTP/2 as the default. The h1 hypothesis is falsified; neither
+more TCP connections nor the observed upload burst produced a 2x improvement.
+The next bottleneck is origin-fetch latency on the Cloudflare MISS path. The
+measured lever is increasing `ARMOR_READ_FETCH_SIZE` (1 MiB to 4–8 MiB), with
+`ARMOR_READ_BACKEND_LIMIT × fetch_size` memory and origin rate-limit behavior
+requiring a separate deployment-sizing decision before changing the fleet
+default.
