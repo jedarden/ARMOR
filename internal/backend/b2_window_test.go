@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -282,6 +283,12 @@ func TestB2BackendReadBufferBudgetBoundsConcurrentSlowReaders(t *testing.T) {
 }
 
 func TestB2BackendReadBufferPoolReusesFixedBuffer(t *testing.T) {
+	// sync.Pool may discard entries during GC. Disable GC for this short
+	// contract check so the assertion tests reuse rather than an optional
+	// optimization that the runtime is allowed to drop.
+	previousGC := debug.SetGCPercent(-1)
+	defer debug.SetGCPercent(previousGC)
+
 	b := &B2Backend{
 		readBlockSize:    8,
 		readBufferBudget: newReadBufferBudget(64),
