@@ -192,10 +192,39 @@ and h1/h2 were exercised, with warm CF hits near 100 MB/s and MISS-path
 throughput scaling with fetch size. The default remains 1 MiB pending a
 paired production sweep within the pod memory budgets.
 
-Rollback remains the previously deployed `0.1.1993` image
-(`sha256:1845b2b4...fddc9a60`). No speedup claim is made from the 0.1.1993
-comparison until the same-object, same-network baseline/candidate run records
-request counts, variance, CPU/RSS/temp-I/O, and concurrent multipart timings.
+## Paired release check — 2026-11-08
+
+The published `v0.1.2006` image was briefly promoted through GitOps commit
+`430deb475` to the representative `iad-ci/armor` deployment. The baseline was
+the prior live `0.1.2004` digest; both runs used the same codinghome Linux
+amd64 runner, GOMAXPROCS=20, B2 region/bucket, ARMOR and Cloudflare endpoints,
+64 MiB deterministic v3 payload shape, and one sample per row. The harness
+generated different temporary keys (the payload shape was the same), so this
+is a controlled environment comparison, not a strict same-object experiment.
+
+| ARMOR service row | `0.1.2004` p50 / p95 / TTFB / MB/s | `0.1.2006` p50 / p95 / TTFB / MB/s | change |
+|---|---:|---:|---:|
+| single-PUT 64 MiB | 24.57 s / 24.57 s / 24.57 s / 2.6 | 211.25 s / 211.25 s / 211.25 s / 0.3 | severe regression |
+| full GET 64 MiB | 16.74 s / 16.74 s / 0.43 s / 3.8 | 27.45 s / 27.45 s / 2.27 s / 2.3 | slower |
+| aligned 64 KiB range | 0.63 s / 0.63 s / 0.62 s / 0.1 | 1.46 s / 1.46 s / 1.35 s / <0.1 | slower |
+| aligned 1 MiB range | 0.95 s / 0.95 s / 0.49 s / 1.1 | 1.96 s / 1.96 s / 1.27 s / 0.5 | slower |
+| aligned 8 MiB range | 3.57 s / 3.57 s / 1.48 s / 2.2 | 6.08 s / 6.08 s / 3.34 s / 1.3 | slower |
+
+All 19 candidate rows and all 19 baseline rows returned the expected status,
+byte count, and SHA-256 verification; Cloudflare reported `DYNAMIC` for every
+candidate row. With one sample, p95 equals p50 and variance is unmeasured.
+The harness does not expose server/backend request counts, CPU/RSS, or temp-I/O;
+`kubectl top` was forbidden for this observer, while the pod remained within
+its declared 2 CPU / 2 GiB budget with zero restarts. The concurrent multipart
+timing requirement therefore remains unproven; the run above is single-client
+only.
+
+Because this controlled check found a large write regression, the fleet was
+rolled back through GitOps commit `010af05df` (merged and pushed as
+`471b71285`) to the known-good `0.1.2004` server and restore-verifier digests.
+No `0.1.2006` speedup claim is made. The rollback target is
+`0.1.2004@sha256:f39dbcaca179...` for ARMOR and
+`0.1.2004@sha256:572046ce8f6...` for restore-verifier.
 
 ## Release-status boundary
 
