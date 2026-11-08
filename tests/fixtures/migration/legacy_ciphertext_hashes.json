@@ -1,0 +1,29 @@
+{
+  "generator": "standalone_generator.go",
+  "fixtures": {
+    "v1_multipart/non_uniform_parts/stored_ciphertext.bin": {
+      "bytes": 15728640,
+      "sha256": "fcacac7df3efbed02f7495d6338739840188bada7114b1dde5d357bab7fb3bee"
+    },
+    "v1_multipart/uniform_parts/stored_ciphertext.bin": {
+      "bytes": 15728640,
+      "sha256": "fcacac7df3efbed02f7495d6338739840188bada7114b1dde5d357bab7fb3bee"
+    },
+    "v1_multipart/variable_final_part/stored_ciphertext.bin": {
+      "bytes": 15728640,
+      "sha256": "fcacac7df3efbed02f7495d6338739840188bada7114b1dde5d357bab7fb3bee"
+    },
+    "v2_multipart/non_uniform_parts/stored_ciphertext.bin": {
+      "bytes": 15728640,
+      "sha256": "9709b6e2acb4599b446e7b32c6f540362f16e542e4a8b6bb41ce170cdf7efccb"
+    },
+    "v2_multipart/uniform_parts/stored_ciphertext.bin": {
+      "bytes": 15728640,
+      "sha256": "9709b6e2acb4599b446e7b32c6f540362f16e542e4a8b6bb41ce170cdf7efccb"
+    },
+    "v2_multipart/variable_final_part/stored_ciphertext.bin": {
+      "bytes": 15728640,
+      "sha256": "9709b6e2acb4599b446e7b32c6f540362f16e542e4a8b6bb41ce170cdf7efccb"
+    }
+  }
+}

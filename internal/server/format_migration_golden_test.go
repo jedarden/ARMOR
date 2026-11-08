@@ -56,9 +56,11 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/jedarden/armor/internal/backend"
@@ -125,6 +127,39 @@ func goldenFixtureRoot(t *testing.T) string {
 	if info, err := os.Stat(root); err != nil || !info.IsDir() {
 		t.Fatalf("fixture root not found at %s", root)
 	}
+	return root
+}
+
+var generatedLegacyFixture = struct {
+	sync.Mutex
+	roots map[*testing.T]string
+}{roots: make(map[*testing.T]string)}
+
+// generatedLegacyFixtureRoot materializes the frozen standalone generator's
+// output once per top-level test. The six large multipart ciphertexts are not
+// committed; tests that load one of those files use this generated copy while
+// all metadata and sidecars continue to come from the committed fixture tree.
+func generatedLegacyFixtureRoot(t *testing.T) string {
+	t.Helper()
+	generatedLegacyFixture.Lock()
+	defer generatedLegacyFixture.Unlock()
+	if root, ok := generatedLegacyFixture.roots[t]; ok {
+		return root
+	}
+
+	root := t.TempDir()
+	generator := filepath.Join("..", "..", "tests", "fixtures", "migration", "standalone_generator.go")
+	cmd := exec.Command("go", "run", generator, root)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("generate legacy golden ciphertexts: %v\n%s", err, out)
+	}
+	generatedLegacyFixture.roots[t] = root
+	t.Cleanup(func() {
+		generatedLegacyFixture.Lock()
+		delete(generatedLegacyFixture.roots, t)
+		generatedLegacyFixture.Unlock()
+	})
 	return root
 }
 
@@ -197,7 +232,15 @@ func loadGoldenObjectMetadata(t *testing.T, dir string) map[string]string {
 
 func loadGoldenFixtureBytes(t *testing.T, dir string) (data []byte, sidecar []byte) {
 	t.Helper()
+	root := goldenFixtureRoot(t)
 	data, err := os.ReadFile(filepath.Join(dir, "stored_ciphertext.bin"))
+	if os.IsNotExist(err) {
+		rel, relErr := filepath.Rel(root, dir)
+		if relErr != nil {
+			t.Fatalf("locate generated stored_ciphertext.bin: %v", relErr)
+		}
+		data, err = os.ReadFile(filepath.Join(generatedLegacyFixtureRoot(t), rel, "stored_ciphertext.bin"))
+	}
 	if err != nil {
 		t.Fatalf("stored_ciphertext.bin: %v", err)
 	}
