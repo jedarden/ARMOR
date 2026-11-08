@@ -4265,7 +4265,6 @@ func TestURLDecodeHivePartitionKeys(t *testing.T) {
 // mockSlowReplicationQueue is a mock replication.Enqueuer that simulates slow enqueue operations.
 // It tracks enqueue timing for testing async behavior.
 type mockSlowReplicationQueue struct {
-	mu               sync.Mutex
 	enqueueDelay     time.Duration
 	enqueueCallCount atomic.Int32
 	enqueueStartChan chan struct{} // Signals when enqueue starts

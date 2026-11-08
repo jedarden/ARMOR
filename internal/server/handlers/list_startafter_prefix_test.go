@@ -48,7 +48,7 @@ func (s *startAfterCaptureBackend) ListWithStartAfter(ctx context.Context, bucke
 	s.capturedStartAfter = startAfter
 	s.listWithStartAfterCalls++
 	s.mu.Unlock()
-	return s.mockBackend.List(ctx, bucket, prefix, delimiter, continuationToken, maxKeys)
+	return s.List(ctx, bucket, prefix, delimiter, continuationToken, maxKeys)
 }
 
 func (s *startAfterCaptureBackend) capture() (prefix, delimiter, contToken, startAfter string, calls int) {

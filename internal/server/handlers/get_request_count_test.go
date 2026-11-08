@@ -346,7 +346,7 @@ func assertProbePair(t *testing.T, cb *callCountingBackend, manifestCall, headCa
 			context, len(calls), formatCalls(calls))
 	}
 	first, second := calls[0], calls[1]
-	if !((first == manifestCall && second == headCall) || (first == headCall && second == manifestCall)) {
+	if (first != manifestCall || second != headCall) && (first != headCall || second != manifestCall) {
 		t.Fatalf("%s: first two backend calls should be the manifest probe and the overlapped HEAD in either order:\n  got  %s, %s\n  want %s / %s\nfull recorded sequence: %s",
 			context, formatCalls([]backendCall{first}), formatCalls([]backendCall{second}),
 			formatCalls([]backendCall{manifestCall}), formatCalls([]backendCall{headCall}), formatCalls(calls))

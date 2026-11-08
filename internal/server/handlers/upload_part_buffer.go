@@ -26,7 +26,7 @@ func readUploadPartBody(body io.Reader, contentLength int64) (data []byte, diges
 		source = candidate
 	}
 	hasher := sha256.New()
-	var reader io.Reader = body
+	reader := body
 	if source == nil {
 		reader = io.TeeReader(body, hasher)
 	}
@@ -36,12 +36,12 @@ func readUploadPartBody(body io.Reader, contentLength int64) (data []byte, diges
 	} else {
 		if contentLength == pooledUploadPartSize {
 			if reused := uploadPartBodyPool.Get(); reused != nil {
-				data = reused.([]byte)[:pooledUploadPartSize]
+				data = (*reused.(*[]byte))[:pooledUploadPartSize]
 			} else {
 				data = make([]byte, pooledUploadPartSize)
 			}
 			pooled := data
-			release = func() { uploadPartBodyPool.Put(pooled) }
+			release = func() { uploadPartBodyPool.Put(&pooled) }
 		} else {
 			data = make([]byte, int(contentLength))
 		}

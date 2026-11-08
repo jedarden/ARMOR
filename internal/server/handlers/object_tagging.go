@@ -140,7 +140,7 @@ func validateTagSetEntries(entries []tagEntry) (string, error) {
 			return "", fmt.Errorf("duplicate tag key %q", e.Key)
 		}
 		seen[e.Key] = struct{}{}
-		tags = append(tags, objectTag{Key: e.Key, Value: e.Value})
+		tags = append(tags, objectTag(e))
 	}
 	if err := validateTagCount(tags); err != nil {
 		return "", err
@@ -201,7 +201,7 @@ func (h *Handlers) GetObjectTagging(w http.ResponseWriter, r *http.Request, buck
 
 	resp := taggingResponse{TagSet: []tagEntry{}}
 	for _, t := range storedTags(info.Metadata) {
-		resp.TagSet = append(resp.TagSet, tagEntry{Key: t.Key, Value: t.Value})
+		resp.TagSet = append(resp.TagSet, tagEntry(t))
 	}
 	output, err := xml.Marshal(resp)
 	if err != nil {

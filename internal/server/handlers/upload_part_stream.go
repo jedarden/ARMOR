@@ -147,7 +147,7 @@ func spoolUploadPartBody(body io.Reader, contentLength int64) (*uploadPartSource
 		source = candidate
 	}
 	hasher := sha256.New()
-	var reader io.Reader = body
+	reader := body
 	if source == nil {
 		reader = io.TeeReader(body, hasher)
 	}

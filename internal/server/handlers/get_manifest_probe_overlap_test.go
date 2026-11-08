@@ -169,7 +169,7 @@ func TestGetObjectOverlapManifestWinsOverLegacyObject(t *testing.T) {
 		t.Fatalf("GET returned %d: %s", getW.Code, getW.Body.String())
 	}
 	if !bytes.Equal(getW.Body.Bytes(), plaintext) {
-		t.Fatalf("GET content mismatch: got %q, want %q", string(getW.Body.Bytes()), string(plaintext))
+		t.Fatalf("GET content mismatch: got %q, want %q", getW.Body.String(), string(plaintext))
 	}
 	if gotCT := getW.Header().Get("Content-Type"); gotCT != "application/x-manifest-wins" {
 		t.Fatalf("GET served Content-Type %q — the legacy HEAD's metadata won instead of the manifest's", gotCT)
@@ -269,7 +269,7 @@ func TestGetObjectOverlapIgnoresProbeHead404(t *testing.T) {
 		t.Fatalf("GET returned %d with the manifest present despite the probe HEAD's 404: %s", getW.Code, getW.Body.String())
 	}
 	if !bytes.Equal(getW.Body.Bytes(), plaintext) {
-		t.Fatalf("GET content mismatch: got %q, want %q", string(getW.Body.Bytes()), string(plaintext))
+		t.Fatalf("GET content mismatch: got %q, want %q", getW.Body.String(), string(plaintext))
 	}
 	if n := pb.probeMisses; n != 1 {
 		t.Fatalf("probe HEAD misses = %d, want exactly 1 (the overlapped probe, not the freshness HEAD)", n)

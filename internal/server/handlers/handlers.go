@@ -3616,12 +3616,9 @@ func (h *Handlers) DeleteObjects(w http.ResponseWriter, r *http.Request, bucket 
 		return
 	}
 
-	if len(deleteReq.Objects) == 0 {
-		// S3 accepts an empty batch and returns an empty DeleteResult.  This is
-		// useful to clients that construct a batch from an optional input set.
-		// Continue through the ordinary response path so quiet mode and the
-		// XML shape stay identical to a successful non-empty request.
-	}
+	// S3 accepts an empty batch and returns an empty DeleteResult. Continue
+	// through the ordinary response path so quiet mode and the XML shape stay
+	// identical to a successful non-empty request.
 
 	// Extract original keys from request and prepare prefixed keys for backend
 	originalKeys := make([]string, len(deleteReq.Objects))
@@ -4364,8 +4361,6 @@ func (h *Handlers) UploadPart(w http.ResponseWriter, r *http.Request, bucket, ke
 		releasePartBody()
 		releasePartBody = nil
 	}
-	plaintext = nil
-
 	// Upload encrypted part to B2 (v2; v3 uploaded from its replayable
 	// reader above). Prefixed for the same reason as CreateMultipartUpload
 	// above — the part must be addressed by the same storage key the upload
@@ -5053,7 +5048,7 @@ func (h *Handlers) CompleteMultipartUpload(w http.ResponseWriter, r *http.Reques
 
 		// Store cumulative part sizes as JSON: map[partNumber]offset
 		// This allows GET to reconstruct which parts contribute to each block
-		if state.CumulativePartSizes != nil && len(state.CumulativePartSizes) > 0 {
+		if len(state.CumulativePartSizes) > 0 {
 			// Convert to JSON for storage
 			cumulativeJSON, err := json.Marshal(state.CumulativePartSizes)
 			if err != nil {

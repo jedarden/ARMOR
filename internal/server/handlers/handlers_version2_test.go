@@ -115,7 +115,6 @@ func TestVersion2EncryptionMultipartUpload(t *testing.T) {
 
 	bucket := "test-bucket"
 	key := "multipart-key"
-	uploadID := "test-upload-id"
 
 	// Step 1: Create multipart upload
 	createReqBody := `<CreateMultipartUploadRequest xmlns="http://s3.amazonaws.com/doc/2006-03-01/"></CreateMultipartUploadRequest>`
@@ -138,7 +137,7 @@ func TestVersion2EncryptionMultipartUpload(t *testing.T) {
 		t.Fatalf("failed to parse CreateMultipartUpload result: %v", err)
 	}
 
-	uploadID = createResult.UploadID
+	uploadID := createResult.UploadID
 
 	// Step 2: Upload part 1
 	// ADR-015 requires a multi-part upload's uniform part size to meet B2's

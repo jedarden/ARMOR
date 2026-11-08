@@ -470,6 +470,13 @@ func TestUploadPartV3BudgetWaitCanceledRequestReturns(t *testing.T) {
 
 // unknownLengthPartRequest builds an UploadPart request whose body has no
 // Content-Length (chunked encoding), forcing the spill path.
+type uploadPartContextKey string
+
+const (
+	uploadPartBucketKey uploadPartContextKey = "bucket"
+	uploadPartObjectKey uploadPartContextKey = "key"
+)
+
 func unknownLengthPartRequest(ctx context.Context, bucket, key, uploadID string, partNumber int, plaintext []byte) *http.Request {
 	req := httptest.NewRequest(http.MethodPut,
 		fmt.Sprintf("/%s?partNumber=%d&uploadId=%s", key, partNumber, uploadID),
@@ -478,7 +485,7 @@ func unknownLengthPartRequest(ctx context.Context, bucket, key, uploadID string,
 	req.URL.RawQuery = fmt.Sprintf("partNumber=%d&uploadId=%s", partNumber, uploadID)
 	req.Header.Set("Content-Type", "application/octet-stream")
 	req.ContentLength = -1
-	return req.WithContext(context.WithValue(context.WithValue(ctx, "bucket", bucket), "key", key))
+	return req.WithContext(context.WithValue(context.WithValue(ctx, uploadPartBucketKey, bucket), uploadPartObjectKey, key))
 }
 
 // TestUploadPartV3SpilledUnknownLengthMatchesPooled uploads the same

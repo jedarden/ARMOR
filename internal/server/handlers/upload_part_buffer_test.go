@@ -59,8 +59,8 @@ func TestReadUploadPartBodyUnderstatedPooledLengthConcurrent(t *testing.T) {
 			default:
 			}
 			if reused := uploadPartBodyPool.Get(); reused != nil {
-				buffer := reused.([]byte)
-				buffer[0] ^= 0xff
+				buffer := reused.(*[]byte)
+				(*buffer)[0] ^= 0xff
 				uploadPartBodyPool.Put(buffer)
 			}
 			runtime.Gosched()

@@ -437,6 +437,14 @@ func TestMultipartV3IndependentPartCounter(t *testing.T) {
 
 // Helper functions
 
+type multipartContextKey string
+
+const (
+	multipartBucketKey   multipartContextKey = "bucket"
+	multipartObjectKey   multipartContextKey = "key"
+	multipartUploadIDKey multipartContextKey = "uploadId"
+)
+
 func createUploadRequest(ctx context.Context, bucket, key, contentType string) *http.Request {
 	req := httptest.NewRequest("POST", "/"+key+"?uploads", nil)
 	req.URL.Path = "/" + key
@@ -454,10 +462,10 @@ func createUploadPartRequest(ctx context.Context, bucket, key, uploadID string, 
 }
 
 func addContextToRequest(ctx context.Context, req *http.Request, bucket, key, uploadID string) *http.Request {
-	ctx = context.WithValue(ctx, "bucket", bucket)
-	ctx = context.WithValue(ctx, "key", key)
+	ctx = context.WithValue(ctx, multipartBucketKey, bucket)
+	ctx = context.WithValue(ctx, multipartObjectKey, key)
 	if uploadID != "" {
-		ctx = context.WithValue(ctx, "uploadId", uploadID)
+		ctx = context.WithValue(ctx, multipartUploadIDKey, uploadID)
 	}
 	return req.WithContext(ctx)
 }
