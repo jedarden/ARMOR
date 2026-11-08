@@ -125,17 +125,17 @@ func New(cfg *config.Config) (*Server, error) {
 		}).Info("primary backend initialized (filesystem)")
 	case "b2":
 		// B2 backend as primary (default)
-		primaryBackend, err = backend.NewB2Backend(context.Background(), backend.B2Config{
-			Region:             cfg.B2Region,
-			Endpoint:           cfg.B2Endpoint,
-			AccessKeyID:        cfg.B2AccessKeyID,
-			SecretKey:          cfg.B2SecretAccessKey,
-			CFDomain:           cfg.CFDomain,
-			CFDisableHTTP2:     cfg.CFDisableHTTP2,
-			ReadConcurrency:    cfg.ReadConcurrency,
-			ReadFetchSize:      cfg.ReadFetchSize,
-			ReadRequestTimeout: cfg.ReadRequestTimeout,
-			ReadBackendLimit:   cfg.ReadBackendLimit,
+		b2Config := backend.B2Config{
+			Region:                 cfg.B2Region,
+			Endpoint:               cfg.B2Endpoint,
+			AccessKeyID:            cfg.B2AccessKeyID,
+			CFDomain:               cfg.CFDomain,
+			CFDisableHTTP2:         cfg.CFDisableHTTP2,
+			ReadConcurrency:        cfg.ReadConcurrency,
+			ReadFetchSize:          cfg.ReadFetchSize,
+			ReadRequestTimeout:     cfg.ReadRequestTimeout,
+			ReadBackendLimit:       cfg.ReadBackendLimit,
+			ReadBufferMemoryBudget: cfg.ReadBufferMemoryBudget,
 
 			ReadRetryAttempts:   cfg.ReadRetryAttempts,
 			ReadRetryBackoff:    cfg.ReadRetryBackoff,
@@ -145,7 +145,8 @@ func New(cfg *config.Config) (*Server, error) {
 			CFStaleFallback: cfg.CFStaleFallback,
 			CFVersionPinned: cfg.CFVersionPinned,
 			KeyPrefix:       cfg.Prefix,
-		})
+		}
+		primaryBackend, err = backend.NewB2Backend(context.Background(), backend.WithB2SecretKey(b2Config, cfg.B2SecretAccessKey))
 		if err != nil {
 			return nil, fmt.Errorf("failed to create B2 backend: %w", err)
 		}
@@ -1357,7 +1358,7 @@ func (s *Server) exportKey(w http.ResponseWriter, r *http.Request) {
 			"region":     s.config.B2Region,
 			"endpoint":   s.config.B2Endpoint,
 			"access_key": s.config.B2AccessKeyID,
-			"secret_key": s.config.B2SecretAccessKey,
+			"secret_key": "<redacted>",
 			"bucket":     s.config.Bucket,
 		},
 		"format":  "hex",

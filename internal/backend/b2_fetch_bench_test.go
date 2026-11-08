@@ -49,6 +49,7 @@ func BenchmarkB2BackendGetRangeFetchWindow(b *testing.B) {
 						readConcurrency: conc,
 					}
 					b.SetBytes(objectSize)
+					b.ReportAllocs()
 					b.ResetTimer()
 					for i := 0; i < b.N; i++ {
 						body, _, err := backend.GetRangeWithHeaders(context.Background(), "bucket", "key", 0, objectSize)

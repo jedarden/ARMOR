@@ -229,6 +229,23 @@ func TestMetricsPrometheusFormat(t *testing.T) {
 	}
 }
 
+func TestReadBufferBudgetMetricsPrometheusExport(t *testing.T) {
+	m := NewMetrics()
+	m.RecordReadBufferBudgetWait(42*time.Millisecond, true)
+	m.RecordReadBufferBudgetWait(0, false)
+	output := m.PrometheusFormat()
+	for _, want := range []string{
+		"# TYPE armor_read_buffer_budget_saturation_total counter",
+		"armor_read_buffer_budget_saturation_total 1",
+		"# TYPE armor_read_buffer_budget_wait_ms histogram",
+		`armor_read_buffer_budget_wait_ms_count{operation="fetch"} 1`,
+	} {
+		if !strings.Contains(output, want) {
+			t.Errorf("Prometheus output missing %q:\n%s", want, output)
+		}
+	}
+}
+
 // TestMetricsRestoreBucketGauges verifies the Phase 6a per-bucket restorability
 // gauges that back the restore-age and verification-failure PrometheusRules are
 // emitted with a bucket label. If these series go missing, the restorability

@@ -1956,6 +1956,7 @@ func TestLoadRejectsUnparsableIntegers(t *testing.T) {
 		{"ARMOR_READ_CONCURRENCY", "sixteen"},
 		{"ARMOR_READ_FETCH_SIZE", "1MB"},
 		{"ARMOR_READ_BACKEND_LIMIT", "many"},
+		{"ARMOR_READ_BUFFER_MEMORY_BUDGET", "large"},
 		{"ARMOR_SMALL_OBJECT_FETCH_BYTES", "big"},
 		{"ARMOR_UPLOAD_PART_MEMORY_BUDGET", "512mb"},
 		{"ARMOR_READ_RETRY_ATTEMPTS", "three"},
@@ -1981,6 +1982,26 @@ func TestLoadRejectsUnparsableIntegers(t *testing.T) {
 				t.Errorf("Load() error %q does not name %s", err, tc.env)
 			}
 		})
+	}
+}
+
+func TestReadBufferMemoryBudgetDefaultAndOverride(t *testing.T) {
+	setEnv(t, minimalEnv()...)
+	os.Unsetenv("ARMOR_READ_BUFFER_MEMORY_BUDGET")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() default: %v", err)
+	}
+	if cfg.ReadBufferMemoryBudget != defaultReadBufferMemoryBudget() {
+		t.Fatalf("ReadBufferMemoryBudget default = %d, want %d", cfg.ReadBufferMemoryBudget, defaultReadBufferMemoryBudget())
+	}
+	t.Setenv("ARMOR_READ_BUFFER_MEMORY_BUDGET", "67108864")
+	cfg, err = Load()
+	if err != nil {
+		t.Fatalf("Load() override: %v", err)
+	}
+	if cfg.ReadBufferMemoryBudget != 67108864 {
+		t.Fatalf("ReadBufferMemoryBudget override = %d, want 67108864", cfg.ReadBufferMemoryBudget)
 	}
 }
 

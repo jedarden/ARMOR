@@ -201,3 +201,103 @@ func TestB2BackendReadBudgetCapsSimultaneousRequests(t *testing.T) {
 		t.Fatalf("peak simultaneous requests = %d, want <= 3", p)
 	}
 }
+
+// Slow readers must not let the reorder window turn into an unbounded byte
+// reservation. The request budget above bounds HTTP calls; this test pins the
+// separate global backing-buffer budget across independent clients.
+func TestB2BackendReadBufferBudgetBoundsConcurrentSlowReaders(t *testing.T) {
+	const (
+		blockSize = 8
+		clients   = 4
+		blocks    = 32
+	)
+	object := bytes.Repeat([]byte("01234567"), blocks)
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start, end := testRange(t, r)
+		w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, end, len(object)))
+		w.WriteHeader(http.StatusPartialContent)
+		_, _ = w.Write(object[start : end+1])
+	}))
+	defer server.Close()
+
+	budgetBytes := int64(5 * (blockSize + 1))
+	budget := newReadBufferBudget(budgetBytes)
+	b := &B2Backend{
+		cfDomain:         strings.TrimPrefix(server.URL, "https://"),
+		httpClient:       server.Client(),
+		readBlockSize:    blockSize,
+		readConcurrency:  2,
+		readBufferBudget: budget,
+	}
+
+	bodies := make(chan io.ReadCloser, clients)
+	errs := make(chan error, clients)
+	for i := 0; i < clients; i++ {
+		go func() {
+			body, _, err := b.GetRangeWithHeaders(context.Background(), "bucket", "key", 0, int64(len(object)))
+			if err != nil {
+				errs <- err
+				return
+			}
+			bodies <- body
+		}()
+	}
+
+	var readers []io.ReadCloser
+	for i := 0; i < clients; i++ {
+		select {
+		case err := <-errs:
+			t.Fatalf("GetRangeWithHeaders: %v", err)
+		case body := <-bodies:
+			readers = append(readers, body)
+		case <-time.After(3 * time.Second):
+			t.Fatal("slow readers did not all acquire their first buffers")
+		}
+	}
+	// Leave all clients unread long enough for every pipeline to fill as far as
+	// the global budget permits.
+	time.Sleep(100 * time.Millisecond)
+	if peak := budget.peakBytes(); peak > budgetBytes {
+		t.Fatalf("peak live fetch-buffer bytes = %d, want <= %d", peak, budgetBytes)
+	}
+	if used := budget.inUseBytes(); used > budgetBytes {
+		t.Fatalf("live fetch-buffer bytes = %d, want <= %d", used, budgetBytes)
+	}
+
+	var wg sync.WaitGroup
+	for _, body := range readers {
+		wg.Add(1)
+		go func(body io.ReadCloser) {
+			defer wg.Done()
+			if _, err := io.Copy(io.Discard, body); err != nil {
+				t.Errorf("slow-reader drain: %v", err)
+			}
+			_ = body.Close()
+		}(body)
+	}
+	wg.Wait()
+	if used := budget.inUseBytes(); used != 0 {
+		t.Fatalf("live fetch-buffer bytes after Close = %d, want 0", used)
+	}
+}
+
+func TestB2BackendReadBufferPoolReusesFixedBuffer(t *testing.T) {
+	b := &B2Backend{
+		readBlockSize:    8,
+		readBufferBudget: newReadBufferBudget(64),
+	}
+	first, err := b.acquireReadBuffer(context.Background(), 8)
+	if err != nil {
+		t.Fatalf("first acquire: %v", err)
+	}
+	address := &first.buf[0]
+	first.release()
+	second, err := b.acquireReadBuffer(context.Background(), 8)
+	if err != nil {
+		t.Fatalf("second acquire: %v", err)
+	}
+	if &second.buf[0] != address {
+		t.Fatal("fixed-size fetch buffer was not reused from sync.Pool")
+	}
+	second.release()
+}

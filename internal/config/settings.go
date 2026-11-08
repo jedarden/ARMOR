@@ -210,6 +210,7 @@ func (c *Config) Settings() []SettingRow {
 	addInt64("ARMOR_READ_FETCH_SIZE", c.ReadFetchSize, envSource("ARMOR_READ_FETCH_SIZE"))
 	addDuration("ARMOR_READ_REQUEST_TIMEOUT", c.ReadRequestTimeout, envSource("ARMOR_READ_REQUEST_TIMEOUT"))
 	addInt("ARMOR_READ_BACKEND_LIMIT", c.ReadBackendLimit, envSource("ARMOR_READ_BACKEND_LIMIT"))
+	addInt64("ARMOR_READ_BUFFER_MEMORY_BUDGET", c.ReadBufferMemoryBudget, envSource("ARMOR_READ_BUFFER_MEMORY_BUDGET"))
 	addInt64("ARMOR_SMALL_OBJECT_FETCH_BYTES", c.SmallObjectFetchBytes, envSource("ARMOR_SMALL_OBJECT_FETCH_BYTES"))
 	addInt64("ARMOR_UPLOAD_PART_MEMORY_BUDGET", c.UploadPartMemoryBudget, envSource("ARMOR_UPLOAD_PART_MEMORY_BUDGET"))
 	addInt("ARMOR_READ_RETRY_ATTEMPTS", c.ReadRetryAttempts, envSource("ARMOR_READ_RETRY_ATTEMPTS"))

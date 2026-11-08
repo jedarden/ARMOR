@@ -618,6 +618,29 @@ armor_backend_retries_total{reason="connection_reset",outcome="cancelled"} 1
 
 A nonzero `outcome="exhausted"` series is the persistent-degradation signal: it counts reads that retries could not save (one transient 5xx no longer fails a whole 1000-fetch pipelined GET, but a hard outage still does). `outcome="success"` at a steady rate is the normal Cloudflare blip baseline.
 
+### `armor_read_buffer_budget_saturation_total`
+
+**Type:** Counter
+**Description:** Ranged fetches that found the global live fetch-buffer byte budget saturated and waited before obtaining a buffer. The budget is configured by `ARMOR_READ_BUFFER_MEMORY_BUDGET` and is shared by all readers of one backend.
+**Labels:** None
+
+### `armor_read_buffer_budget_wait_ms`
+
+**Type:** Histogram
+**Description:** Milliseconds spent waiting for the global live fetch-buffer byte budget after it was saturated.
+**Labels:** `operation` — currently `fetch`
+
+**Example Output:**
+```
+# HELP armor_read_buffer_budget_saturation_total Ranged fetches that waited for the global read-buffer byte budget
+# TYPE armor_read_buffer_budget_saturation_total counter
+armor_read_buffer_budget_saturation_total 17
+# HELP armor_read_buffer_budget_wait_ms Ranged fetch budget wait time in milliseconds
+# TYPE armor_read_buffer_budget_wait_ms histogram
+armor_read_buffer_budget_wait_ms_count{operation="fetch"} 17
+armor_read_buffer_budget_wait_ms_sum{operation="fetch"} 842
+```
+
 ### `armor_list_head_total`
 
 **Type:** Counter  

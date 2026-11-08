@@ -170,6 +170,11 @@
     "source": "default"
   },
   {
+    "name": "ARMOR_READ_BUFFER_MEMORY_BUDGET",
+    "value": "268435456",
+    "source": "default"
+  },
+  {
     "name": "ARMOR_SMALL_OBJECT_FETCH_BYTES",
     "value": "1048576",
     "source": "default"

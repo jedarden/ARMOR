@@ -158,6 +158,11 @@ type Metrics struct {
 	// (the caller stopped during backoff).
 	BackendRetriesTotal *labelledCounter
 
+	// Read-buffer admission metrics. Wait time is recorded only when the global
+	// ranged-fetch byte budget was saturated, with operation="fetch".
+	ReadBufferBudgetSaturationsTotal *expvar.Int
+	readBufferBudgetWait             *latencyHistogram
+
 	// List HEAD resolution outcomes (armor-7d94c42d). One increment per listed
 	// key: "index" (manifest index hit), "cache" (version-gated metadata cache
 	// hit), "head" (backend HEAD resolved it), "error" (HEAD failed after one
@@ -330,6 +335,8 @@ func NewMetrics() *Metrics {
 	m.BackendRequestDuration = newLabelledCounter()
 	m.BackendRetriesTotal = newLabelledCounter()
 	m.ListHeadTotal = newLabelledCounter()
+	m.ReadBufferBudgetSaturationsTotal = new(expvar.Int)
+	m.readBufferBudgetWait = newLatencyHistogram("read_buffer_budget_wait_ms", []int64{1, 5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000})
 
 	// Request duration histogram (fixed buckets in milliseconds)
 	m.requestDurationBuckets = []int64{5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000}
@@ -829,6 +836,17 @@ func (m *Metrics) IncBackendRequests(operation string) {
 	m.BackendRequestsTotal.Add(operation, 1)
 }
 
+// RecordReadBufferBudgetWait records one ranged fetch that had to wait for
+// live-buffer budget. The saturation counter is intentionally separate from
+// the histogram so alerts can fire without choosing a latency threshold.
+func (m *Metrics) RecordReadBufferBudgetWait(wait time.Duration, saturated bool) {
+	if !saturated {
+		return
+	}
+	m.ReadBufferBudgetSaturationsTotal.Add(1)
+	m.readBufferBudgetWait.observe("fetch", wait)
+}
+
 // RecordBackendRequestDuration records the duration of a backend request.
 func (m *Metrics) RecordBackendRequestDuration(operation string, duration time.Duration) {
 	key := operation
@@ -1102,6 +1120,32 @@ func (m *Metrics) PrometheusFormat() string {
 	sb.WriteString("# TYPE armor_backend_request_duration_total counter\n")
 	m.BackendRequestDuration.Do(func(kv expvar.KeyValue) {
 		fmt.Fprintf(&sb, "armor_backend_request_duration_total{key=%q} %s\n", kv.Key, kv.Value.String())
+	})
+
+	writeMetric("read_buffer_budget_saturation_total", "Ranged fetches that waited for the global read-buffer byte budget", "counter", m.ReadBufferBudgetSaturationsTotal)
+	h := m.readBufferBudgetWait
+	fmt.Fprintf(&sb, "\n# HELP armor_%s Ranged fetch budget wait time in milliseconds\n", h.name)
+	fmt.Fprintf(&sb, "# TYPE armor_%s histogram\n", h.name)
+	h.count.Do(func(kv expvar.KeyValue) {
+		operation := kv.Key
+		countVal := kv.Value.(*expvar.Int).Value()
+		var sumVal int64
+		if sum := h.sum.Get(operation); sum != nil {
+			sumVal = sum.(*expvar.Int).Value()
+		}
+		fmt.Fprintf(&sb, "armor_%s_sum{operation=%q} %d\n", h.name, operation, sumVal)
+		fmt.Fprintf(&sb, "armor_%s_count{operation=%q} %d\n", h.name, operation, countVal)
+		for _, bucketLe := range h.buckets {
+			bucketKey := fmt.Sprintf("%s_bucket_le_%d", operation, bucketLe)
+			if bucket := h.bucketsMap.Get(bucketKey); bucket != nil {
+				fmt.Fprintf(&sb, "armor_%s_bucket{operation=%q,le=%q} %s\n", h.name, operation, fmt.Sprintf("%d", bucketLe), bucket.(*expvar.Int).String())
+			} else {
+				fmt.Fprintf(&sb, "armor_%s_bucket{operation=%q,le=%q} 0\n", h.name, operation, fmt.Sprintf("%d", bucketLe))
+			}
+		}
+		if infBucket := h.bucketsMap.Get(fmt.Sprintf("%s_bucket_le_Inf", operation)); infBucket != nil {
+			fmt.Fprintf(&sb, "armor_%s_bucket{operation=%q,le=\"+Inf\"} %s\n", h.name, operation, infBucket.(*expvar.Int).String())
+		}
 	})
 
 	// List HEAD resolution outcomes (armor-7d94c42d): how each listed key's

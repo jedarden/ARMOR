@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path"
+	"runtime/debug"
 	"sort"
 	"strconv"
 	"strings"
@@ -112,9 +113,10 @@ type Config struct {
 	ReadConcurrency int // Maximum concurrent ranged GETs (default 16)
 
 	// Network fetch tuning (armor-73564f97); none of these change the stored format.
-	ReadFetchSize      int64         // Bytes per backend ranged request (default 1 MiB)
-	ReadRequestTimeout time.Duration // Deadline per backend ranged request (default 2m)
-	ReadBackendLimit   int           // Simultaneous ranged requests across all readers (default 64)
+	ReadFetchSize          int64         // Bytes per backend ranged request (default 1 MiB)
+	ReadRequestTimeout     time.Duration // Deadline per backend ranged request (default 2m)
+	ReadBackendLimit       int           // Simultaneous ranged requests across all readers (default 64)
+	ReadBufferMemoryBudget int64         // Aggregate live ranged-fetch buffer bytes (dynamic default)
 
 	// SmallObjectFetchBytes is the stored-ciphertext size at or below which a
 	// full GET reads the entire single-PUT envelope — header, data blocks and
@@ -415,6 +417,14 @@ func Load() (*Config, error) {
 	cfg.ReadBackendLimit = getEnvInt("ARMOR_READ_BACKEND_LIMIT", 64, &errs)
 	if cfg.ReadBackendLimit < 1 {
 		errs = append(errs, fmt.Errorf("ARMOR_READ_BACKEND_LIMIT must be at least 1"))
+	}
+	cfg.ReadBufferMemoryBudget = getEnvInt64("ARMOR_READ_BUFFER_MEMORY_BUDGET", defaultReadBufferMemoryBudget(), &errs)
+	minimumReadBufferBudget := cfg.ReadFetchSize + 1
+	if minimumReadBufferBudget < 1048576 {
+		minimumReadBufferBudget = 1048576
+	}
+	if cfg.ReadBufferMemoryBudget < minimumReadBufferBudget {
+		errs = append(errs, fmt.Errorf("ARMOR_READ_BUFFER_MEMORY_BUDGET must be at least 1048576 bytes (1 MiB) and at least ARMOR_READ_FETCH_SIZE + 1 bytes"))
 	}
 
 	// Small single-PUT objects at or below this stored size arrive in one
@@ -864,6 +874,30 @@ func getEnv(key, defaultVal string) string {
 		return val
 	}
 	return defaultVal
+}
+
+// defaultReadBufferMemoryBudget reserves a conservative quarter of the Go
+// memory limit for live ranged-fetch buffers, clamped so small pods retain a
+// useful pipeline while larger pods do not let reads consume all headroom.
+// GOMEMLIMIT is exposed through debug.SetMemoryLimit; when it is unlimited the
+// upper clamp is the safe default.
+func defaultReadBufferMemoryBudget() int64 {
+	const (
+		minimum = 64 << 20
+		maximum = 256 << 20
+	)
+	limit := debug.SetMemoryLimit(-1)
+	if limit <= 0 || limit > 1<<60 {
+		return maximum
+	}
+	budget := limit / 4
+	if budget < minimum {
+		return minimum
+	}
+	if budget > maximum {
+		return maximum
+	}
+	return budget
 }
 
 // getEnvInt reads an integer environment variable. An unset variable yields

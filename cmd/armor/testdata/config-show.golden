@@ -33,6 +33,7 @@ ARMOR_READ_CONCURRENCY               16                                      def
 ARMOR_READ_FETCH_SIZE                1048576                                 default
 ARMOR_READ_REQUEST_TIMEOUT           1m30s                                   env
 ARMOR_READ_BACKEND_LIMIT             64                                      default
+ARMOR_READ_BUFFER_MEMORY_BUDGET      268435456                               default
 ARMOR_SMALL_OBJECT_FETCH_BYTES       1048576                                 default
 ARMOR_UPLOAD_PART_MEMORY_BUDGET      536870912                               default
 ARMOR_READ_RETRY_ATTEMPTS            3                                       default
