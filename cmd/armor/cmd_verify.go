@@ -45,7 +45,7 @@ func init() {
 	verifyFlags.StringVar(&outputFlag, "output", "", "Output report file path (default: stdout)")
 	verifyFlags.BoolVar(&decryptVerboseFlag, "verbose", false, "Verbose output")
 	verifyFlags.BoolVar(&decryptVerboseFlag, "v", false, "DEPRECATED alias of -verbose")
-	verifyFlags.StringVar(&prefixFlag, "prefix", "", "Key prefix to filter objects (optional)")
+	verifyFlags.StringVar(&prefixFlag, "prefix", normalizePrefix(envFlagDefault("ARMOR_PREFIX")), "Key prefix to filter objects")
 	verifyFlags.StringVar(&keysFileFlag, "keys-file", "", "Path to JSON file listing object keys to verify (one per line or JSON array)")
 	verifyFlags.StringVar(&sinceFlag, "since", "", "Only verify objects modified after this timestamp (RFC3339 or YYYY-MM-DD)")
 	verifyFlags.BoolVar(&quickModeFlag, "quick", false, "Quick mode: verify envelope and DEK only, skip HMAC verification")
