@@ -185,8 +185,12 @@ var clientLegs = []clientLeg{
 // layers".
 var conformanceFloor = map[compatOperation][]string{
 	opAuthentication: {"TestVerify_Authentication"},
-	// Full-object GET byte equality, before and after overwrite.
-	opReads:           {"TestVerify_Overwrite"},
+	// Full-object GET byte equality, before and after overwrite. The copy
+	// metadata directive and self-copy rejection ride the reads column with
+	// the client copy legs: no real-client leg sends
+	// x-amz-metadata-directive or a same-key copy, so the SDK floor is the
+	// sole pin for those CopyObject behaviors.
+	opReads:           {"TestVerify_Overwrite", "TestVerify_CopyObjectMetadataDirective"},
 	opRangeReads:      {"TestVerify_RangeReads"},
 	opListing:         {"TestVerify_List"},
 	opOverwriteDelete: {"TestVerify_Overwrite", "TestVerify_Delete", "TestVerify_BulkDelete"},

@@ -665,5 +665,107 @@ func TestVerify_ObjectLockUnsupported(t *testing.T) {
 	assertS3Error(t, err, "NotImplemented", http.StatusNotImplemented)
 }
 
+// TestVerify_CopyObjectMetadataDirective pins CopyObject's metadata
+// directive and self-copy wire contract through a real SigV4 signer: the
+// default COPY carries the source's user metadata to the destination (the
+// ARMOR re-wrap rebuilds the metadata map and would otherwise drop it),
+// REPLACE applies the request's set and drops stale source keys, and a copy
+// whose source names the request's own destination fails with
+// InvalidRequest, leaving the object untouched.
+func TestVerify_CopyObjectMetadataDirective(t *testing.T) {
+	endpoint := startArmorServer(t)
+	client := newSDKClient(t, endpoint)
+	ctx := context.Background()
+	bucket := compatBucket(t)
+	src := "verify/conformance/copy-meta-src.bin"
+	body := conformancePayload(1024)
+
+	if _, err := client.PutObject(ctx, &s3.PutObjectInput{
+		Bucket: &bucket, Key: &src, Body: bytes.NewReader(body),
+		Metadata: map[string]string{"Project": "ARMOR", "Environment": "conformance"},
+	}); err != nil {
+		t.Fatalf("PutObject with metadata: %v", err)
+	}
+
+	// metaOf reads a key's user metadata, matching keys case-insensitively
+	// because the SDK lowercases response metadata keys.
+	metaOf := func(key string) map[string]string {
+		t.Helper()
+		out, err := client.HeadObject(ctx, &s3.HeadObjectInput{Bucket: &bucket, Key: &key})
+		if err != nil {
+			t.Fatalf("HeadObject(%s): %v", key, err)
+		}
+		return out.Metadata
+	}
+
+	// The default directive and the explicit COPY spelling both carry the
+	// source's user metadata across the copy.
+	for name, directive := range map[string]types.MetadataDirective{
+		"default":      "", // header absent — COPY is the default
+		"explicit-cop": types.MetadataDirectiveCopy,
+	} {
+		dst := fmt.Sprintf("verify/conformance/copy-meta-%s.bin", name)
+		input := &s3.CopyObjectInput{
+			Bucket:     &bucket,
+			Key:        &dst,
+			CopySource: awsString(bucket + "/" + src),
+		}
+		if directive != "" {
+			input.MetadataDirective = directive
+		}
+		if _, err := client.CopyObject(ctx, input); err != nil {
+			t.Fatalf("CopyObject (%s): %v", name, err)
+		}
+		meta := metaOf(dst)
+		if got := meta["project"]; got != "ARMOR" {
+			t.Errorf("copy (%s): destination metadata project = %q, want %q", name, got, "ARMOR")
+		}
+		if got := meta["environment"]; got != "conformance" {
+			t.Errorf("copy (%s): destination metadata environment = %q, want %q", name, got, "conformance")
+		}
+	}
+
+	// REPLACE applies the request's set and drops the source's stale keys.
+	dstReplace := "verify/conformance/copy-meta-replace.bin"
+	if _, err := client.CopyObject(ctx, &s3.CopyObjectInput{
+		Bucket: &bucket, Key: &dstReplace,
+		CopySource:        awsString(bucket + "/" + src),
+		Metadata:          map[string]string{"Stage": "prod"},
+		MetadataDirective: types.MetadataDirectiveReplace,
+	}); err != nil {
+		t.Fatalf("CopyObject (REPLACE): %v", err)
+	}
+	meta := metaOf(dstReplace)
+	if got := meta["stage"]; got != "prod" {
+		t.Errorf("copy (REPLACE): destination metadata stage = %q, want %q", got, "prod")
+	}
+	for _, stale := range []string{"project", "environment"} {
+		if got := meta[stale]; got != "" {
+			t.Errorf("copy (REPLACE): destination metadata %s = %q, want empty — REPLACE must drop source keys absent from the request", stale, got)
+		}
+	}
+
+	// A copy onto itself is rejected with InvalidRequest and the object
+	// survives the attempt.
+	_, err := client.CopyObject(ctx, &s3.CopyObjectInput{
+		Bucket:     &bucket,
+		Key:        &src,
+		CopySource: awsString(bucket + "/" + src),
+	})
+	assertS3Error(t, err, "InvalidRequest", http.StatusBadRequest)
+	got, err := client.GetObject(ctx, &s3.GetObjectInput{Bucket: &bucket, Key: &src})
+	if err != nil {
+		t.Fatalf("GetObject after rejected self-copy: %v — the object must survive", err)
+	}
+	gotBody, rerr := io.ReadAll(got.Body)
+	got.Body.Close()
+	if rerr != nil {
+		t.Fatalf("read body after rejected self-copy: %v", rerr)
+	}
+	if !bytes.Equal(gotBody, body) {
+		t.Error("object content changed under a rejected self-copy")
+	}
+}
+
 // awsString is a tiny helper for the &str pattern the SDK inputs need.
 func awsString(s string) *string { return &s }
