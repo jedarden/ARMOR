@@ -9,6 +9,7 @@ package integration
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -18,6 +19,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
+	"github.com/aws/smithy-go"
 )
 
 // TestGetObject_ConditionalIfMatch tests If-Match conditional download
@@ -395,7 +397,8 @@ func TestGetObject_RangeEdgeCases(t *testing.T) {
 		name           string
 		rangeHeader    string
 		shouldSucceed  bool
-		description    string
+		expectedError string
+		description   string
 	}{
 		{
 			name:          "First byte",
@@ -435,9 +438,10 @@ func TestGetObject_RangeEdgeCases(t *testing.T) {
 		},
 		{
 			name:          "Range beyond file",
-			rangeHeader:   fmt.Sprintf("bytes=0-%d", len(testData)+1000),
+			rangeHeader:   fmt.Sprintf("bytes=%d-%d", len(testData), len(testData)+1000),
 			shouldSucceed: false,
-			description:   "Range exceeds file size",
+			expectedError: "InvalidRange",
+			description:   "Range starts beyond file size",
 		},
 	}
 
@@ -469,6 +473,12 @@ func TestGetObject_RangeEdgeCases(t *testing.T) {
 					getResp.Body.Close()
 					t.Errorf("%s: expected failure, succeeded", tc.description)
 				} else {
+					if tc.expectedError != "" {
+						var apiErr smithy.APIError
+						if !errors.As(err, &apiErr) || apiErr.ErrorCode() != tc.expectedError {
+							t.Errorf("%s: error code = %q, want %q (%v)", tc.description, apiErrorCode(err), tc.expectedError, err)
+						}
+					}
 					t.Logf("%s: failed as expected: %v", tc.description, err)
 				}
 			}
@@ -502,9 +512,11 @@ func TestGetObject_PartNumber(t *testing.T) {
 	// Upload parts
 	partSize := int64(5 * 1024 * 1024) // 5 MB
 	uploadedParts := []types.CompletedPart{}
+	partDataByNumber := make(map[int32][]byte)
 
 	for i := int32(1); i <= 3; i++ {
 		partData := generateTestData(int(partSize))
+		partDataByNumber[i] = partData
 		uploadResp, err := client.UploadPart(ctx, &s3.UploadPartInput{
 			Bucket:     aws.String(bucket),
 			Key:        aws.String(key),
@@ -585,6 +597,9 @@ func TestGetObject_PartNumber(t *testing.T) {
 						t.Errorf("Part %d size mismatch: got %d, want %d",
 							tc.partNumber, len(downloaded), partSize)
 					}
+					if !bytes.Equal(downloaded, partDataByNumber[tc.partNumber]) {
+						t.Errorf("Part %d content mismatch", tc.partNumber)
+					}
 				}
 			}
 		})
@@ -597,6 +612,14 @@ func TestGetObject_PartNumber(t *testing.T) {
 	})
 
 	t.Log("TestGetObject_PartNumber completed successfully")
+}
+
+func apiErrorCode(err error) string {
+	var apiErr smithy.APIError
+	if errors.As(err, &apiErr) {
+		return apiErr.ErrorCode()
+	}
+	return ""
 }
 
 // TestGetObject_VeryLargeRange tests range requests on large files

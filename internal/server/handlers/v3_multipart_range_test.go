@@ -101,6 +101,34 @@ func newV3RangeFixture(t *testing.T, blocksPerPart []int, blockSize int) *v3Rang
 	return fx
 }
 
+func TestV3MultipartPartRange(t *testing.T) {
+	fx := newV3RangeFixture(t, []int{2, 3, 1}, 128)
+
+	tests := []struct {
+		name       string
+		partNumber int64
+		wantStart  int64
+		wantEnd    int64
+		wantOK     bool
+	}{
+		{name: "first", partNumber: 1, wantStart: 0, wantEnd: 255, wantOK: true},
+		{name: "middle", partNumber: 2, wantStart: 256, wantEnd: 639, wantOK: true},
+		{name: "last", partNumber: 3, wantStart: 640, wantEnd: 735, wantOK: true},
+		{name: "zero", partNumber: 0},
+		{name: "missing", partNumber: 4},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			start, end, ok := v3MultipartPartRange(fx.entry, tt.partNumber)
+			if ok != tt.wantOK || start != tt.wantStart || end != tt.wantEnd {
+				t.Fatalf("v3MultipartPartRange(%d) = (%d, %d, %t), want (%d, %d, %t)",
+					tt.partNumber, start, end, ok, tt.wantStart, tt.wantEnd, tt.wantOK)
+			}
+		})
+	}
+}
+
 // rangeBackend serves the fixture ciphertext from memory and records every
 // ranged call the handler makes.
 type rangeBackend struct {

@@ -135,7 +135,7 @@ going stale silently.
 | `InvalidCopySource` | 400 |
 | `InvalidPart` | 400 |
 | `InvalidPartSize` | 400 |
-| `InvalidRange` | 416 (one code path returns 400 — see [Inconsistencies](#inconsistencies-and-remediation)) |
+| `InvalidRange` | 416 |
 | `InvalidRequest` | 400 |
 | `MalformedXML` | 400 |
 | `MethodNotAllowed` | 405 |
@@ -333,7 +333,7 @@ All authentication/authorization errors return HTTP 403 with CORS headers. The t
 | HTTP Status | Error Code | Headers |
 |-------------|------------|---------|
 | 206 (success) | N/A | Content-Range: bytes start-end/total, X-Armor-Footer-Cache (if Parquet footer hit) |
-| 416 (or 400, see Inconsistencies) | InvalidRange | Content-Type: application/xml |
+| 416 | InvalidRange | Content-Type: application/xml |
 | 412 | PreconditionFailed | Content-Type: application/xml |
 | 404 | NoSuchKey | Content-Type: application/xml |
 
@@ -924,7 +924,6 @@ verification failed: byte mismatch at offset {offset} (expected 0x{Expected}, go
 | Content-Type mismatches | Medium | `/admin/b2/keys/*` | JSON in text/plain |
 | 405 returns plain text | Medium | Most admin endpoints | Not S3-compatible |
 | Admin endpoint format inconsistency | Low | All admin endpoints | Poor DX |
-| `InvalidRange` status code varies by code path | Low | GetObject (non-multipart range handler) | AWS uses 416; one path returns 400 for the identical failure |
 
 ### Known Inconsistencies
 
@@ -979,14 +978,6 @@ This is because `/admin/presign` calls the server's `writeError` helper, which u
 | `/armor/canary` | JSON | Plain text | ⚠️ Inconsistent |
 | `/armor/audit` | JSON | Mixed | ⚠️ Inconsistent |
 
-#### 5. `InvalidRange` Status Code Varies by Code Path
-
-**Issue:** GetObject's inline range-parsing (compressed-object rejection and the
-V3 multipart range path) returns 416, matching AWS S3 semantics for
-`InvalidRange`. The shared non-multipart `handleRangeRequest` path returns 400
-for the identical malformed-Range-header failure. Both paths use the same
-error code and message shape; only the HTTP status differs.
-
 ### Remediation Plan
 
 #### Priority 1 (S3 Protocol Compliance)
@@ -995,7 +986,6 @@ error code and message shape; only the HTTP status differs.
 |-------|--------|----------------|
 | Method Not Allowed XML format | Low | Convert 405 errors to XML for S3 endpoints |
 | Presigned URL endpoint format | Low | Convert `/admin/presign` errors to XML consistently |
-| `InvalidRange` status code | Low | Make `handleRangeRequest` return 416, matching the other range-parsing paths |
 
 #### Priority 2 (Admin Interface Consistency)
 

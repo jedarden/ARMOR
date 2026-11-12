@@ -1504,9 +1504,10 @@ func (h *Handlers) GetObject(w http.ResponseWriter, r *http.Request, bucket, key
 
 	// Check if this is a multipart object (HMAC table in sidecar, no embedded header)
 	isMultipart := info.Metadata["x-amz-meta-armor-multipart"] == "true"
+	partNumber := int64(0)
 	if rawPartNumber := r.URL.Query().Get("partNumber"); rawPartNumber != "" {
-		partNumber, parseErr := strconv.Atoi(rawPartNumber)
-		if parseErr != nil || partNumber < 1 || partNumber > 10000 {
+		parsedPartNumber, parseErr := strconv.ParseInt(rawPartNumber, 10, 64)
+		if parseErr != nil || parsedPartNumber < 1 || parsedPartNumber > 10000 {
 			h.writeError(w, r, "InvalidPart", "part number must be between 1 and 10000", http.StatusRequestedRangeNotSatisfiable)
 			return
 		}
@@ -1514,13 +1515,31 @@ func (h *Handlers) GetObject(w http.ResponseWriter, r *http.Request, bucket, key
 			h.writeError(w, r, "InvalidPart", "part number is only valid for multipart objects", http.StatusRequestedRangeNotSatisfiable)
 			return
 		}
-		start, end, ok := multipartPartRange(info.Metadata, int64(partNumber), plaintextSize)
-		if !ok {
-			h.writeError(w, r, "InvalidPart", fmt.Sprintf("multipart part %d does not exist", partNumber), http.StatusRequestedRangeNotSatisfiable)
-			return
-		}
 		if r.Header.Get("Range") != "" {
 			h.writeError(w, r, "InvalidRequest", "part number cannot be combined with Range", http.StatusBadRequest)
+			return
+		}
+		partNumber = parsedPartNumber
+	}
+
+	if partNumber != 0 {
+		var start, end int64
+		var ok bool
+		if armorMeta.Version == crypto.Version3 {
+			// V3 multipart uploads allow independently-sized parts and therefore
+			// do not have a uniform part-size metadata value. The sidecar is the
+			// authoritative source for their part boundaries.
+			sidecar, loadErr := h.loadV3MultipartSidecar(ctx, bucket, key, prefixedKey, armorMeta.ETag)
+			if loadErr != nil {
+				h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to load v3 sidecar: %v", loadErr), 500)
+				return
+			}
+			start, end, ok = v3MultipartPartRange(sidecar, partNumber)
+		} else {
+			start, end, ok = multipartPartRange(info.Metadata, partNumber, plaintextSize)
+		}
+		if !ok {
+			h.writeError(w, r, "InvalidPart", fmt.Sprintf("multipart part %d does not exist", partNumber), http.StatusRequestedRangeNotSatisfiable)
 			return
 		}
 		r.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", start, end))
@@ -2396,7 +2415,7 @@ func (h *Handlers) handleRangeRequest(w http.ResponseWriter, r *http.Request, bu
 	rangeHeader := r.Header.Get("Range")
 	start, end, err := parseRangeHeader(rangeHeader, plaintextSize)
 	if err != nil {
-		h.writeError(w, r, "InvalidRange", fmt.Sprintf("Invalid range: %v", err), 400)
+		h.writeError(w, r, "InvalidRange", fmt.Sprintf("Invalid range: %v", err), http.StatusRequestedRangeNotSatisfiable)
 		return
 	}
 

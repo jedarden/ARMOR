@@ -169,7 +169,7 @@ func (s *Server) writeError(w http.ResponseWriter, code, message string, statusC
 | Error Code | HTTP Status | S3 Compatible | Notes |
 |------------|-------------|---------------|-------|
 | `InvalidRequest` | 400 | ✅ Yes | Exact S3 match |
-| `InvalidRange` | 400 | ✅ Yes | Exact S3 match |
+| `InvalidRange` | 416 | ✅ Yes | Exact S3 match |
 | `MalformedXML` | 400 | ✅ Yes | Exact S3 match |
 | `MethodNotAllowed` | 405 | ✅ Yes | Exact S3 match |
 

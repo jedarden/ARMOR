@@ -231,6 +231,28 @@ func (h *Handlers) mapV3MultipartRange(sidecar *backend.MultipartSidecarEntry, r
 	}, nil
 }
 
+// v3MultipartPartRange returns the plaintext span for an S3 GetObject
+// partNumber request. V3 parts may have different sizes, so the sidecar's
+// prefix sums—not the uniform-part metadata used by legacy v2 objects—are
+// authoritative.
+func v3MultipartPartRange(sidecar *backend.MultipartSidecarEntry, partNumber int64) (start, end int64, ok bool) {
+	if sidecar == nil || sidecar.Sidecar == nil || partNumber < 1 || partNumber > 10000 {
+		return 0, 0, false
+	}
+	for partIdx, part := range sidecar.Sidecar.Parts {
+		if int64(part.N) != partNumber || partIdx+1 >= len(sidecar.PartPrefixSums) {
+			continue
+		}
+		start = sidecar.PartPrefixSums[partIdx]
+		endExclusive := sidecar.PartPrefixSums[partIdx+1]
+		if start < 0 || endExclusive <= start || endExclusive > sidecar.TotalPlaintextSize() {
+			return 0, 0, false
+		}
+		return start, endExclusive - 1, true
+	}
+	return 0, 0, false
+}
+
 // fetchV3MultipartBlockRun fetches the ciphertext of a contiguous run of
 // blocks within one part with a single ranged request. The returned reader
 // yields the run's ciphertext in block order; the caller reads exactly
