@@ -154,13 +154,13 @@ func (s *rangeStreamWriter) finish() bool {
 // as in DecryptRange and handleFullObjectStream). A short read is an error:
 // unlike the old buffered path, which zero-padded a short span, the stream
 // never invents plaintext it could not authenticate.
-func streamV1V2RangeBlocks(sw *rangeStreamWriter, body io.Reader, hmacTable []byte, hmacBody io.Reader, blockStart, blockEnd int, hmacTableIsFull bool, decryptor *crypto.Decryptor, armorMeta *backend.ARMORMetadata, plaintextSize int64) error {
+func streamV1V2RangeBlocks(sw *rangeStreamWriter, body io.Reader, hmacTable []byte, hmacBody io.Reader, blockEnd int, hmacTableIsFull bool, decryptor *crypto.Decryptor, armorMeta *backend.ARMORMetadata, plaintextSize int64) error {
 	blockSize := armorMeta.BlockSize
 	// The single-PUT caller's translation carries the correct block start,
 	// while the multipart caller computes the same geometry before opening its
 	// range. Derive it from the response range as a defensive guard: the
 	// streamed body always begins at the first block containing rangeStart.
-	blockStart = int(sw.rangeStart / int64(blockSize))
+	blockStart := int(sw.rangeStart / int64(blockSize))
 
 	for relIdx := 0; relIdx <= blockEnd-blockStart; relIdx++ {
 		absBlockIdx := blockStart + relIdx

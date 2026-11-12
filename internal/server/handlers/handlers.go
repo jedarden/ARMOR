@@ -2601,7 +2601,7 @@ func (h *Handlers) handleRangeRequest(w http.ResponseWriter, r *http.Request, bu
 	// connection against that declared length instead of returning a
 	// truncated 206 as success.
 	sw := h.newRangeStreamWriter(w, r, bucket, key, armorMeta, plaintextSize, start, end, lastModified)
-	if err := streamV1V2RangeBlocks(sw, dataBody, hmacTable, hmacBody, startBlockIndex, streamBlockEnd, streamHMACIsFull, decryptor, armorMeta, plaintextSize); err != nil {
+	if err := streamV1V2RangeBlocks(sw, dataBody, hmacTable, hmacBody, streamBlockEnd, streamHMACIsFull, decryptor, armorMeta, plaintextSize); err != nil {
 		sw.abort(err.Error())
 		return
 	}

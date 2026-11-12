@@ -2,9 +2,6 @@ package handlers
 
 import (
 	"context"
-	"crypto/hmac"
-	"crypto/sha256"
-	"encoding/binary"
 	"fmt"
 	"io"
 	"log"
@@ -179,31 +176,4 @@ func (h *Handlers) loadV3MultipartSidecar(ctx context.Context, bucket, key, pref
 	}
 
 	return h.multipartSidecarCache.Get(bucket, prefixedKey, etag), nil
-}
-
-// verifyV3BlockHMAC verifies the HMAC for a v3 block.
-// V3 HMAC format: HMAC-SHA256(hmacKey, uint16(part) ‖ uint32(blockIdx) ‖ ciphertext)
-func verifyV3BlockHMAC(blockCiphertext, expectedHMAC, hmacKey []byte, partNum int, blockIdx uint32) error {
-	mac := hmac.New(sha256.New, hmacKey)
-
-	// Write part number (big-endian uint16)
-	partBytes := make([]byte, 2)
-	binary.BigEndian.PutUint16(partBytes, uint16(partNum))
-	mac.Write(partBytes)
-
-	// Write block index (big-endian uint32)
-	blockBytes := make([]byte, 4)
-	binary.BigEndian.PutUint32(blockBytes, blockIdx)
-	mac.Write(blockBytes)
-
-	// Write ciphertext
-	mac.Write(blockCiphertext)
-
-	computed := mac.Sum(nil)
-
-	if !hmac.Equal(computed, expectedHMAC) {
-		return fmt.Errorf("HMAC mismatch for part %d block %d", partNum, blockIdx)
-	}
-
-	return nil
 }
