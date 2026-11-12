@@ -16,6 +16,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"golang.org/x/term"
 )
 
 const (
@@ -79,7 +81,7 @@ var initEnvKeys = []string{
 
 func runInit(fs *flag.FlagSet) {
 	if fs.NArg() > 0 {
-		fmt.Fprintf(os.Stderr, "Error: unexpected arguments after flags: %v\n", fs.Args())
+		fmt.Fprintln(os.Stderr, "Error: unexpected arguments after flags")
 		fmt.Fprintln(os.Stderr, "Usage: armor init [flags]")
 		exit(2)
 	}
@@ -148,11 +150,10 @@ func initFileIsTerminal(file *os.File) bool {
 	if file == nil {
 		return false
 	}
-	info, err := file.Stat()
-	return err == nil && info.Mode()&os.ModeCharDevice != 0
+	return term.IsTerminal(int(file.Fd()))
 }
 
-func promptForInitValues(values *initValues, input io.Reader, output io.Writer) error {
+func promptForInitValues(values *initValues, input *os.File, output io.Writer) error {
 	reader := bufio.NewReader(input)
 	var err error
 	if values.region, err = promptIfEmpty(reader, output, "B2 region", values.region); err != nil {
@@ -164,7 +165,9 @@ func promptForInitValues(values *initValues, input io.Reader, output io.Writer) 
 	if values.b2AccessKeyID, err = promptIfEmpty(reader, output, "B2 application key ID", values.b2AccessKeyID); err != nil {
 		return err
 	}
-	if values.b2Credential, err = promptIfEmpty(reader, output, "B2 application key (input is not printed by ARMOR)", values.b2Credential); err != nil {
+	if values.b2Credential, err = promptInitSecretIfEmpty(output, "B2 application key", values.b2Credential, func() ([]byte, error) {
+		return term.ReadPassword(int(input.Fd()))
+	}); err != nil {
 		return err
 	}
 	if values.cfDomain, err = promptIfEmpty(reader, output, "Cloudflare hostname (without https://)", values.cfDomain); err != nil {
@@ -173,10 +176,27 @@ func promptForInitValues(values *initValues, input io.Reader, output io.Writer) 
 	if values.authAccessKey, err = promptIfEmpty(reader, output, "ARMOR client access key", values.authAccessKey); err != nil {
 		return err
 	}
-	if values.authCredential, err = promptIfEmpty(reader, output, "ARMOR client secret (input is not printed by ARMOR)", values.authCredential); err != nil {
+	if values.authCredential, err = promptInitSecretIfEmpty(output, "ARMOR client secret", values.authCredential, func() ([]byte, error) {
+		return term.ReadPassword(int(input.Fd()))
+	}); err != nil {
 		return err
 	}
 	return nil
+}
+
+// promptInitSecretIfEmpty disables terminal echo through term.ReadPassword in
+// the production caller. The reader is injectable so output safety is tested.
+func promptInitSecretIfEmpty(output io.Writer, label, value string, readPassword func() ([]byte, error)) (string, error) {
+	if value != "" {
+		return value, nil
+	}
+	fmt.Fprintf(output, "%s: ", label)
+	secret, err := readPassword()
+	fmt.Fprintln(output)
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(secret)), nil
 }
 
 func promptIfEmpty(reader *bufio.Reader, output io.Writer, label, value string) (string, error) {

@@ -149,6 +149,41 @@ func TestRunInitDoesNotPrintCredentialValues(t *testing.T) {
 	}
 }
 
+func TestPromptInitSecretDoesNotEcho(t *testing.T) {
+	const secret = "credential-value-must-stay-hidden"
+	var output bytes.Buffer
+	got, err := promptInitSecretIfEmpty(&output, "ARMOR client secret", "", func() ([]byte, error) {
+		return []byte(secret), nil
+	})
+	if err != nil || got != secret {
+		t.Fatalf("secret prompt returned value: got expected=%t err=%v", got == secret, err)
+	}
+	if strings.Contains(output.String(), secret) {
+		t.Fatal("secret prompt echoed credential value")
+	}
+	if output.String() != "ARMOR client secret: \n" {
+		t.Fatalf("secret prompt output = %q", output.String())
+	}
+	got, err = promptInitSecretIfEmpty(&output, "ARMOR client secret", secret, func() ([]byte, error) {
+		t.Fatal("existing secret must not trigger a new prompt")
+		return nil, nil
+	})
+	if err != nil || got != secret {
+		t.Fatalf("existing secret changed: got expected=%t err=%v", got == secret, err)
+	}
+}
+
+func TestInitFileIsTerminalRejectsDevNull(t *testing.T) {
+	input, err := os.Open(os.DevNull)
+	if err != nil {
+		t.Fatalf("open null device: %v", err)
+	}
+	defer input.Close()
+	if initFileIsTerminal(input) {
+		t.Fatal("null device must not be treated as an interactive terminal")
+	}
+}
+
 func fileMode(t *testing.T, path string) os.FileMode {
 	t.Helper()
 	info, err := os.Stat(path)

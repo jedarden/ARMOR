@@ -231,7 +231,8 @@ values are preserved, so rerunning the command does not rotate live secrets.
 | `-auth-secret-key-file` | Read the ARMOR client secret from a file instead of prompting or using `ARMOR_AUTH_SECRET_KEY` |
 
 - **Inputs:** when stderr and stdin are terminals, missing service values are
-  prompted for. In scripts, use `-non-interactive` and provide values through
+  prompted for; B2 and client secret input is hidden at the terminal. In scripts,
+  use `-non-interactive` and provide values through
   the environment or protected input files; raw credential values have no
   command-line flags.
 - **Outputs:** a mode-0600 env file and a reminder to back up the MEK. The
