@@ -24,7 +24,7 @@ const (
 
 func init() {
 	migrateFlags := flag.NewFlagSet("migrate", flag.ExitOnError)
-	migrateFlags.StringVar(&adminURLFlag, "admin-url", "", "Admin API endpoint (required, e.g., http://127.0.0.1:9001)")
+	migrateFlags.StringVar(&adminURLFlag, "admin-url", adminURLFlagDefault(), "Admin API endpoint (defaults from ARMOR_ADMIN_LISTEN)")
 	migrateFlags.BoolVar(&dryRunFlag, "dry-run", false, "Dry run: verify objects can be migrated without making changes")
 	migrateFlags.BoolVar(&inventoryOnlyFlag, "inventory-only", false, "Inventory only: classify object metadata without reading bodies or writing migrated objects")
 	migrateFlags.StringVar(&targetFlag, "target", "3", "Target format version to migrate to (e.g., v3 or 3); must match the server's configured format write version")
@@ -106,7 +106,7 @@ func migrate(fs *flag.FlagSet) {
 		exit(2)
 	}
 	if adminURLFlag == "" {
-		fmt.Fprintln(os.Stderr, "Error: -admin-url is required")
+		fmt.Fprintln(os.Stderr, "Error: -admin-url is required (or set ARMOR_ADMIN_LISTEN)")
 		fmt.Fprintln(os.Stderr, "Usage: armor migrate -admin-url <url> [other flags]")
 		exit(2)
 	}
