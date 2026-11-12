@@ -25,7 +25,7 @@ func init() {
 	// (ARMOR_* variables). registerCommand arms an empty flag set for it.
 	registerCommand(Command{
 		Name:        "serve",
-		Description: "Start the ARMOR S3-compatible server (default; configured via ARMOR_* environment variables)",
+		Description: "Start the ARMOR S3-compatible server (default; configured via ARMOR_* environment variables; see docs/configuration.md or armor config show)",
 		Func:        serve,
 	})
 }

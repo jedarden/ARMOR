@@ -17,8 +17,8 @@ for the documented behaviors — the help and version paths exit 0 with the
 documented output, unknown subcommands, undefined flags, missing required
 flags, and stray positional arguments exit 2, the commands that need
 credentials fail with exit 1 without them, `client-config` accepts exactly
-the documented tools and prints their configuration to stdout, `migrate
--json` keeps stdout to JSON only, and every `ARMOR_*` variable named here is
+the documented tools and prints their configuration to stdout, the commands'
+`-json` modes keep stdout to JSON only, and every `ARMOR_*` variable named here is
 read by the implementation. The secret-safety tests plant distinctive MEK
 and token values through every documented key source (`-mek`, `-mek-file`,
 `ARMOR_MEK`, `ARMOR_ADMIN_TOKEN`), drive the documented failure paths, and
@@ -76,6 +76,9 @@ Two credential conventions recur across the offline commands:
 ## `armor serve`
 
 Run the ARMOR S3-compatible server. This is the default command.
+
+`armor serve --help` points to [Configuration](configuration.md), and
+`armor config show` prints the resolved redacted settings for the current environment.
 
 - **Inputs:** no flags; the entire configuration is environmental
   (`ARMOR_LISTEN` for the S3 API, `ARMOR_ADMIN_LISTEN` for the admin API, plus
@@ -223,10 +226,14 @@ substitute for a DR drill against the published image and its escrow package.
 | `-mek-env` | Allow the `ARMOR_MEK` environment fallback when no MEK flag is set (default true) |
 | `-escrow` | Escrow JSON file: MEK, ring, and B2 credentials in one package |
 | `-input` | The object: a `b2://bucket/key` URL or a local file path |
-| `-b2-bucket` | Bucket when `-input` names only a key |
-| `-b2-region` | B2 region (overrides `ARMOR_B2_REGION`) |
-| `-b2-endpoint` | B2 S3 endpoint (overrides `ARMOR_B2_ENDPOINT`) |
-| `-b2-prefix` | ADR-001 prefix the bucket stores objects under (default `ARMOR_PREFIX`); locates the multipart HMAC sidecar |
+| `-bucket` | Bucket when `-input` names only a key; defaults from `ARMOR_BUCKET` |
+| `-b2-bucket` | Deprecated alias for `-bucket` |
+| `-region` | B2 region; defaults from `ARMOR_B2_REGION` |
+| `-b2-region` | Deprecated alias for `-region` |
+| `-endpoint` | B2 S3 endpoint; defaults from `ARMOR_B2_ENDPOINT` |
+| `-b2-endpoint` | Deprecated alias for `-endpoint` |
+| `-prefix` | ADR-001 prefix the bucket stores objects under; defaults from `ARMOR_PREFIX` |
+| `-b2-prefix` | Deprecated alias for `-prefix` |
 | `-key-id` | Expected `x-amz-meta-armor-key-id` for multi-key buckets |
 | `-wrapped-dek` | Base64 wrapped DEK — required for local single-PUT files (the `x-amz-meta-armor-wrapped-dek` metadata value) |
 | `-sidecar` | JSON HMAC sidecar file for a local multipart object |
@@ -235,6 +242,7 @@ substitute for a DR drill against the published image and its escrow package.
 | `-output` | Write plaintext here instead of stdout |
 | `-verbose` | Verbose progress on stderr; `-v` is a deprecated alias that still works and prints a pointer (the top-level `armor -v` still prints the version) |
 | `-read-concurrency` | Maximum concurrent ranged reads (default `ARMOR_READ_CONCURRENCY` or 16) |
+| `-json` | Print a JSON result; plaintext is base64 in `plaintext_base64` unless `-output` writes it to a file |
 
 - **Inputs:** one object, from B2 (`-input b2://bucket/key`, or `-input` +
   `-b2-bucket`) or the local filesystem. B2 reads need the backend
@@ -270,10 +278,11 @@ performs, without a running server.
 
 | Flag | Meaning |
 |------|---------|
-| `-bucket` | Bucket to verify (required) |
+| `-bucket` | Bucket to verify; defaults from `ARMOR_BUCKET` |
 | `-mek` | Master encryption key as hex |
 | `-mek-file` | File holding the MEK hex |
 | `-escrow` | Escrow JSON file — the only way to verify objects written under ring keys other than the active one |
+| `-mek-ring` | MEK ring: comma-separated `fingerprint:key` entries, or `@file` |
 | `-output` | Write the JSON report here (default stdout) |
 | `-verbose` | Verbose output on stderr; `-v` is a deprecated alias that still works and prints a pointer |
 | `-prefix` | Only verify keys under this prefix |
@@ -282,6 +291,11 @@ performs, without a running server.
 | `-quick` | Verify envelope header and DEK unwrap only — skip downloading and HMAC-checking object bodies |
 | `-concurrency` | Concurrent verifications (default 10) |
 | `-b2-prefix` | ADR-001 prefix the bucket stores objects under (default `ARMOR_PREFIX`) |
+| `-region` | B2 region; defaults from `ARMOR_B2_REGION` |
+| `-b2-region` | Deprecated alias for `-region` |
+| `-endpoint` | B2 S3 endpoint; defaults from `ARMOR_B2_ENDPOINT` |
+| `-b2-endpoint` | Deprecated alias for `-endpoint` |
+| `-json` | Explicitly request the JSON verification report (the default report format remains JSON for compatibility) |
 
 - **Inputs:** B2 credentials and the keys to check. Backend environment:
   `ARMOR_B2_REGION`, `ARMOR_B2_ENDPOINT`, `ARMOR_B2_ACCESS_KEY_ID`,
@@ -321,7 +335,7 @@ per-object keys. The CLI is a thin client of the admin API
 
 | Flag | Meaning |
 |------|---------|
-| `-admin-url` | Admin API endpoint (required), e.g. `http://127.0.0.1:9001` |
+| `-admin-url` | Admin API endpoint (defaults from `ARMOR_ADMIN_LISTEN`), e.g. `http://127.0.0.1:9001` |
 | `-dry-run` | Verify objects could be migrated without changing anything |
 | `-inventory-only` | Classify object metadata without reading bodies or writing migrated objects; implies `-dry-run` |
 | `-target` | Target format version (`v3` or `3`); must match the server's configured write version |
@@ -369,9 +383,10 @@ deployment's write format.
 | Flag | Meaning |
 |------|---------|
 | `-for` | Tool to generate for (required): `aws-cli`, `rclone`, `boto3`, `duckdb`, `litestream`, `barman` |
-| `-endpoint` | ARMOR endpoint URL (required), e.g. `http://localhost:9000` |
-| `-bucket` | Bucket name to include in the examples |
+| `-endpoint` | ARMOR endpoint URL (defaults from `ARMOR_LISTEN`), e.g. `http://localhost:9000` |
+| `-bucket` | Bucket name to include in the examples (defaults from `ARMOR_BUCKET`) |
 | `-credential` | Named credential to reference in the output comments |
+| `-json` | Print `{tool, config}` as one JSON object instead of the configuration text |
 
 - **Inputs:** the flags above, plus the optional `ARMOR_FORMAT_VERSION` (2 or
   3). The write format decides whether the emitted multipart block describes

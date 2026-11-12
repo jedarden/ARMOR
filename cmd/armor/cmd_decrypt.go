@@ -32,20 +32,26 @@ func init() {
 	decryptFlags.BoolVar(&mekEnvFallback, "mek-env", true, "Fallback to ARMOR_MEK env var if flags not set")
 	decryptFlags.StringVar(&escrowFile, "escrow", "", "Path to escrow JSON file containing MEK and B2 credentials (self-contained recovery)")
 	decryptFlags.StringVar(&inputFlag, "input", "", "Input: B2 URL (b2://bucket/key) or local file path")
-	decryptFlags.StringVar(&b2BucketFlag, "b2-bucket", "", "B2 bucket (alternative to B2 URL)")
-	decryptFlags.StringVar(&b2RegionFlag, "b2-region", "", "B2 region (e.g., us-west-004); overrides ARMOR_B2_REGION env var")
-	decryptFlags.StringVar(&b2EndpointFlag, "b2-endpoint", "", "B2 S3 endpoint (e.g., https://s3.us-west-004.backblazeb2.com); overrides ARMOR_B2_ENDPOINT env var")
-	decryptFlags.StringVar(&b2PrefixFlag, "b2-prefix", normalizePrefix(os.Getenv("ARMOR_PREFIX")), "ADR-001 key prefix the bucket stores objects under (default: ARMOR_PREFIX). Only affects multipart HMAC sidecar lookup: the sidecar lives at <prefix>.armor/hmac/ and is named by the UNprefixed client key, while the ciphertext is addressed by the prefixed one")
+	decryptFlags.StringVar(&b2BucketFlag, "bucket", envFlagDefault("ARMOR_BUCKET"), "Bucket (alternative to a b2:// URL)")
+	decryptFlags.StringVar(&b2BucketFlag, "b2-bucket", envFlagDefault("ARMOR_BUCKET"), "DEPRECATED alias of -bucket")
+	decryptFlags.StringVar(&b2RegionFlag, "region", envFlagDefault("ARMOR_B2_REGION"), "B2 region")
+	decryptFlags.StringVar(&b2RegionFlag, "b2-region", envFlagDefault("ARMOR_B2_REGION"), "DEPRECATED alias of -region")
+	decryptFlags.StringVar(&b2EndpointFlag, "endpoint", envFlagDefault("ARMOR_B2_ENDPOINT"), "B2 S3 endpoint")
+	decryptFlags.StringVar(&b2EndpointFlag, "b2-endpoint", envFlagDefault("ARMOR_B2_ENDPOINT"), "DEPRECATED alias of -endpoint")
+	decryptFlags.StringVar(&b2PrefixFlag, "prefix", normalizePrefix(envFlagDefault("ARMOR_PREFIX")), "ADR-001 key prefix used for multipart sidecars")
+	decryptFlags.StringVar(&b2PrefixFlag, "b2-prefix", normalizePrefix(envFlagDefault("ARMOR_PREFIX")), "DEPRECATED alias of -prefix")
 	decryptFlags.StringVar(&b2KeyID, "key-id", "", "Key ID for multi-key MEK (from x-amz-meta-armor-key-id)")
 	decryptFlags.StringVar(&wrappedDEKFlag, "wrapped-dek", "", "Wrapped DEK (base64, for local files)")
 	decryptFlags.StringVar(&sidecarFlag, "sidecar", "", "Path to a JSON HMAC sidecar file for a local multipart object (ADR-003 headerless layout)")
 	decryptFlags.StringVar(&ivFlag, "iv", "", "Object IV (hex, 16 bytes) for a local multipart object (required with -sidecar)")
-	decryptFlags.IntVar(&versionFlag, "envelope-version", 1, "Envelope version (1, 2, or 3), for local multipart sidecars lacking a version field (default: 1)")
-	decryptFlags.IntVar(&versionFlag, "version", 1, "DEPRECATED alias of -envelope-version")
+	decryptFlags.IntVar(&versionFlag, "envelope-version", 1, "Envelope version (1, 2, or 3), for local multipart sidecars lacking a version field")
+	decryptFlags.IntVar(&versionFlag, "version", 0, "DEPRECATED alias of -envelope-version")
+	versionFlag = 1
 	decryptFlags.StringVar(&outputFlag, "output", "", "Output file path (default: stdout)")
 	decryptFlags.BoolVar(&decryptVerboseFlag, "verbose", false, "Verbose output")
 	decryptFlags.BoolVar(&decryptVerboseFlag, "v", false, "DEPRECATED alias of -verbose")
 	decryptFlags.IntVar(&readConcurrency, "read-concurrency", envInt("ARMOR_READ_CONCURRENCY", 16), "Maximum concurrent ranged reads")
+	decryptFlags.BoolVar(&decryptJSONFlag, "json", false, "Print a machine-readable JSON result instead of plaintext on stdout")
 
 	registerCommand(Command{
 		Name:        "decrypt",
@@ -81,7 +87,8 @@ var (
 	versionFlag int    // envelope version (1, 2, or 3), for local multipart sidecars without a version field (default: 1)
 
 	// Output
-	outputFlag string
+	outputFlag      string
+	decryptJSONFlag bool
 
 	// Other options
 	decryptVerboseFlag bool
@@ -98,9 +105,10 @@ func decrypt(fs *flag.FlagSet) {
 	}
 
 	printDeprecatedFlagPointers(fs, map[string]string{
-		"v":       "-verbose",
-		"version": "-envelope-version",
-		"mek":     "-mek-file or the ARMOR_MEK environment variable",
+		"v":         "-verbose",
+		"version":   "-envelope-version",
+		"mek":       "-mek-file or the ARMOR_MEK environment variable",
+		"b2-bucket": "-bucket", "b2-region": "-region", "b2-endpoint": "-endpoint", "b2-prefix": "-prefix",
 	})
 
 	// Get MEK and ring keys - try escrow file first, then fall back to other methods
@@ -145,7 +153,27 @@ func decrypt(fs *flag.FlagSet) {
 	}
 
 	// Write output
-	if err := writeOutput(plaintext); err != nil {
+	if decryptJSONFlag {
+		if outputFlag != "" {
+			if err := writeOutput(plaintext); err != nil {
+				fmt.Fprintf(os.Stderr, "Error writing output: %v\n", err)
+				os.Exit(1)
+			}
+		}
+		result := struct {
+			Input           string `json:"input"`
+			Bytes           int    `json:"bytes"`
+			Output          string `json:"output,omitempty"`
+			PlaintextBase64 string `json:"plaintext_base64,omitempty"`
+		}{Input: inputFlag, Bytes: len(plaintext), Output: outputFlag}
+		if outputFlag == "" {
+			result.PlaintextBase64 = base64.StdEncoding.EncodeToString(plaintext)
+		}
+		if err := json.NewEncoder(os.Stdout).Encode(result); err != nil {
+			fmt.Fprintf(os.Stderr, "Error writing JSON result: %v\n", err)
+			os.Exit(1)
+		}
+	} else if err := writeOutput(plaintext); err != nil {
 		fmt.Fprintf(os.Stderr, "Error writing output: %v\n", err)
 		os.Exit(1)
 	}

@@ -37,10 +37,11 @@ func init() {
 	// -concurrency keeps migrate's default of 0, which isn't valid for
 	// verify's own semaphore sizing — see verifyConcurrency() below.
 	verifyFlags := flag.NewFlagSet("verify", flag.ExitOnError)
-	verifyFlags.StringVar(&bucketFlag, "bucket", "", "Bucket name to verify (required)")
+	verifyFlags.StringVar(&bucketFlag, "bucket", envFlagDefault("ARMOR_BUCKET"), "Bucket name to verify")
 	verifyFlags.StringVar(&mekFlag, "mek", "", "Master encryption key (hex, 64 chars)")
 	verifyFlags.StringVar(&mekFileFlag, "mek-file", "", "Read MEK from file (hex, 64 chars)")
 	verifyFlags.StringVar(&escrowFile, "escrow", "", "Path to escrow JSON file containing MEK, MEK ring and B2 credentials (self-contained recovery; the only multi-key source)")
+	verifyFlags.StringVar(&mekRingFlag, "mek-ring", "", "MEK ring: comma-separated fingerprint:key entries, or @file")
 	verifyFlags.StringVar(&outputFlag, "output", "", "Output report file path (default: stdout)")
 	verifyFlags.BoolVar(&decryptVerboseFlag, "verbose", false, "Verbose output")
 	verifyFlags.BoolVar(&decryptVerboseFlag, "v", false, "DEPRECATED alias of -verbose")
@@ -54,7 +55,12 @@ func init() {
 	// NAMED by the UNprefixed client key while the ciphertext lives under the
 	// prefixed key — so verify strips the prefix before resolving a sidecar
 	// (the server's loadV3MultipartSidecar does the same).
-	verifyFlags.StringVar(&b2PrefixFlag, "b2-prefix", normalizePrefix(os.Getenv("ARMOR_PREFIX")), "ADR-001 key prefix the bucket stores objects under (default: ARMOR_PREFIX)")
+	verifyFlags.StringVar(&b2PrefixFlag, "b2-prefix", normalizePrefix(envFlagDefault("ARMOR_PREFIX")), "DEPRECATED alias of -prefix")
+	verifyFlags.StringVar(&b2RegionFlag, "region", envFlagDefault("ARMOR_B2_REGION"), "B2 region")
+	verifyFlags.StringVar(&b2RegionFlag, "b2-region", envFlagDefault("ARMOR_B2_REGION"), "DEPRECATED alias of -region")
+	verifyFlags.StringVar(&b2EndpointFlag, "endpoint", envFlagDefault("ARMOR_B2_ENDPOINT"), "B2 S3 endpoint")
+	verifyFlags.StringVar(&b2EndpointFlag, "b2-endpoint", envFlagDefault("ARMOR_B2_ENDPOINT"), "DEPRECATED alias of -endpoint")
+	verifyFlags.BoolVar(&verifyJSONFlag, "json", false, "Print the verification report as JSON")
 
 	registerCommand(Command{
 		Name:        "verify",
@@ -66,10 +72,11 @@ func init() {
 
 // Verification-specific flags
 var (
-	prefixFlag    string
-	keysFileFlag  string
-	sinceFlag     string
-	quickModeFlag bool
+	prefixFlag     string
+	keysFileFlag   string
+	sinceFlag      string
+	quickModeFlag  bool
+	verifyJSONFlag bool
 )
 
 // verifyConcurrency returns the shared -concurrency flag's value, defaulting
@@ -94,8 +101,9 @@ func verify(fs *flag.FlagSet) {
 	}
 
 	printDeprecatedFlagPointers(fs, map[string]string{
-		"v":   "-verbose",
-		"mek": "-mek-file or the ARMOR_MEK environment variable",
+		"v":         "-verbose",
+		"mek":       "-mek-file or the ARMOR_MEK environment variable",
+		"b2-prefix": "-prefix", "b2-region": "-region", "b2-endpoint": "-endpoint",
 	})
 
 	// Validate required flags
@@ -325,13 +333,29 @@ func getMEKForVerify() ([]byte, []crypto.RingKeyEntry, error) {
 		return nil, nil, fmt.Errorf("invalid MEK length: got %d bytes, expected 32", len(mek))
 	}
 
-	return mek, nil, nil
+	var ringKeys []crypto.RingKeyEntry
+	if mekRingFlag != "" {
+		ringKeys, err = parseMEKRing(mekRingFlag)
+		if err != nil {
+			return nil, nil, fmt.Errorf("parsing MEK ring: %w", err)
+		}
+	}
+	return mek, ringKeys, nil
 }
 
 // initB2BackendForVerify initializes B2 backend from environment
 func initB2BackendForVerify() (backend.Backend, error) {
-	region := os.Getenv("ARMOR_B2_REGION")
-	endpoint := os.Getenv("ARMOR_B2_ENDPOINT")
+	region := b2RegionFlag
+	if region == "" {
+		region = os.Getenv("ARMOR_B2_REGION")
+	}
+	endpoint := b2EndpointFlag
+	if endpoint == "" {
+		endpoint = os.Getenv("ARMOR_B2_ENDPOINT")
+	}
+	if endpoint == "" && region != "" {
+		endpoint = fmt.Sprintf("https://s3.%s.backblazeb2.com", region)
+	}
 	accessKey := os.Getenv("ARMOR_B2_ACCESS_KEY_ID")
 	secretKey := os.Getenv("ARMOR_B2_SECRET_ACCESS_KEY")
 	cfDomain := os.Getenv("ARMOR_CF_DOMAIN")
@@ -456,15 +480,15 @@ type ObjectVerificationResult struct {
 
 // VerificationReport is the complete verification output
 type VerificationReport struct {
-	Bucket         string                    `json:"bucket"`
-	Prefix         string                    `json:"prefix,omitempty"`
-	TotalObjects   int                       `json:"total_objects"`
-	OKCount        int                       `json:"ok_count"`
-	CorruptedCount int                       `json:"corrupted_count"`
-	ErrorCount     int                       `json:"error_count"`
-	QuickMode      bool                      `json:"quick_mode"`
-	VerifyDate     time.Time                 `json:"verification_date"`
-	Duration       float64                   `json:"duration_seconds"`
+	Bucket         string                     `json:"bucket"`
+	Prefix         string                     `json:"prefix,omitempty"`
+	TotalObjects   int                        `json:"total_objects"`
+	OKCount        int                        `json:"ok_count"`
+	CorruptedCount int                        `json:"corrupted_count"`
+	ErrorCount     int                        `json:"error_count"`
+	QuickMode      bool                       `json:"quick_mode"`
+	VerifyDate     time.Time                  `json:"verification_date"`
+	Duration       float64                    `json:"duration_seconds"`
 	Results        []ObjectVerificationResult `json:"results"`
 }
 
@@ -472,12 +496,12 @@ type VerificationReport struct {
 func runVerification(ctx context.Context, b2 backend.Backend, ks *verifyKeySource, keys []string, since time.Time) *VerificationReport {
 	startTime := time.Now()
 	report := &VerificationReport{
-		Bucket:     bucketFlag,
-		Prefix:     prefixFlag,
+		Bucket:       bucketFlag,
+		Prefix:       prefixFlag,
 		TotalObjects: len(keys),
-		QuickMode:  quickModeFlag,
-		VerifyDate: startTime,
-		Results:    make([]ObjectVerificationResult, 0, len(keys)),
+		QuickMode:    quickModeFlag,
+		VerifyDate:   startTime,
+		Results:      make([]ObjectVerificationResult, 0, len(keys)),
 	}
 
 	// Create semaphore for concurrency

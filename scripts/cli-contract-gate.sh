@@ -27,6 +27,12 @@ if ! "$GO" test -count=1 -short ./tests/cli-contract -run 'TestFleetMissingToken
 	echo "FAILED: focused machine-readable and companion exit contracts" >&2
 fi
 
+echo "+ $GO test -count=1 -short ./cmd/armor -run 'TestCLIFlagAliasesAndDefaultHelpContract|TestCLIJSONOutputsParse'"
+if ! "$GO" test -count=1 -short ./cmd/armor -run 'TestCLIFlagAliasesAndDefaultHelpContract|TestCLIJSONOutputsParse'; then
+	status=1
+	echo "FAILED: CLI aliases and JSON output" >&2
+fi
+
 echo "+ $GO test -count=1 -short ./cmd/armor -run TestCheckJSONAndProbeFailureExitContract"
 if ! "$GO" test -count=1 -short ./cmd/armor -run TestCheckJSONAndProbeFailureExitContract; then
 	status=1

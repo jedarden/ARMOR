@@ -193,7 +193,7 @@ func TestTopLevelHelpListsSubcommands(t *testing.T) {
 
 // TestSubcommandHelpShowsOnlyOwnFlags verifies `armor <cmd> --help` content:
 // the command's one-line summary followed by only that subcommand's flags.
-// client-config owns -for; check owns -json.
+// client-config owns -for and -json; check owns its own -json.
 func TestSubcommandHelpShowsOnlyOwnFlags(t *testing.T) {
 	t.Run("client-config", func(t *testing.T) {
 		cmd, exists := commands["client-config"]
@@ -208,12 +208,12 @@ func TestSubcommandHelpShowsOnlyOwnFlags(t *testing.T) {
 		if !strings.Contains(out, cmd.Description) {
 			t.Errorf("client-config help missing its one-line summary, got:\n%s", out)
 		}
-		for _, own := range []string{"-for", "-endpoint", "-bucket", "-credential"} {
+		for _, own := range []string{"-for", "-endpoint", "-bucket", "-credential", "-json"} {
 			if !strings.Contains(out, own) {
 				t.Errorf("client-config help missing its own flag %q, got:\n%s", own, out)
 			}
 		}
-		for _, foreign := range []string{"-escrow", "-iv", "-keys-file", "-admin-url", "-json"} {
+		for _, foreign := range []string{"-escrow", "-iv", "-keys-file", "-admin-url"} {
 			if strings.Contains(out, foreign) {
 				t.Errorf("client-config help must not show foreign flag %q, got:\n%s", foreign, out)
 			}

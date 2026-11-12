@@ -2,6 +2,7 @@
 package main
 
 import (
+	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
@@ -12,9 +13,10 @@ func init() {
 	// client-config specific flags, on client-config's own flag set
 	clientConfigFlags := flag.NewFlagSet("client-config", flag.ExitOnError)
 	clientConfigFlags.StringVar(&forFlag, "for", "", "Tool to generate config for: aws-cli, rclone, boto3, duckdb, litestream, barman (required)")
-	clientConfigFlags.StringVar(&endpointFlag, "endpoint", "", "ARMOR endpoint URL (e.g., http://localhost:9000) (required)")
-	clientConfigFlags.StringVar(&bucketFlag, "bucket", "", "Bucket name (optional, for inclusion in config)")
+	clientConfigFlags.StringVar(&endpointFlag, "endpoint", endpointFlagDefault(), "ARMOR endpoint URL (defaults from ARMOR_LISTEN)")
+	clientConfigFlags.StringVar(&bucketFlag, "bucket", envFlagDefault("ARMOR_BUCKET"), "Bucket name (defaults from ARMOR_BUCKET)")
 	clientConfigFlags.StringVar(&credentialFlag, "credential", "", "Named credential to reference (optional, for inclusion in config)")
+	clientConfigFlags.BoolVar(&clientConfigJSONFlag, "json", false, "Print the generated configuration as a JSON object")
 
 	registerCommand(Command{
 		Name:        "client-config",
@@ -26,11 +28,34 @@ func init() {
 
 // client-config flags
 var (
-	forFlag        string
-	endpointFlag   string
-	bucketFlag     string
-	credentialFlag string
+	forFlag              string
+	endpointFlag         string
+	bucketFlag           string
+	credentialFlag       string
+	clientConfigJSONFlag bool
 )
+
+func envFlagDefault(name string) string { return os.Getenv(name) }
+func endpointFlagDefault() string {
+	listen := os.Getenv("ARMOR_LISTEN")
+	if listen == "" {
+		return ""
+	}
+	if strings.Contains(listen, "://") {
+		return listen
+	}
+	return "http://" + listen
+}
+func adminURLFlagDefault() string {
+	listen := os.Getenv("ARMOR_ADMIN_LISTEN")
+	if listen == "" {
+		return ""
+	}
+	if strings.Contains(listen, "://") {
+		return listen
+	}
+	return "http://" + listen
+}
 
 // exit is os.Exit by default; tests override it (to a panic-and-recover
 // stand-in) so a bad-flags path can be asserted without killing the test
@@ -124,6 +149,16 @@ func clientConfig(fs *flag.FlagSet) {
 		exit(2)
 	}
 
+	if clientConfigJSONFlag {
+		if err := json.NewEncoder(os.Stdout).Encode(struct {
+			Tool   string `json:"tool"`
+			Config string `json:"config"`
+		}{tool, output}); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: unable to encode JSON output: %v\n", err)
+			exit(1)
+		}
+		return
+	}
 	fmt.Print(output)
 }
 
