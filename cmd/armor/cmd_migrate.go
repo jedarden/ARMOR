@@ -24,9 +24,9 @@ const (
 
 func init() {
 	migrateFlags := flag.NewFlagSet("migrate", flag.ExitOnError)
-	migrateFlags.StringVar(&adminURLFlag, "admin-url", "", "Admin API endpoint (required, e.g., http://127.0.0.1:9001)")
+	migrateFlags.StringVar(&adminURLFlag, "admin-url", adminURLFlagDefault(), "Admin API endpoint (defaults from ARMOR_ADMIN_LISTEN)")
 	migrateFlags.BoolVar(&dryRunFlag, "dry-run", false, "Dry run: verify objects can be migrated without making changes")
-	migrateFlags.BoolVar(&inventoryOnlyFlag, "inventory-only", false, "Inventory only: classify and verify candidates without writing migrated objects")
+	migrateFlags.BoolVar(&inventoryOnlyFlag, "inventory-only", false, "Inventory only: classify object metadata without reading bodies or writing migrated objects")
 	migrateFlags.StringVar(&targetFlag, "target", "3", "Target format version to migrate to (e.g., v3 or 3); must match the server's configured format write version")
 	migrateFlags.StringVar(&includeFlag, "include", "1,2", "Comma-separated source versions to migrate (default: 1,2 for a V3 migration)")
 	migrateFlags.IntVar(&concurrencyFlag, "concurrency", 0, "Number of concurrent workers (default: server-side default)")
@@ -106,7 +106,7 @@ func migrate(fs *flag.FlagSet) {
 		exit(2)
 	}
 	if adminURLFlag == "" {
-		fmt.Fprintln(os.Stderr, "Error: -admin-url is required")
+		fmt.Fprintln(os.Stderr, "Error: -admin-url is required (or set ARMOR_ADMIN_LISTEN)")
 		fmt.Fprintln(os.Stderr, "Usage: armor migrate -admin-url <url> [other flags]")
 		exit(2)
 	}
@@ -128,7 +128,8 @@ func migrate(fs *flag.FlagSet) {
 	}
 
 	var initial map[string]interface{}
-	if operationID == "" {
+	started := operationID == ""
+	if started {
 		fmt.Fprintln(os.Stderr, "Starting migration...")
 		var err error
 		initial, err = postMigration(client, endpoint, migrationStartQuery(), adminToken)
@@ -156,7 +157,7 @@ func migrate(fs *flag.FlagSet) {
 	}
 
 	// A resume has no start response to report and must attach to durable state.
-	if !watchFlag && operationID == "" {
+	if started && !watchFlag {
 		if jsonOutputFlag {
 			if err := writeJSON(os.Stdout, initial); err != nil {
 				fmt.Fprintf(os.Stderr, "Error: failed to encode operation report: %v\n", err)
@@ -252,7 +253,7 @@ func migrationStatus(m map[string]interface{}) string {
 
 func isMigrationTerminal(status string) bool {
 	switch status {
-	case "completed", "failed", "interrupted", "aborted", "cancelled", "canceled", "unknown":
+	case "completed", "completed_with_failures", "failed", "interrupted", "aborted", "cancelled", "canceled", "unknown":
 		return true
 	default:
 		return false
@@ -314,6 +315,9 @@ func watchMigration(client *http.Client, migrateURL, adminToken, operationID str
 		if err != nil {
 			return fmt.Errorf("failed to parse migration state: %w", err)
 		}
+		if operationID != "" && state.OperationID != "" && state.OperationID != operationID {
+			return fmt.Errorf("status response belongs to operation %q, expected %q", state.OperationID, operationID)
+		}
 		unknown := migrationUnknownObjects(m)
 		classificationJSON := ""
 		if state.Classification != nil {
@@ -358,13 +362,20 @@ func reportMigration(m map[string]interface{}, source string) error {
 		return fmt.Errorf("%s response is invalid: %w", source, err)
 	}
 	status := migrationStatus(m)
-	if status == "completed" {
+	if status == "completed" && state.FailedObjects == 0 && migrationUnknownObjects(m) == 0 && len(state.Failures) == 0 {
 		fmt.Fprintln(os.Stderr, "Migration completed successfully.")
 	} else {
 		fmt.Fprintf(os.Stderr, "Migration %s.\n", status)
 	}
 	fmt.Fprintf(os.Stderr, "Total: %d, Processed: %d, Skipped: %d, Failed: %d, Unknown: %d\n", state.TotalObjects, state.ProcessedObjects, state.SkippedObjects, state.FailedObjects, migrationUnknownObjects(m))
 	printClassification(m)
+	for i, failure := range state.Failures {
+		if i == 20 {
+			fmt.Fprintf(os.Stderr, "... %d additional failure records (use -json for the full report)\n", len(state.Failures)-i)
+			break
+		}
+		fmt.Fprintf(os.Stderr, "Failed object %q: %s\n", failure.Key, failure.Reason)
+	}
 	if jsonOutputFlag {
 		if err := writeJSON(os.Stdout, m); err != nil {
 			return fmt.Errorf("failed to encode completion report: %w", err)
@@ -388,13 +399,14 @@ func migrationUnknownObjects(m map[string]interface{}) int {
 			count = n
 		}
 	}
-	if count == 0 {
-		// Older servers expose unknown source formats through the inventory
-		// classification rather than a top-level counter. Treat malformed and
-		// contradictory entries as unknown objects so they cannot yield a false
-		// zero exit.
-		if cls, ok := m["classification"].(map[string]interface{}); ok {
-			count = jsonNumberOrCollectionCount(cls["malformed"]) + jsonNumberOrCollectionCount(cls["contradictory"])
+	// Older servers expose unknown source formats through the inventory
+	// classification rather than a top-level counter. Treat malformed and
+	// contradictory entries as unknown objects even if a partial top-level
+	// count is also present.
+	if cls, ok := m["classification"].(map[string]interface{}); ok {
+		classified := jsonNumberOrCollectionCount(cls["malformed"]) + jsonNumberOrCollectionCount(cls["contradictory"])
+		if classified > count {
+			count = classified
 		}
 	}
 	return count

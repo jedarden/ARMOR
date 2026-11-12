@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/jedarden/armor/internal/backend"
 	"github.com/jedarden/armor/internal/config"
@@ -161,22 +162,40 @@ func TestMigrateFormatAcceptsExplicitTargetAndInclude(t *testing.T) {
 			request := startMigrationServer(t, tt.writeVersion)
 
 			resp, body := request(http.MethodPost, tt.query)
-			if resp.StatusCode != http.StatusOK {
-				t.Fatalf("%q: status = %d, want 200 (body: %s)", tt.query, resp.StatusCode, body)
+			if resp.StatusCode != http.StatusAccepted {
+				t.Fatalf("%q: status = %d, want 202 (body: %s)", tt.query, resp.StatusCode, body)
 			}
 			var result struct {
-				Status string `json:"status"`
+				Status      string `json:"status"`
+				OperationID string `json:"operation_id"`
 			}
 			if err := json.Unmarshal([]byte(body), &result); err != nil {
 				t.Fatalf("decode migration result: %v (body: %s)", err, body)
 			}
-			if result.Status != "completed" {
-				t.Errorf("migration status = %q, want completed (body: %s)", result.Status, body)
+			if result.OperationID == "" {
+				t.Fatalf("migration operation ID missing: %s", body)
 			}
 
 			// The persisted state must record the include set the request
 			// resolved to, proving the default/normalization took effect.
-			resp, body = request(http.MethodGet, "")
+			deadline := time.Now().Add(3 * time.Second)
+			for {
+				resp, body = request(http.MethodGet, "operation_id="+result.OperationID)
+				if resp.StatusCode == http.StatusInternalServerError && time.Now().Before(deadline) {
+					// Filesystem state writes can briefly expose an incomplete
+					// metadata sidecar to a simultaneous reader.
+					time.Sleep(10 * time.Millisecond)
+					continue
+				}
+				var current migrationProgress
+				if err := json.Unmarshal([]byte(body), &current); err != nil {
+					t.Fatalf("decode progress response: %v (body: %s)", err, body)
+				}
+				if current.Status == "completed" || time.Now().After(deadline) {
+					break
+				}
+				time.Sleep(10 * time.Millisecond)
+			}
 			if resp.StatusCode != http.StatusOK {
 				t.Fatalf("progress: status = %d (body: %s)", resp.StatusCode, body)
 			}

@@ -323,7 +323,7 @@ per-object keys. The CLI is a thin client of the admin API
 |------|---------|
 | `-admin-url` | Admin API endpoint (required), e.g. `http://127.0.0.1:9001` |
 | `-dry-run` | Verify objects could be migrated without changing anything |
-| `-inventory-only` | Inventory and integrity-check candidates without writing migrated objects; implies `-dry-run` |
+| `-inventory-only` | Classify object metadata without reading bodies or writing migrated objects; implies `-dry-run` |
 | `-target` | Target format version (`v3` or `3`); must match the server's configured write version |
 | `-include` | Comma-separated source versions to migrate (default: `1,2` for a V3 migration) |
 | `-concurrency` | Concurrent workers (default: the server's own default) |

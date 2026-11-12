@@ -29,37 +29,52 @@ import (
 const migrationLeaseTTL = 5 * time.Minute
 
 type migrationContract struct {
-	Bucket      string   `json:"bucket"`
-	Target      uint8    `json:"target"`
-	Include     []string `json:"include"`
-	DryRun      bool     `json:"dry_run"`
-	Concurrency int      `json:"concurrency"`
-	KeyID       string   `json:"key_id"`
-	KeyPrefix   string   `json:"key_prefix"`
+	Bucket        string   `json:"bucket"`
+	Target        uint8    `json:"target"`
+	Include       []string `json:"include"`
+	DryRun        bool     `json:"dry_run"`
+	InventoryOnly bool     `json:"inventory_only"`
+	Concurrency   int      `json:"concurrency"`
+	KeyID         string   `json:"key_id"`
+	KeyPrefix     string   `json:"key_prefix"`
 }
 
 // RunDurable executes a resumable migration. It is intentionally synchronous
 // so the caller can own the worker goroutine and report a final result in unit
 // tests; the HTTP layer calls it from a detached background job.
 func (fm *FormatMigrator) RunDurable(ctx context.Context, dryRun bool, concurrency int) (*MigrationResult, error) {
+	if err := fm.prepareDurable(ctx, dryRun, false, concurrency); err != nil {
+		return nil, err
+	}
+	return fm.runPreparedDurable(ctx)
+}
+
+// prepareDurable admits and persists an operation before HTTP returns its ID.
+// The caller must run runPreparedDurable after a successful preparation.
+func (fm *FormatMigrator) prepareDurable(ctx context.Context, dryRun, inventoryOnly bool, concurrency int) error {
 	if concurrency < 1 {
 		concurrency = 1
 	}
 	digestBytes, err := json.Marshal(migrationContract{
 		Bucket: fm.bucket, Target: fm.currentWriteVersion, Include: fm.includeVersions,
-		DryRun: dryRun, Concurrency: concurrency, KeyID: fm.keyID, KeyPrefix: fm.keyPrefix,
+		DryRun: dryRun, InventoryOnly: inventoryOnly, Concurrency: concurrency, KeyID: fm.keyID, KeyPrefix: fm.keyPrefix,
 	})
 	if err != nil {
-		return nil, err
+		return err
 	}
 	digest := sha256.Sum256(digestBytes)
 	configDigest := hex.EncodeToString(digest[:])
 
 	state, loadErr := fm.loadState(ctx)
 	if loadErr != nil && !migrationStateMissing(loadErr) {
-		return nil, fmt.Errorf("load migration state: %w", loadErr)
+		return fmt.Errorf("load migration state: %w", loadErr)
 	}
-	if state == nil || state.Status == "completed" || state.DryRun != dryRun || (state.ConfigDigest != "" && state.ConfigDigest != configDigest) {
+	if state != nil && state.Status != "completed" && !state.DryRun && !dryRun {
+		if state.CurrentWriteVersion != fm.currentWriteVersion || strings.Join(state.IncludeVersions, ",") != strings.Join(fm.includeVersions, ",") || (state.ConfigDigest != "" && state.ConfigDigest != configDigest) {
+			return fmt.Errorf("migration contract does not match unfinished operation %s", state.ID)
+		}
+	}
+	if state == nil || state.Status == "completed" || dryRun || state.DryRun != dryRun || state.InventoryOnly != inventoryOnly || (state.ConfigDigest != "" && state.ConfigDigest != configDigest) {
 		state = &MigrationState{
 			ID:                  fmt.Sprintf("format-migration-%d", time.Now().UnixNano()),
 			StartTime:           time.Now().UTC(),
@@ -68,6 +83,7 @@ func (fm *FormatMigrator) RunDurable(ctx context.Context, dryRun bool, concurren
 			IncludeVersions:     append([]string(nil), fm.includeVersions...),
 			CurrentWriteVersion: fm.currentWriteVersion,
 			DryRun:              dryRun,
+			InventoryOnly:       inventoryOnly,
 			Concurrency:         concurrency,
 			ConfigDigest:        configDigest,
 			LeaseKey:            fm.keyPrefix + ".armor/format-migration-lease.json",
@@ -95,16 +111,34 @@ func (fm *FormatMigrator) RunDurable(ctx context.Context, dryRun bool, concurren
 	fm.stateMu.Unlock()
 
 	if err := fm.acquireMigrationLease(ctx, state.ID); err != nil {
-		return nil, err
+		return err
 	}
-	defer fm.releaseMigrationLease(context.Background())
 	if err := fm.saveState(ctx); err != nil {
-		return nil, fmt.Errorf("save migration start: %w", err)
+		fm.releaseMigrationLease(context.Background())
+		return fmt.Errorf("save migration start: %w", err)
 	}
+	return nil
+}
+
+func (fm *FormatMigrator) runPreparedDurable(ctx context.Context) (*MigrationResult, error) {
+	defer fm.releaseMigrationLease(context.Background())
+	concurrency, dryRun := fm.state.Concurrency, fm.state.DryRun
 	if err := fm.countObjects(ctx); err != nil {
 		fm.finishState("failed", err.Error())
 		_ = fm.saveState(context.Background())
 		return nil, err
+	}
+	if err := fm.saveState(ctx); err != nil {
+		fm.finishState("failed", err.Error())
+		_ = fm.saveState(context.Background())
+		return fm.durableResult("failed"), fmt.Errorf("save migration inventory: %w", err)
+	}
+	if fm.state.InventoryOnly {
+		fm.finishState("completed", "")
+		if err := fm.saveState(context.Background()); err != nil {
+			return fm.durableResult("failed"), err
+		}
+		return fm.durableResult("completed"), nil
 	}
 
 	jobs := make(chan backend.ObjectInfo, concurrency*2)
@@ -118,7 +152,7 @@ func (fm *FormatMigrator) RunDurable(ctx context.Context, dryRun bool, concurren
 			for obj := range jobs {
 				if err := fm.processDurableObject(ctx, obj, dryRun); err != nil {
 					errMu.Lock()
-					if firstErr == nil && errors.Is(err, context.Canceled) {
+					if firstErr == nil {
 						firstErr = err
 					}
 					errMu.Unlock()
@@ -170,10 +204,14 @@ func (fm *FormatMigrator) RunDurable(ctx context.Context, dryRun bool, concurren
 		_ = fm.saveState(context.Background())
 		return fm.durableResult("interrupted"), listErr
 	}
-	if firstErr != nil && errors.Is(firstErr, context.Canceled) {
-		fm.finishState("interrupted", firstErr.Error())
+	if firstErr != nil {
+		status := "failed"
+		if errors.Is(firstErr, context.Canceled) || errors.Is(firstErr, context.DeadlineExceeded) {
+			status = "interrupted"
+		}
+		fm.finishState(status, firstErr.Error())
 		_ = fm.saveState(context.Background())
-		return fm.durableResult("interrupted"), firstErr
+		return fm.durableResult(status), firstErr
 	}
 	fm.finishState("completed", "")
 	if err := fm.saveState(context.Background()); err != nil {
@@ -209,6 +247,7 @@ func (fm *FormatMigrator) durableResult(status string) *MigrationResult {
 		SkippedObjects: fm.state.SkippedObjects, FailedObjects: fm.state.FailedObjects,
 		Failures: append([]MigrationFailure(nil), fm.state.Failures...), Duration: time.Since(fm.state.StartTime),
 		Status: status, ErrorMessage: fm.state.ErrorMessage, DryRun: fm.state.DryRun,
+		InventoryOnly: fm.state.InventoryOnly, UnknownObjects: fm.state.UnknownObjects,
 		Classification: fm.state.Classification.copy(),
 	}
 }

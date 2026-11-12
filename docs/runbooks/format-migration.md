@@ -128,13 +128,14 @@ Notes:
   does, however, **overwrite `<prefix>.armor/migration-state.json`** —
   archive any prior run's state before dry-running over it.
 - `GET /admin/format/migrate` returns `{"status":"no_migration"}` when no
-  state exists; it also answers `no_migration` (200, not an error) when the
-  state file is corrupt — do not parse that as "nothing happened".
+  state exists. An unreadable or corrupt state returns 500; investigate it
+  before attempting another migration.
 
 ## 3. Read the dry-run result
 
-Judge the run by `failed_objects` and the classification, not by `status`:
-the POST returns `status: "completed"` even when objects failed.
+Judge the final GET state by `failed_objects` and the classification, not by
+`status`: the worker can finish with `status: "completed"` even when objects
+failed. The POST returns 202 and the operation ID immediately.
 
 ```jsonc
 // classification summary (also rendered human-readable on stderr)
@@ -155,13 +156,15 @@ for the full decision rules):
 
 | Dimension | Buckets | Operator reading |
 |---|---|---|
-| source/layout | `v1_single_put`, `v1_multipart`, `v2_single_put`, `v2_multipart`, `v3`, `non_armor`, `malformed`, `contradictory` | The four `v1_*`/`v2_*` counts are the candidates. `contradictory` objects are reported, never migrated — triage them by hand. `malformed` (unparseable version) fails the walk outright |
+| source/layout | `v1_single_put`, `v1_multipart`, `v2_single_put`, `v2_multipart`, `v3`, `non_armor`, `malformed`, `contradictory` | The four `v1_*`/`v2_*` counts are the candidates. `contradictory` and `malformed` objects are reported as unknown; the CLI exits 1 until they are triaged. |
 | size | `size_lt_1mb` … `size_gt_10gb` | **Hard-gate check (§0.1):** any candidate count above the 5 MiB threshold blocks the live run |
 | key fingerprint | `by_key_fingerprint`, plus `legacy` for v1-style wrapping | Every fingerprint present must be covered by the active MEK or ring; `legacy` counts unwrap by trial |
 | outcome | `processed`, `skipped`, `failed`, `integrity-failed` | `integrity-failed` (HMAC or plaintext-SHA mismatch) is corrupted-at-rest: restore, do not migrate |
 
-Dry-run failures are the live run's failures. Fix causes (or restore
-corrupted objects) **before** going live, and re-run the dry run until
+Inventory-only reads object metadata and classifies layouts; it does not
+decrypt or integrity-check object bodies. Follow it with a full `-dry-run`
+to find content failures. Fix causes (or restore corrupted objects)
+**before** going live, and re-run the full dry run until
 `failed_objects` is zero or every remaining failure has a documented
 disposition (§9).
 
@@ -188,9 +191,10 @@ Expected outcomes:
   `failed_objects`: anything failed, the CLI's watch mode says
   `Migration had N failures.` and exits 1, and the JSON carries the full
   `failures` array.
-- **`500` + `{"status":"failed", "error": ...}`** — the run aborted: a
-  whole-bucket listing failed, state could not be persisted, or the request
-  context was cancelled. The partial result rides along in `result`.
+- **`status: "failed"` on GET** — the background run aborted, for example
+  because a bucket listing or state save failed. Inspect `error_message`
+  and the persisted checkpoints. A POST can also return 500 if admission
+  itself fails.
 - **Client timeout / dropped connection** — the durable operation continues;
   rerun `armor migrate -resume <operation-id> -watch` to reconnect (§6).
 - **`400`** — request rejected before anything ran: `target` mismatch,
@@ -206,31 +210,29 @@ watch -n 30 'curl -s -H "Authorization: Bearer $ARMOR_ADMIN_TOKEN" \
   "http://127.0.0.1:8001/api/v1/namespaces/<namespace>/services/armor:9001/proxy/admin/format/migrate?operation_id=<operation-id>" | jq "{status, processed_objects, total_objects, failed_objects, unknown_objects, last_key, classification}"'
 ```
 
-- Progress is saved at run start, **every 100 objects**, and at completion —
-  `processed_objects` moves in steps of up to 100. `last_key` is the
-  lexicographic cursor; keys at or before it are already done.
+- Progress is saved at run start, after each object checkpoint, and at
+  completion. `processed_objects` advances as candidates finish. `last_key`
+  names the last object checkpointed; inspect `checkpoints` for per-key state.
 - `status` reads `in_progress` → `completed`, or `interrupted` /
-  `failed` on the abort paths. There is no cancel endpoint: to stop a run,
-  disconnect the client (the walk stops at the next page boundary).
+  `failed` on the abort paths. Disconnecting the client does not stop the
+  server-side worker; there is no cancel endpoint.
 - `armor migrate -watch` polls at a 2 s cadence after its POST. If the CLI is
   disconnected, use `armor migrate -resume <operation-id> -watch`; the
   operation ID scopes every poll to the same durable run.
 
 ## 6. Failure recovery
 
-**Interruption (client disconnect, timeout, SIGTERM, pod crash).**
+**Interruption (server shutdown or pod crash).**
 
 - A graceful cancellation saves `status: "interrupted"`; a crash leaves the
   last periodic save, `status: "in_progress"` with `last_key`.
 - **Reattach with the operation ID** —
   `armor migrate -resume <operation-id> -watch` reconnects to the persisted
-  state without starting a second walk. The server's durable worker resumes
-  from its last checkpoint after a request or pod interruption.
-- An `interrupted` state is *not* resumed: the next POST starts a fresh run
-  (new migration id, cursor at the beginning). Already-migrated objects are
-  re-classified as at-target and skipped, so no work is undone — but the
-  earlier run's failure records do not carry over, and the fresh walk
-  re-derives everything. Judge the bucket from the newest completed run.
+  state without starting a second walk. A client disconnect or timeout does
+  not interrupt the server worker.
+- After a pod restart, issue the same POST parameters to resume an unfinished
+  operation from its durable checkpoints, then watch the returned operation
+  ID. The bucket lease prevents overlapping active workers.
 - Failure records reading `context canceled` (e.g.
   `failed to get metadata: context canceled`) in an interrupted run's
   tail are cancellation artifacts, not object defects. The next run gives

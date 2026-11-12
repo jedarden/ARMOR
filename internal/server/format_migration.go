@@ -69,6 +69,9 @@ type MigrationState struct {
 	CurrentWriteVersion uint8 `json:"current_write_version"`
 	// DryRun indicates if this is a dry run (no actual migration)
 	DryRun bool `json:"dry_run"`
+	// InventoryOnly stops after classification without reading object bodies.
+	InventoryOnly  bool `json:"inventory_only,omitempty"`
+	UnknownObjects int  `json:"unknown_objects"`
 	// Concurrency is the number of concurrent workers
 	Concurrency int `json:"concurrency"`
 	// Failures records failed objects with reasons
@@ -415,6 +418,8 @@ type MigrationResult struct {
 	Status           string             `json:"status"`
 	ErrorMessage     string             `json:"error_message,omitempty"`
 	DryRun           bool               `json:"dry_run"`
+	InventoryOnly    bool               `json:"inventory_only,omitempty"`
+	UnknownObjects   int                `json:"unknown_objects"`
 	// Classification is the cumulative per-dimension object count report
 	// (source/layout, size bucket, key fingerprint, outcome). Machine-
 	// readable via this JSON encoding; Summary renders it for humans.
@@ -1691,6 +1696,7 @@ func (fm *FormatMigrator) countObjects(ctx context.Context) error {
 	inv.OutcomeIntegrityFailed = fm.state.Classification.OutcomeIntegrityFailed
 	fm.state.Classification = inv
 	fm.state.TotalObjects = count
+	fm.state.UnknownObjects = inv.Malformed + inv.Contradictory
 	fm.stateMu.Unlock()
 
 	return nil
