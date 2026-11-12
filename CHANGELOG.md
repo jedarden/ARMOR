@@ -20,6 +20,82 @@ Entries before 0.1.1958 were written by hand on the Forgejo releases and are
 reproduced here; entries from 0.1.1958 on were reconstructed from git history
 on 2026-09-18 (bead armor-43ec803f).
 
+## 0.1.2008 (2026-11-12)
+
+- fix(armor-ebd22a99): isolate release gate scope env
+- wip(armor-ebd22a99): isolate release gate control env
+- wip(armor-d1a1f8c7): conform GetObject part and range handling
+- fix(cli): discard paste-ahead input at init hidden prompts (armor-c4eee05c)
+- docs(performance): settle repeated 0.1.2004/2006 check (armor-8bcb1387)
+- fix(cli): disable echo before init secret prompt (armor-c4eee05c)
+- fix(cli): hide init credential prompts (armor-c4eee05c)
+- test(cli): fix data race in migrate JSON reference auth capture (armor-103a2789)
+- test(handlers): pin DeleteObjects empty-batch acceptance (armor-3e779498)
+- docs(cli): run init from the checkout (armor-c4eee05c)
+- feat(cli): add armor init provisioning (armor-c4eee05c)
+- test(handlers): pin CopyObject metadata directive and self-copy conformance (armor-116ce8f3)
+- revert(ci): remove second red status probe (armor-1b2aea02)
+- test(integration): align direct fixture reads with ARMOR_PREFIX namespace (armor-c9ac89ce)
+- test(migrate): retry transient state reads in HTTP lifecycle (armor-48cd8d46)
+- test(ci): prove deliberate test failure reports red (armor-1b2aea02)
+- fix(handlers): refuse .armor/ keys per key in DeleteObjects, cap batch at 1000 (armor-40d9f5fd)
+- revert(ci): remove intentional red status probe (armor-1b2aea02)
+- fix(cli): default verify prefix from environment (armor-0e72b59f)
+- test(ci): exercise intentional red status probe (armor-1b2aea02)
+- fix(migrate): use committed admin URL default helper (armor-48cd8d46)
+- feat(cli): unify flags and add JSON modes (armor-0e72b59f)
+- fix(migrate): restore standalone CLI build (armor-48cd8d46)
+- test(migration): durable engine fault-injection, lease and race safety (armor-103a2789)
+- feat(migrate): expose durable operation admission over HTTP (armor-48cd8d46)
+- wip(armor-48cd8d46): persist V3 migration admission and CLI lifecycle
+- wip(armor-8e66f72f): enforce CopyObject source authorization
+- fix(cli): readable fatal config errors, plain-text demo banner, ready demo (armor-dac428f1)
+- fix(handlers): exclude key==key-marker uploads without upload-id-marker (armor-4e5b7a10)
+- fix(armor-48cd8d46): classify unknown migration objects
+- test(provenance): pin chain records at the bucket root under ARMOR_PREFIX (armor-8636e2d5)
+- feat(server): filesystem-backend readiness does not wait for a manifest flush (armor-dac428f1)
+- feat(manifest): prune stale writer shards after a successful cold load (armor-45abc172)
+- wip(armor-48cd8d46): durable migration CLI lifecycle
+- fix(armor-6b126fd7): satisfy migration engine lint
+- wip(armor-6b126fd7): route production migration through durable engine
+- test(canary): pin integration-prefix endpoint contract (armor-a9deecfb)
+- wip(armor-6b126fd7): add durable streaming migration engine
+- docs(plan): open question on whole-object authentication in v3 before migration (armor-d09d1184)
+- wip(armor-c95c3ef4): generate migration ciphertext goldens at test time
+- docs(guide): add newcomer path and consolidate config (armor-1fc0b279)
+- wip(armor-1ec94b6e): expose public admin version route
+- wip(armor-f5127f88): reject unsupported object lock requests
+- docs(performance): record 0.1.2006 regression and rollback (armor-ebd22a99)
+- fix(backend): make buffer pool contract test deterministic (armor-a8a981d8)
+- fix(backend): stabilize read buffer pool test (armor-a8a981d8)
+- wip(armor-a8a981d8): add read fetch buffer budget and pool
+- fix(lint): re-enable handlers package (armor-747eafdf)
+- docs(performance): record live CF ceiling evidence (armor-409733e3)
+- docs(performance): record 0.1.2004 candidate qualification (armor-ebd22a99)
+- test(docs): retarget documentation-status fixtures after named-key-read left active-regression (armor-8317f313)
+- docs(release-status): named-key reads are repository-tested now that armor-8317f313 is closed (armor-8317f313)
+- fix(tests): remove once-built CLI binary temp dirs after the suite (armor-53f0d650)
+- fix(armor-build): skip duplicate image gates in CI (armor-101ae098)
+- docs(operations): record multipart cleanup evidence (armor-b8e6b976)
+- fix(release): pin consumer image tags to release-status green record (armor-19792903)
+- feat(cli): armor config validate/show offline inspection (armor-f07d62cb)
+- wip(armor-04ea0564): quiet client-config format lookup
+- wip(armor-120be211): run full release suite and unblock readyz tests
+- feat(backend): ARMOR_CF_DISABLE_HTTP2 knob + CF read transport matrix (armor-409733e3)
+- fix(handlers): bound whole-object compression to the buffered path (armor-cdfa1230)
+- feat(config): fail on unparsable ARMOR_* values, unify boolean parsing, warn on unknown ARMOR_* variables (armor-d6299c61)
+- wip(armor-56ecc6b7): fix prefixed aws cli listing cursor
+- wip(armor-033dd376): preserve prefixed fixture cleanup
+- wip(armor-033dd376): repair prefixed integration fixtures
+- wip(armor-033dd376): clear integration edge-case failures
+- docs(release): scope bucket-admin and object-lock out of the integration gate (armor-be3d322a)
+- fix(armor-4c5c03f8): implement object tagging and copy tag directive
+- fix(armor-033dd376): honor list start-after cursor
+- wip(armor-033dd376): forward prefixed subresource keys
+- test(server): attribute list-path CPU at iad-ci census scale, pin index-populated budgets (armor-4ff12061)
+- test(manifest): pin iad-ci-scale startup-load budget and zero-HEAD list page (armor-29c23d26)
+- docs(armor-769e3d53): refresh 0.1.2004 fleet evidence; record 0.1.2006 half-published state
+
 ## 0.1.2007 (2026-11-12)
 
 - docs(performance): settle repeated 0.1.2004/2006 check (armor-8bcb1387)
