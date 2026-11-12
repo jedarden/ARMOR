@@ -496,6 +496,14 @@ func (fm *FormatMigrator) isInternalKey(key string) bool {
 
 // Migrate performs the format migration, re-encrypting all objects with the current write format.
 func (fm *FormatMigrator) Migrate(ctx context.Context, dryRun bool, concurrency int) (*MigrationResult, error) {
+	// Production backends expose atomic create-only and ETag-guarded publish
+	// primitives; route them through the durable engine. Small fixture backends
+	// that intentionally implement only the historical Backend contract keep
+	// the compatibility path below so legacy unit fixtures remain focused on
+	// format classification rather than storage publication semantics.
+	if _, ok := fm.backend.(backend.ConditionalPutBackend); ok {
+		return fm.RunDurable(ctx, dryRun, concurrency)
+	}
 	startTime := time.Now()
 
 	// Initialize or load state

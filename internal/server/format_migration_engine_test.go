@@ -30,7 +30,7 @@ func TestDurableMigrationStreamsAndConditionallyCommits(t *testing.T) {
 		t.Fatal(err)
 	}
 	fm := NewFormatMigrator(fs, bucket, mek, "default", crypto.Version3, []string{"1"}, nil)
-	result, err := fm.RunDurable(context.Background(), false, 2)
+	result, err := fm.Migrate(context.Background(), false, 2)
 	if err != nil {
 		t.Fatalf("durable migration: %v", err)
 	}

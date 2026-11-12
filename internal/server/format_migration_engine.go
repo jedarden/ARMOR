@@ -7,6 +7,7 @@ package server
 // publish from a migration-scoped staging key.
 
 import (
+	"bytes"
 	"context"
 	cryptoRand "crypto/rand"
 	"crypto/sha256"
@@ -22,6 +23,7 @@ import (
 
 	"github.com/jedarden/armor/internal/backend"
 	"github.com/jedarden/armor/internal/crypto"
+	"github.com/jedarden/armor/internal/manifest"
 )
 
 const migrationLeaseTTL = 5 * time.Minute
@@ -277,6 +279,29 @@ func (fm *FormatMigrator) processDurableObject(ctx context.Context, obj backend.
 	if err := cb.CopyIfMatch(ctx, fm.bucket, staging, fm.bucket, obj.Key, info.ETag, nil, false); err != nil {
 		return fm.checkpointFailure(obj.Key, fmt.Sprintf("commit: %v", err), false)
 	}
+	// A multipart v3 object keeps its block table in a sidecar. Publish that
+	// sidecar only after the source conditional copy succeeds; a racing
+	// overwrite therefore cannot have its source replaced by this migration.
+	if committedInfo, headErr := fm.backend.Head(ctx, fm.bucket, obj.Key); headErr == nil && committedInfo.Metadata[armorMetaMultipart] == "true" {
+		stagingSidecar := backend.GetSidecarKey(fm.keyPrefix, strings.TrimPrefix(staging, fm.keyPrefix))
+		finalSidecar := backend.GetSidecarKey(fm.keyPrefix, strings.TrimPrefix(obj.Key, fm.keyPrefix))
+		if err := fm.backend.Copy(ctx, fm.bucket, stagingSidecar, fm.bucket, finalSidecar, nil, false); err != nil {
+			return fm.checkpointFailure(obj.Key, fmt.Sprintf("publish multipart sidecar: %v", err), false)
+		}
+		_ = fm.backend.Delete(context.Background(), fm.bucket, stagingSidecar)
+	}
+	if fm.idx != nil {
+		if committedInfo, headErr := fm.backend.Head(ctx, fm.bucket, obj.Key); headErr == nil {
+			if committedMeta, parsed := backend.ParseARMORMetadata(committedInfo.Metadata); parsed {
+				fm.idx.Put(fm.bucket, obj.Key, &manifest.Entry{
+					PlaintextSize: committedMeta.PlaintextSize, PlaintextSHA256: committedMeta.PlaintextSHA,
+					IV: committedMeta.IV, WrappedDEK: committedMeta.WrappedDEK, MEKFingerprint: committedMeta.MEKFingerprint,
+					BlockSize: committedMeta.BlockSize, ContentType: committedInfo.ContentType, ETag: committedInfo.ETag,
+					CiphertextSize: committedInfo.StoredSize, LastModified: committedInfo.LastModified,
+				})
+			}
+		}
+	}
 	_ = fm.backend.Delete(context.Background(), fm.bucket, staging)
 	fm.stateMu.Lock()
 	checkpoint.Status = "committed"
@@ -426,6 +451,9 @@ func (fm *FormatMigrator) stageStreamingObject(ctx context.Context, key string, 
 			copy(sum[:], decoded)
 		}
 	}
+	if plaintextSize > int64(fm.multipartThreshold()) {
+		return fm.stageStreamingMultipart(ctx, key, raw, plain, dek, iv, wrapped, blockSize, plaintextSize, sum[:], staging)
+	}
 	header, err := crypto.NewEnvelopeHeaderWithVersion(iv, plaintextSize, blockSize, sum, fm.currentWriteVersion)
 	if err != nil {
 		return err
@@ -482,6 +510,107 @@ func (fm *FormatMigrator) stageStreamingObject(ctx context.Context, key string, 
 		return fmt.Errorf("stream encrypt: %w", err)
 	}
 	return nil
+}
+
+// stageStreamingMultipart keeps only one S3 part plus one encrypted part in
+// memory. The migration output is uploaded under the staging key; the source
+// key is not touched until the caller's conditional publish succeeds.
+func (fm *FormatMigrator) stageStreamingMultipart(ctx context.Context, key string, raw map[string]string, plain io.Reader, dek, iv, wrapped []byte, blockSize int, plaintextSize int64, plaintextSHA []byte, staging string) error {
+	uploadID, err := fm.backend.CreateMultipartUpload(ctx, fm.bucket, staging, nil)
+	if err != nil {
+		return fmt.Errorf("create staged multipart upload: %w", err)
+	}
+	completed := false
+	defer func() {
+		if !completed {
+			_ = fm.backend.AbortMultipartUpload(context.Background(), fm.bucket, staging, uploadID)
+		}
+	}()
+
+	const partSize = 8 << 20
+	parts := make([]backend.CompletedPart, 0, (plaintextSize+partSize-1)/partSize)
+	var v3Parts []backend.HMACPartV3
+	var v2HMACs [][]byte
+	blockOffset := uint32(0)
+	remaining := plaintextSize
+	partNumber := int32(1)
+	for remaining > 0 {
+		nwant := int64(partSize)
+		if remaining < nwant {
+			nwant = remaining
+		}
+		buf := make([]byte, nwant)
+		n, readErr := io.ReadFull(plain, buf)
+		if readErr != nil && readErr != io.ErrUnexpectedEOF && readErr != io.EOF {
+			return fmt.Errorf("read plaintext part %d: %w", partNumber, readErr)
+		}
+		if n == 0 {
+			break
+		}
+		buf = buf[:n]
+		var encrypted, hmacs []byte
+		if fm.currentWriteVersion == crypto.Version3 {
+			encrypted, hmacs, err = crypto.EncryptPartV3(dek, iv, uint16(partNumber), blockSize, buf)
+		} else {
+			enc, encErr := crypto.NewEncryptorWithVersion(dek, iv, blockSize, fm.currentWriteVersion)
+			if encErr != nil {
+				return encErr
+			}
+			encrypted, hmacs, err = enc.EncryptWithStartingCounter(buf, blockOffset)
+		}
+		if err != nil {
+			return fmt.Errorf("encrypt part %d: %w", partNumber, err)
+		}
+		etag, err := fm.backend.UploadPart(ctx, fm.bucket, staging, uploadID, partNumber, bytes.NewReader(encrypted), int64(len(encrypted)))
+		if err != nil {
+			return fmt.Errorf("upload staged part %d: %w", partNumber, err)
+		}
+		parts = append(parts, backend.CompletedPart{PartNumber: partNumber, ETag: etag})
+		if fm.currentWriteVersion == crypto.Version3 {
+			part := backend.HMACPartV3{N: int(partNumber), PlaintextLen: int64(n), CiphertextLen: int64(len(encrypted))}
+			for off, block := 0, 0; off < len(hmacs); off, block = off+crypto.HMACSize, block+1 {
+				part.Blocks = append(part.Blocks, []string{base64.StdEncoding.EncodeToString(hmacs[off : off+crypto.HMACSize]), fmt.Sprintf("%d", minInt64(int64(blockSize), int64(n-block*blockSize)))})
+			}
+			v3Parts = append(v3Parts, part)
+		} else {
+			for off := 0; off < len(hmacs); off += crypto.HMACSize {
+				v2HMACs = append(v2HMACs, append([]byte(nil), hmacs[off:off+crypto.HMACSize]...))
+			}
+			blockOffset += crypto.ComputeBlockCount(int64(n), blockSize)
+		}
+		remaining -= int64(n)
+		partNumber++
+	}
+	if len(parts) == 0 {
+		return fmt.Errorf("empty multipart migration output")
+	}
+	if _, err := fm.backend.CompleteMultipartUpload(ctx, fm.bucket, staging, uploadID, parts); err != nil {
+		return fmt.Errorf("complete staged multipart upload: %w", err)
+	}
+	completed = true
+	newMeta := fm.buildNewMetadata64(raw, iv, wrapped, blockSize, plaintextSize, plaintextSHA, crypto.MEKFingerprint(fm.mek))
+	newMeta[armorMetaMultipart] = "true"
+	newMeta[armorMetaPartSize] = fmt.Sprintf("%d", partSize)
+	if err := fm.backend.Copy(ctx, fm.bucket, staging, fm.bucket, staging, newMeta, true); err != nil {
+		return fmt.Errorf("set staged multipart metadata: %w", err)
+	}
+	manager := backend.NewMultipartStateManager(fm.backend, fm.bucket).WithKeyPrefix(fm.keyPrefix)
+	stagingClientKey := strings.TrimPrefix(staging, fm.keyPrefix)
+	if fm.currentWriteVersion == crypto.Version3 {
+		if err := manager.SaveHMACTableV3(ctx, stagingClientKey, blockSize, v3Parts); err != nil {
+			return fmt.Errorf("save staged v3 sidecar: %w", err)
+		}
+	} else if err := manager.SaveHMACTable(ctx, stagingClientKey, v2HMACs, blockSize, int(fm.currentWriteVersion)); err != nil {
+		return fmt.Errorf("save staged hmac sidecar: %w", err)
+	}
+	return nil
+}
+
+func minInt64(a, b int64) int64 {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 func (fm *FormatMigrator) openPlaintextStream(ctx context.Context, key string, raw map[string]string, meta *backend.ARMORMetadata, info *backend.ObjectInfo) (io.Reader, func(), string, error) {
