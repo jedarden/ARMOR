@@ -806,10 +806,19 @@ func TestCLIReferenceClientConfigToolsMatchBinary(t *testing.T) {
 // rest.
 func TestCLIReferenceMigrateJSONOutputIsPureJSON(t *testing.T) {
 	const token = "cli-reference-fake-token"
-	var gotAuth string
+	// gotAuth is written by the server's handler goroutine and read by the
+	// test goroutine after the binary exits; the capture is mutex-guarded
+	// because httptest gives no happens-before edge between those goroutines.
+	var (
+		authMu  sync.Mutex
+		gotAuth string
+	)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		authMu.Lock()
 		gotAuth = r.Header.Get("Authorization")
-		if gotAuth != "Bearer "+token {
+		auth := gotAuth
+		authMu.Unlock()
+		if auth != "Bearer "+token {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
@@ -831,8 +840,11 @@ func TestCLIReferenceMigrateJSONOutputIsPureJSON(t *testing.T) {
 	if res.exitCode != 0 {
 		t.Fatalf("migrate -json: exit = %d, want 0\nstderr: %s", res.exitCode, res.stderr)
 	}
-	if gotAuth != "Bearer "+token {
-		t.Errorf("migrate authenticated with %q, want the ARMOR_ADMIN_TOKEN bearer header", gotAuth)
+	authMu.Lock()
+	auth := gotAuth
+	authMu.Unlock()
+	if auth != "Bearer "+token {
+		t.Errorf("migrate authenticated with %q, want the ARMOR_ADMIN_TOKEN bearer header", auth)
 	}
 	report := strings.TrimSpace(res.stdout)
 	if report == "" || !json.Valid([]byte(report)) {
