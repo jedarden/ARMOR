@@ -152,7 +152,8 @@ func TestRunInitDoesNotPrintCredentialValues(t *testing.T) {
 func TestPromptInitSecretDoesNotEcho(t *testing.T) {
 	const secret = "credential-value-must-stay-hidden"
 	var output bytes.Buffer
-	got, err := promptInitSecretIfEmpty(&output, "ARMOR client secret", "", func() ([]byte, error) {
+	got, err := promptInitSecretIfEmpty("ARMOR client secret", "", func(prompt string) ([]byte, error) {
+		output.WriteString(prompt + "\n")
 		return []byte(secret), nil
 	})
 	if err != nil || got != secret {
@@ -164,7 +165,7 @@ func TestPromptInitSecretDoesNotEcho(t *testing.T) {
 	if output.String() != "ARMOR client secret: \n" {
 		t.Fatalf("secret prompt output = %q", output.String())
 	}
-	got, err = promptInitSecretIfEmpty(&output, "ARMOR client secret", secret, func() ([]byte, error) {
+	got, err = promptInitSecretIfEmpty("ARMOR client secret", secret, func(string) ([]byte, error) {
 		t.Fatal("existing secret must not trigger a new prompt")
 		return nil, nil
 	})

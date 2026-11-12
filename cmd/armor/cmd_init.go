@@ -165,8 +165,8 @@ func promptForInitValues(values *initValues, input *os.File, output io.Writer) e
 	if values.b2AccessKeyID, err = promptIfEmpty(reader, output, "B2 application key ID", values.b2AccessKeyID); err != nil {
 		return err
 	}
-	if values.b2Credential, err = promptInitSecretIfEmpty(output, "B2 application key", values.b2Credential, func() ([]byte, error) {
-		return term.ReadPassword(int(input.Fd()))
+	if values.b2Credential, err = promptInitSecretIfEmpty("B2 application key", values.b2Credential, func(prompt string) ([]byte, error) {
+		return readInitPassword(input, output, prompt)
 	}); err != nil {
 		return err
 	}
@@ -176,23 +176,40 @@ func promptForInitValues(values *initValues, input *os.File, output io.Writer) e
 	if values.authAccessKey, err = promptIfEmpty(reader, output, "ARMOR client access key", values.authAccessKey); err != nil {
 		return err
 	}
-	if values.authCredential, err = promptInitSecretIfEmpty(output, "ARMOR client secret", values.authCredential, func() ([]byte, error) {
-		return term.ReadPassword(int(input.Fd()))
+	if values.authCredential, err = promptInitSecretIfEmpty("ARMOR client secret", values.authCredential, func(prompt string) ([]byte, error) {
+		return readInitPassword(input, output, prompt)
 	}); err != nil {
 		return err
 	}
 	return nil
 }
 
-// promptInitSecretIfEmpty disables terminal echo through term.ReadPassword in
-// the production caller. The reader is injectable so output safety is tested.
-func promptInitSecretIfEmpty(output io.Writer, label, value string, readPassword func() ([]byte, error)) (string, error) {
+// readInitPassword disables echo before showing the prompt, so a fast paste
+// cannot be echoed in the gap between showing the prompt and reading input.
+func readInitPassword(input *os.File, output io.Writer, prompt string) (secret []byte, err error) {
+	fd := int(input.Fd())
+	state, err := term.MakeRaw(fd)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if restoreErr := term.Restore(fd, state); err == nil {
+			err = restoreErr
+		}
+	}()
+	fmt.Fprint(output, prompt)
+	secret, err = term.ReadPassword(fd)
+	fmt.Fprintln(output)
+	return secret, err
+}
+
+// The reader owns the prompt so it can disable terminal echo first. It is
+// injectable so the caller's output handling is testable without a TTY.
+func promptInitSecretIfEmpty(label, value string, readPassword func(string) ([]byte, error)) (string, error) {
 	if value != "" {
 		return value, nil
 	}
-	fmt.Fprintf(output, "%s: ", label)
-	secret, err := readPassword()
-	fmt.Fprintln(output)
+	secret, err := readPassword(label + ": ")
 	if err != nil {
 		return "", err
 	}
