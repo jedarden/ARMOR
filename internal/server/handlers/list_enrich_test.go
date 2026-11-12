@@ -50,6 +50,15 @@ type enrichListBackend struct {
 
 	inFlight    atomic.Int32
 	maxInFlight atomic.Int32
+
+	// When configured, Head blocks until the requested number of calls are in
+	// flight. This lets concurrency tests prove overlap without relying on a
+	// scheduler-sensitive sleep or wall-clock ratio.
+	headOverlapReady   chan struct{}
+	headOverlapRelease chan struct{}
+	headOverlapTarget  int32
+	headOverlapCount   atomic.Int32
+	headOverlapOnce    sync.Once
 }
 
 func newEnrichListBackend(keys []string, plaintext int64) *enrichListBackend {
@@ -111,7 +120,14 @@ func (b *enrichListBackend) Head(ctx context.Context, bucket, key string) (*back
 	b.requestedKeys = append(b.requestedKeys, key)
 	b.mu.Unlock()
 
-	// Small sleep so concurrent HEADs actually overlap under the cap.
+	if b.headOverlapRelease != nil {
+		if b.headOverlapCount.Add(1) == b.headOverlapTarget {
+			b.headOverlapOnce.Do(func() { close(b.headOverlapReady) })
+		}
+		<-b.headOverlapRelease
+	}
+
+	// Small sleep so the non-gated concurrency tests still observe overlap.
 	time.Sleep(2 * time.Millisecond)
 
 	if b.failAll || (b.failFirstAttempt && attempt == 1) {
@@ -413,50 +429,66 @@ func TestListEnrichCapsConcurrentHeads(t *testing.T) {
 	}
 }
 
-// TestListEnrichFanoutBoundsPageWallTime proves the fan-out cap is the
-// dominant term in page wall time once the manifest index and metadata cache
-// both miss on every key — the steady state on iad-ci (armor-45abc172), where
-// the manifest has been loading with an empty index since before
-// ARMOR_LIST_HEAD_FANOUT existed. Each enrichListBackend.Head call sleeps
-// 2ms, so a 1000-key page needs ceil(1000/fanout) sequential batches; at
-// fanout=16 that is ~63 batches (~126ms here), at fanout=128 ~8 (~16ms) — the
-// same inverse relationship that turned a config default of 16 into a
-// multi-second page regression against real backend latency in production.
-func TestListEnrichFanoutBoundsPageWallTime(t *testing.T) {
-	const keys = 1000
+// TestListEnrichFanoutBoundsConcurrentHeads proves the configured fan-out is
+// both exercised and enforced. The backend holds the first fanout HEADs until
+// all of them are in flight, so this checks the mechanism directly instead of
+// inferring concurrency from a wall-clock ratio.
+func TestListEnrichFanoutBoundsConcurrentHeads(t *testing.T) {
+	const fanout = 16
+	const keys = fanout*2 + 1
 	names := make([]string, keys)
 	for i := range names {
 		names[i] = fmt.Sprintf("obj-%04d", i)
 	}
 
-	run := func(fanout int) time.Duration {
-		cfg := &config.Config{
-			BlockSize:      65536,
-			AuthAccessKey:  "test-access-key",
-			AuthSecretKey:  "REMOVED-NOT-A-SECRET-VALUE",
-			ListHeadFanout: fanout,
-		}
-		be := newEnrichListBackend(names, 5000)
-		h := New(cfg, be, backend.NewMetadataCache(1000, 300), backend.NewFooterCache(1000, 300), nil, nil)
-		objects := make([]backend.ObjectInfo, keys)
-		for i, k := range names {
-			objects[i] = backend.ObjectInfo{Key: k, Size: 5000 + enrichCiphertextOverhead, ETag: "stored-" + k}
-		}
-		result := &backend.ListResult{Objects: objects}
-		start := time.Now()
+	cfg := &config.Config{
+		BlockSize:      65536,
+		AuthAccessKey:  "test-access-key",
+		AuthSecretKey:  "REMOVED-NOT-A-SECRET-VALUE",
+		ListHeadFanout: fanout,
+	}
+	be := newEnrichListBackend(names, 5000)
+	be.headOverlapReady = make(chan struct{})
+	be.headOverlapRelease = make(chan struct{})
+	be.headOverlapTarget = fanout
+	h := New(cfg, be, backend.NewMetadataCache(1000, 300), backend.NewFooterCache(1000, 300), nil, nil)
+	objects := make([]backend.ObjectInfo, keys)
+	for i, k := range names {
+		objects[i] = backend.ObjectInfo{Key: k, Size: 5000 + enrichCiphertextOverhead, ETag: "stored-" + k}
+	}
+	result := &backend.ListResult{Objects: objects}
+
+	done := make(chan struct{})
+	go func() {
 		h.enrichPlaintextSizes(context.Background(), "test-bucket", result)
-		return time.Since(start)
+		close(done)
+	}()
+	select {
+	case <-be.headOverlapReady:
+	case <-time.After(time.Second):
+		t.Fatal("fan-out HEADs did not reach the guaranteed-overlap barrier")
 	}
 
-	lowFanoutWall := run(16)
-	highFanoutWall := run(128)
+	if got := be.maxInFlight.Load(); got != fanout {
+		t.Fatalf("fan-out did not fill the configured concurrency: got %d, want %d", got, fanout)
+	}
+	close(be.headOverlapRelease)
 
-	// 8x the fan-out should buy noticeably more than a token improvement;
-	// require at least half of the ideal 8x so modest scheduling slack on a
-	// loaded CI box doesn't flake the assertion.
-	if highFanoutWall*4 > lowFanoutWall {
-		t.Fatalf("fanout=128 wall %s did not scale down from fanout=16 wall %s as expected (want <= 1/4)",
-			highFanoutWall, lowFanoutWall)
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("fan-out HEADs did not finish after the overlap barrier was released")
+	}
+	if got := be.maxInFlight.Load(); got > fanout {
+		t.Fatalf("HEAD fan-out exceeded the cap: %d concurrent HEADs > %d", got, fanout)
+	}
+	if n := be.headCallCount(); n != keys {
+		t.Fatalf("expected exactly %d HEADs (one per key), got %d", keys, n)
+	}
+	for _, obj := range result.Objects {
+		if obj.Size != 5000 {
+			t.Errorf("key %s: expected plaintext size 5000, got %d", obj.Key, obj.Size)
+		}
 	}
 }
 

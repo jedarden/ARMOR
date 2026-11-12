@@ -36,9 +36,11 @@ func TestLoadFetchesConcurrentlyAndReplaysInOrder(t *testing.T) {
 	var completionMu sync.Mutex
 	completionOrder := make([]uint64, 0, deltaCount)
 	firstStarted := make(chan struct{})
-	secondCompleted := make(chan struct{})
+	overlapStarted := make(chan struct{})
+	otherCompleted := make(chan struct{})
 	var firstOnce sync.Once
-	var secondOnce sync.Once
+	var overlapOnce sync.Once
+	var otherOnce sync.Once
 	releaseFirst := make(chan struct{})
 	var releaseFirstOnce sync.Once
 	release := func() { releaseFirstOnce.Do(func() { close(releaseFirst) }) }
@@ -52,6 +54,9 @@ func TestLoadFetchesConcurrentlyAndReplaysInOrder(t *testing.T) {
 			if current <= previous || maxInFlight.CompareAndSwap(previous, current) {
 				break
 			}
+		}
+		if current >= 2 {
+			overlapOnce.Do(func() { close(overlapStarted) })
 		}
 
 		seq, ok := DeltaSeqFromKey(".armor/test", "writer-a", key)
@@ -70,8 +75,8 @@ func TestLoadFetchesConcurrentlyAndReplaysInOrder(t *testing.T) {
 		completionMu.Lock()
 		completionOrder = append(completionOrder, seq)
 		completionMu.Unlock()
-		if seq == 2 {
-			secondOnce.Do(func() { close(secondCompleted) })
+		if seq != 1 {
+			otherOnce.Do(func() { close(otherCompleted) })
 		}
 		return objects[key], nil
 	}
@@ -93,12 +98,17 @@ func TestLoadFetchesConcurrentlyAndReplaysInOrder(t *testing.T) {
 		t.Fatal("first manifest fetch did not start")
 	}
 	select {
-	case <-secondCompleted:
+	case <-overlapStarted:
 	case <-time.After(time.Second):
-		t.Fatal("second manifest fetch did not complete while first was blocked")
+		t.Fatal("manifest fetches did not overlap while the first fetch was blocked")
 	}
 	if got := maxInFlight.Load(); got <= 1 {
 		t.Fatalf("manifest fetches were not concurrent: max in flight = %d", got)
+	}
+	select {
+	case <-otherCompleted:
+	case <-time.After(time.Second):
+		t.Fatal("a non-first manifest fetch did not complete while the first was blocked")
 	}
 	release()
 
