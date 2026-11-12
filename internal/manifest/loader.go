@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"sort"
-	"strings"
 
 	"golang.org/x/sync/errgroup"
 )
@@ -175,16 +174,11 @@ func listAllKeys(ctx context.Context, prefix string, list Lister) ([]string, err
 // groupByWriter partitions object keys by writer shard ID.
 // Keys are expected to have the form "{prefix}/{writerID}/...".
 func groupByWriter(prefix string, keys []string) map[string][]string {
-	base := prefix + "/"
 	result := make(map[string][]string)
 	for _, key := range keys {
-		rel := strings.TrimPrefix(key, base)
-		sep := strings.Index(rel, "/")
-		if sep <= 0 {
-			continue // malformed or empty writer ID — skip
+		if writerID := shardOfObject(prefix, key); writerID != "" {
+			result[writerID] = append(result[writerID], key)
 		}
-		writerID := rel[:sep]
-		result[writerID] = append(result[writerID], key)
 	}
 	return result
 }

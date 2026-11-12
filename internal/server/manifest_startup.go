@@ -489,6 +489,20 @@ func startManifestSystem(ctx context.Context, cfg *config.Config, logger *loggin
 
 		// Wire writer → compactor: after each delta flush, notify compactor.
 		s.writer.SetOnFlush(s.compactor.NotifyDelta)
+
+		// Prune the shards dead pods left behind (armor-45abc172). The load
+		// that just succeeded merged every discovered shard into this index,
+		// so other shards' pre-load objects are redundant copies the next
+		// cold load would otherwise fetch and replay forever. See
+		// manifest.PruneStaleShards for the safety contract; the one-hour
+		// margin under loadStart keeps every pruned object strictly older
+		// than anything the discovery walk could have missed. Best-effort:
+		// detached from the loader context (the writer and compactor above
+		// are detached the same way), bounded, and logged, never fatal. The
+		// window between the prune and this writer's first hourly snapshot
+		// is the only exposure: a pod lost in that window rediscovers the
+		// pruned entries through the HEAD fall-through, never wrong data.
+		go pruneStaleManifestShards(cfg, logger, primaryBackend, loadStart)
 	}
 
 	s.writer.Start(context.Background())
@@ -511,6 +525,53 @@ func manifestLoadContext(parent context.Context, cfg *config.Config) (context.Co
 		return context.WithTimeout(parent, time.Duration(cfg.ManifestLoadTimeout)*time.Second)
 	}
 	return context.WithCancel(parent)
+}
+
+// The stale-shard prune runs after a successful cold load. The margin keeps
+// the cutoff an hour behind the load start — pruned objects must predate the
+// discovery walk regardless of object-store/pod clock skew — and the timeout
+// bounds one pass (chunked batch deletes; iad-ci's 70-shard corpus deleted
+// inside a minute when exercised out-of-band).
+const (
+	manifestStaleShardPruneMargin  = time.Hour
+	manifestStaleShardPruneTimeout = 5 * time.Minute
+)
+
+// pruneStaleManifestShards deletes the manifest objects of dead writer
+// shards, then logs the outcome. Synchronous body of the post-load goroutine
+// so tests can drive it directly; see manifest.PruneStaleShards.
+func pruneStaleManifestShards(cfg *config.Config, logger *logging.Logger, primaryBackend backend.Backend, loadStart time.Time) {
+	ctx, cancel := context.WithTimeout(context.Background(), manifestStaleShardPruneTimeout)
+	defer cancel()
+	staleLister := func(ctx context.Context, prefix, token string) ([]manifest.ObjectStamp, string, error) {
+		result, lerr := primaryBackend.ListRaw(ctx, cfg.Bucket, prefix, "", token, 1000)
+		if lerr != nil {
+			return nil, "", lerr
+		}
+		stamps := make([]manifest.ObjectStamp, len(result.Objects))
+		for i, obj := range result.Objects {
+			stamps[i] = manifest.ObjectStamp{Key: obj.Key, LastModified: obj.LastModified}
+		}
+		return stamps, result.NextToken, nil
+	}
+	pruner := func(ctx context.Context, keys []string) error {
+		return primaryBackend.DeleteObjects(ctx, cfg.Bucket, keys)
+	}
+	cutoff := loadStart.Add(-manifestStaleShardPruneMargin)
+	deleted, err := manifest.PruneStaleShards(ctx, cfg.ManifestPrefix, cfg.WriterID, cutoff, staleLister, pruner)
+	if err != nil {
+		logger.WithFields(map[string]interface{}{
+			"error":   err.Error(),
+			"deleted": deleted,
+		}).Warn("manifest stale-shard prune failed — remaining dead shards are pruned on a later successful load")
+		return
+	}
+	if deleted > 0 {
+		logger.WithFields(map[string]interface{}{
+			"objects": deleted,
+			"cutoff":  cutoff.Format(time.RFC3339),
+		}).Info("manifest stale shards pruned")
+	}
 }
 
 // manifestRecorder implements handlers.ManifestRecorder. It resolves the
