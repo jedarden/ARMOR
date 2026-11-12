@@ -8,6 +8,10 @@ race_flag=""
 if [ "${ARMOR_RELEASE_RACE:-0}" = "1" ]; then
 	race_flag="-race"
 fi
+# ARMOR_RELEASE_RACE is a gate control, not an ARMOR runtime setting. Keep it
+# out of child test processes so configuration's unknown-ARMOR_* warning test
+# does not mistake the CI control variable for an application variable.
+unset ARMOR_RELEASE_RACE
 
 # Repository-level legs (script gates, docs parity, publisher contract). The
 # Docker build context (.dockerignore) ships the Go source, docs/ — the
