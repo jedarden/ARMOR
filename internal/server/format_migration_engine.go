@@ -616,7 +616,7 @@ func minInt64(a, b int64) int64 {
 func (fm *FormatMigrator) openPlaintextStream(ctx context.Context, key string, raw map[string]string, meta *backend.ARMORMetadata, info *backend.ObjectInfo) (io.Reader, func(), string, error) {
 	var cipherReader io.ReadCloser
 	var hmacTable []byte
-	var plainSize int64 = meta.PlaintextSize
+	plainSize := meta.PlaintextSize
 	var blockSize = meta.BlockSize
 	if raw[armorMetaMultipart] == "true" {
 		stored := info.StoredSize
