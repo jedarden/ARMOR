@@ -196,7 +196,10 @@ falls back to the manifest writer's flush recency; while the background
 manifest cold load is still running, `manifest_status` is `loading` and that
 fallback reports 503 ("Not ready - manifest cold load in progress") because
 no flush signal exists yet — S3 traffic is already being served through the
-B2 fallback.
+B2 fallback. Filesystem-backend deployments (the demo) never reach the flush
+fallback: they run no canary, an idle one never writes a delta to flush, and
+the local directory has no remote dependency to probe, so once the cold load
+resolves `/readyz` reports 200 ("Ready - filesystem backend").
 
 ## Canary metric series
 

@@ -268,17 +268,20 @@ the plain-text readiness probe.
 | `RequestTimeout` | ARMOR request deadline exceeded | ARMOR's own request deadline expires while a response can still be written. Counted in `armor_errors_total`. |
 | `SlowDown` | [part-1-pinning deferral message] | UploadPart defers an out-of-order part until part 1 arrives and pins the block size |
 
-**Readiness probe (plain text, not XML):**
+**Readiness probe (JSON body, not XML):**
 
 | Status | Response | When |
 |--------|----------|------|
 | 200 | `Ready` | Readiness probe healthy |
+| 200 | `Ready - canary disabled` | `ARMOR_CANARY_DISABLED=true` |
+| 200 | `Ready - filesystem backend (readiness does not wait for a manifest flush)` | Filesystem backend (the demo) with the manifest cold load resolved — an idle filesystem deployment never flushes a delta |
 | 503 | `Not ready - canary check failed` | Canary verification failed |
+| 503 | `Not ready - manifest cold load in progress` | Startup manifest load still running |
 | 503 | `Not ready - manifest writer has never flushed` | Manifest startup lag |
 | 503 | `Not ready - manifest writer last flush X ago (threshold 60s)` | Manifest writer stall |
 | 503 | `Not ready - no health signal available` | Health check unavailable |
 
-**Note:** `/readyz` returns plain text, not XML, as it is a health endpoint.
+**Note:** `/readyz` returns a JSON object (with `ready` and `reason` fields), not XML, as it is a health endpoint.
 
 ### Client Disconnects and Request Deadlines
 
@@ -384,7 +387,7 @@ Admin endpoints use mixed response formats (JSON, plain text, and some XML for S
 | Endpoint | Methods | Success Format | Error Format | Purpose |
 |----------|---------|----------------|--------------|---------|
 | `/healthz` | GET | Plain Text | (none - always 200) | Liveness probe |
-| `/readyz` | GET | Plain Text | Plain Text | Readiness probe |
+| `/readyz` | GET | JSON | JSON | Readiness probe |
 | `/admin/key/verify` | GET | JSON | JSON | Verify MEK correctness |
 | `/admin/key/rotate` | POST | JSON | Plain text / JSON | Rotate master encryption key |
 | `/admin/key/export` | GET | JSON | Plain Text | Export current MEK |
@@ -421,31 +424,40 @@ OK
 **Success Response (200 OK):**
 ```
 Status: 200 OK
-Content-Type: text/plain
+Content-Type: application/json
 
-Ready
+{"ready":true,"canary_age_s":0,"multipart_canary_healthy":true,"manifest_flushed_s":3,"manifest_status":"loaded","manifest_degraded":false,"reason":"Ready"}
+```
+
+On the filesystem backend (the demo), readiness does not wait for a manifest flush — an idle filesystem deployment never writes a delta:
+
+```
+Status: 200 OK
+Content-Type: application/json
+
+{"ready":true,"canary_age_s":0,"multipart_canary_healthy":false,"manifest_flushed_s":0,"manifest_status":"loaded","manifest_degraded":false,"reason":"Ready - filesystem backend (readiness does not wait for a manifest flush)"}
 ```
 
 **Error Responses (503 Service Unavailable):**
 ```
 Status: 503 Service Unavailable
-Content-Type: text/plain
+Content-Type: application/json
 
-Not ready - canary check failed
+{"ready":false,"canary_age_s":42,"multipart_canary_healthy":true,"manifest_flushed_s":0,"manifest_status":"loaded","manifest_degraded":false,"reason":"Not ready - canary check failed"}
 ```
 
 ```
 Status: 503 Service Unavailable
-Content-Type: text/plain
+Content-Type: application/json
 
-Not ready - manifest writer has never flushed
+{"ready":false,"canary_age_s":0,"multipart_canary_healthy":false,"manifest_flushed_s":0,"manifest_status":"loaded","manifest_degraded":false,"reason":"Not ready - manifest writer has never flushed"}
 ```
 
 ```
 Status: 503 Service Unavailable
-Content-Type: text/plain
+Content-Type: application/json
 
-Not ready - manifest writer last flush 120s ago (threshold 60s)
+{"ready":false,"canary_age_s":0,"multipart_canary_healthy":false,"manifest_flushed_s":120,"manifest_status":"loaded","manifest_degraded":false,"reason":"Not ready - manifest writer last flush 2m0s ago (threshold 1m0s)"}
 ```
 
 ### Key Management
