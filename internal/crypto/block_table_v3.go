@@ -211,6 +211,63 @@ func DecodeBlockTable(data []byte, blockSize int, expectedBlockCount uint32) (*B
 	return table, nil
 }
 
+// DecodeV3CompressedBlockTable locates and decodes the trailer table for the
+// legacy whole-object-compressed v3 single-PUT layout. That writer compresses
+// the complete plaintext before EncryptV3, so the table has one entry per
+// compressed ciphertext block rather than one entry per block in the header's
+// original plaintext size. The table has no count field and is only known to
+// be at the end of the envelope, so try candidate entry counts up to the
+// header-derived maximum and accept only the candidate whose lengths describe
+// the complete data region. A candidate must also have the canonical
+// EncryptV3 block count for its ciphertext span; this rejects random bytes in
+// the compressed data from masquerading as a shorter table.
+func DecodeV3CompressedBlockTable(data []byte, blockSize int, maxBlockCount uint32) (*BlockTable, error) {
+	if len(data) < HeaderSize {
+		return nil, fmt.Errorf("v3 envelope is shorter than the header: %d bytes", len(data))
+	}
+	if blockSize <= 0 {
+		return nil, fmt.Errorf("invalid v3 block size: %d", blockSize)
+	}
+	if maxBlockCount == 0 {
+		return nil, fmt.Errorf("v3 compressed envelope has no possible block-table entries")
+	}
+
+	maxByEnvelope := uint32((len(data) - HeaderSize) / BlockTableEntrySize)
+	if maxByEnvelope == 0 {
+		return nil, fmt.Errorf("v3 compressed envelope has no room for a block-table entry")
+	}
+	if maxBlockCount > maxByEnvelope {
+		maxBlockCount = maxByEnvelope
+	}
+
+	var lastErr error
+	for count := maxBlockCount; count > 0; count-- {
+		trailerSize := int(count) * BlockTableEntrySize
+		trailerOffset := len(data) - trailerSize
+		table, err := DecodeBlockTable(data[trailerOffset:], blockSize, count)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+
+		ciphertextSize := int64(table.TotalCiphertextLength64())
+		if int64(HeaderSize)+ciphertextSize != int64(trailerOffset) {
+			lastErr = fmt.Errorf("candidate with %d entries claims %d ciphertext bytes, want %d", count, ciphertextSize, trailerOffset-HeaderSize)
+			continue
+		}
+		if ComputeBlockCount(ciphertextSize, blockSize) != count {
+			lastErr = fmt.Errorf("candidate with %d entries does not match ciphertext block count for %d bytes", count, ciphertextSize)
+			continue
+		}
+		return table, nil
+	}
+
+	if lastErr == nil {
+		lastErr = ErrInvalidTableSize
+	}
+	return nil, fmt.Errorf("unable to locate v3 compressed block-table trailer: %w", lastErr)
+}
+
 // appendOffset appends the cumulative offset that follows a block of the
 // given raw length. The last element is always the total ciphertext length.
 func appendOffset(offsets []int64, rawLength uint32) []int64 {

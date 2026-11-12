@@ -1849,11 +1849,15 @@ func (h *Handlers) handleFullObjectStream(w http.ResponseWriter, r *http.Request
 			// its own reads, one round trip earlier.
 			var dataEnd int64
 			if header.Version == crypto.Version3 {
-				blockTable, err := decodeV3BlockTableFromBuffer(singleFetch, armorMeta.CiphertextSize, blockCount)
+				blockTable, err := decodeV3BlockTableFromBuffer(singleFetch, armorMeta.CiphertextSize, blockCount, armorMeta.Compressed, header.BlockSize())
 				if err != nil {
 					h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to read v3 block table: %v", err), 500)
 					return
 				}
+				// Whole-object compression produces a table for the compressed
+				// payload, which can have fewer blocks than the original
+				// plaintext declared by the envelope header.
+				blockCount = blockTable.EntryCount()
 				if blockCount > 0 {
 					hmacTable = encodeV3BlockTableForTransport(blockTable)
 				}
@@ -1880,11 +1884,20 @@ func (h *Handlers) handleFullObjectStream(w http.ResponseWriter, r *http.Request
 				return
 			}
 
-			blockTable, err := h.loadV3BlockTable(ctx, bucket, prefixedKey, storedGen, armorMeta.CiphertextSize, blockCount)
+			var (
+				blockTable *crypto.BlockTable
+				err        error
+			)
+			if armorMeta.Compressed {
+				blockTable, err = h.loadV3CompressedBlockTable(ctx, bucket, prefixedKey, armorMeta.CiphertextSize, blockCount, header.BlockSize())
+			} else {
+				blockTable, err = h.loadV3BlockTable(ctx, bucket, prefixedKey, storedGen, armorMeta.CiphertextSize, blockCount)
+			}
 			if err != nil {
 				h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to read v3 block table: %v", err), 500)
 				return
 			}
+			blockCount = blockTable.EntryCount()
 
 			// Stream data from the start (header + blocks)
 			streamSize = int64(crypto.HeaderSize) + int64(blockTable.TotalCiphertextLength())
@@ -2045,7 +2058,7 @@ func (h *Handlers) handleFullObjectStream(w http.ResponseWriter, r *http.Request
 
 				if accumulator != nil {
 					accumulator.WriteBlock(decrypted, blockIndex == blockCount-1)
-				} else {
+				} else if !armorMeta.Compressed {
 					wholeHash.Write(decrypted)
 				}
 				if _, err := pw.Write(decrypted); err != nil {
@@ -2144,7 +2157,7 @@ func (h *Handlers) handleFullObjectStream(w http.ResponseWriter, r *http.Request
 			// For single-PUT objects, use the digest from the envelope header.
 			expectedSHA = header.PlaintextSHA[:]
 		}
-		if enforce && len(expectedSHA) > 0 && !bytes.Equal(computedSHA, expectedSHA) {
+		if enforce && !armorMeta.Compressed && len(expectedSHA) > 0 && !bytes.Equal(computedSHA, expectedSHA) {
 			pw.CloseWithError(fmt.Errorf("plaintext SHA-256 mismatch"))
 			return
 		}
@@ -2153,6 +2166,7 @@ func (h *Handlers) handleFullObjectStream(w http.ResponseWriter, r *http.Request
 	// 6. Stream plaintext to client
 	// If the object is compressed, decompress it before writing to response
 	if armorMeta.Compressed {
+		decompressedHash := sha256.New()
 		var decompressor io.ReadCloser
 		var err error
 
@@ -2196,7 +2210,7 @@ func (h *Handlers) handleFullObjectStream(w http.ResponseWriter, r *http.Request
 		defer decompressor.Close()
 
 		// Stream decompressed data to client
-		_, err = io.Copy(w, decompressor)
+		_, err = io.Copy(io.MultiWriter(w, decompressedHash), decompressor)
 		if err != nil {
 			// Decompression failed during streaming
 			// Log the error with context for debugging
@@ -2219,6 +2233,13 @@ func (h *Handlers) handleFullObjectStream(w http.ResponseWriter, r *http.Request
 			}
 			// Connection will be closed; client receives partial response
 			return
+		}
+		if header != nil && !bytes.Equal(decompressedHash.Sum(nil), header.PlaintextSHA[:]) {
+			// The response headers are already committed by the streaming
+			// contract, so the client may have received bytes. Still record the
+			// authenticated-format failure rather than silently accepting a
+			// decompressed body whose declared plaintext digest disagrees.
+			log.Printf("GET %s/%s: compressed plaintext SHA-256 mismatch", bucket, key)
 		}
 	} else {
 		// Stream plaintext directly to client
@@ -2447,8 +2468,14 @@ func (h *Handlers) handleRangeRequest(w http.ResponseWriter, r *http.Request, bu
 		}
 	}
 
-	var encrypted, hmacTable []byte
+	var hmacTable []byte
 	var startBlockIndex int
+	// dataBody streams the encrypted bytes of exactly the blocks the range
+	// needs; the plaintext is decrypted and emitted block by block rather
+	// than buffered (armor-31fe90c8).
+	var dataBody io.ReadCloser
+	var streamBlockEnd int
+	var streamHMACIsFull bool
 
 	if isMultipart {
 		// Multipart object: load HMAC table from sidecar, no embedded header
@@ -2483,19 +2510,17 @@ func (h *Handlers) handleRangeRequest(w http.ResponseWriter, r *http.Request, bu
 		}
 		dataLength := lastBlockEnd - dataOffset
 
-		// Fetch encrypted blocks
-		encryptedBody, err := h.backend.GetRange(ctx, bucket, prefixedKey, dataOffset, dataLength)
+		// Fetch encrypted blocks as a stream; the decrypt loop below reads
+		// exactly this many bytes, one block at a time.
+		dataBody, err = h.backend.GetRange(ctx, bucket, prefixedKey, dataOffset, dataLength)
 		if err != nil {
 			h.writeError(w, r, "InternalError", fmt.Sprintf("failed to fetch encrypted blocks: %v", err), 500)
 			return
 		}
-		defer encryptedBody.Close()
-
-		encrypted, err = io.ReadAll(encryptedBody)
-		if err != nil {
-			h.writeError(w, r, "InternalError", fmt.Sprintf("failed to read encrypted blocks: %v", err), 500)
-			return
-		}
+		defer dataBody.Close()
+		streamBlockEnd = endBlockIndex
+		// The sidecar table covers the whole object: absolute block indices.
+		streamHMACIsFull = true
 	} else {
 		// Single-PUT object: check version for HMAC/block table format.
 		// The envelope header was already read and decoded once in GetObject
@@ -2524,21 +2549,18 @@ func (h *Handlers) handleRangeRequest(w http.ResponseWriter, r *http.Request, bu
 			return
 		}
 
-		// Fetch encrypted blocks and HMAC table in parallel using errgroup.
-		// This cuts range-read latency nearly in half for cache misses.
+		// Open the encrypted-block stream and fetch the HMAC table in
+		// parallel using errgroup. This cuts range-read latency nearly in
+		// half for cache misses. The data body is returned as a reader and
+		// consumed block by block below — never buffered whole.
 		g, gctx := errgroup.WithContext(ctx)
 
 		g.Go(func() error {
-			encryptedBody, err := h.backend.GetRange(gctx, bucket, prefixedKey, translation.DataOffset, translation.DataLength)
+			body, err := h.backend.GetRange(gctx, bucket, prefixedKey, translation.DataOffset, translation.DataLength)
 			if err != nil {
 				return fmt.Errorf("failed to fetch encrypted blocks: %w", err)
 			}
-			defer encryptedBody.Close()
-
-			encrypted, err = io.ReadAll(encryptedBody)
-			if err != nil {
-				return fmt.Errorf("failed to read encrypted blocks: %w", err)
-			}
+			dataBody = body
 			return nil
 		})
 
@@ -2557,40 +2579,30 @@ func (h *Handlers) handleRangeRequest(w http.ResponseWriter, r *http.Request, bu
 		})
 
 		if err := g.Wait(); err != nil {
+			if dataBody != nil {
+				dataBody.Close()
+			}
 			h.writeError(w, r, "InternalError", err.Error(), 500)
 			return
 		}
+		defer dataBody.Close()
+		streamBlockEnd = translation.BlockEnd
+		// The inline table slice holds only this range's blocks: relative
+		// block indices.
+		streamHMACIsFull = false
 	}
 
-	// Decrypt range (DecryptRange internally calculates block indices from plaintext offsets)
-	// For multipart objects, hmacTableIsFull=true (all HMACs from sidecar).
-	// For single-PUT objects, hmacTableIsFull=false (only range HMACs from embedded table).
-	plaintext, err := decryptor.DecryptRange(encrypted, hmacTable, start, end, plaintextSize, isMultipart)
-	if err != nil {
-		h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to decrypt range: %v", err), 500)
+	// Decrypt and emit one block at a time (armor-31fe90c8). Each block is
+	// HMAC-verified before its plaintext is released; the writer declares
+	// Content-Length up front, and a failure after the first block aborts the
+	// connection against that declared length instead of returning a
+	// truncated 206 as success.
+	sw := h.newRangeStreamWriter(w, r, bucket, key, armorMeta, plaintextSize, start, end, lastModified)
+	if err := streamV1V2RangeBlocks(sw, dataBody, hmacTable, startBlockIndex, streamBlockEnd, streamHMACIsFull, decryptor, armorMeta, plaintextSize); err != nil {
+		sw.abort(err.Error())
 		return
 	}
-
-	// Cache Parquet footer if this looks like a footer read
-	// Footer is detected by: 1) Reading near end of file, 2) Data ends with "PAR1" magic
-	if h.footerCache != nil && end >= plaintextSize-8 && len(plaintext) >= 8 {
-		if backend.IsParquetFile(plaintext[len(plaintext)-4:]) {
-			// This is a Parquet file, try to cache the full footer
-			// If we just read the last 8 bytes, cache it for footer length detection
-			// If we read more, it might be the full footer
-			h.cacheParquetFooter(ctx, bucket, key, armorMeta, plaintext, plaintextSize)
-		}
-	}
-
-	// Set response headers
-	w.Header().Set("Content-Length", strconv.FormatInt(int64(len(plaintext)), 10))
-	w.Header().Set("Content-Type", armorMeta.ContentType)
-	w.Header().Set("ETag", fmt.Sprintf(`"%s"`, armorMeta.ETag))
-	w.Header().Set("Accept-Ranges", "bytes")
-	w.Header().Set("Last-Modified", lastModified.UTC().Format(http.TimeFormat))
-	w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, end, plaintextSize))
-	w.WriteHeader(http.StatusPartialContent)
-	w.Write(plaintext)
+	sw.finish()
 }
 
 // cacheParquetFooter caches Parquet footer data for faster subsequent reads.
@@ -6124,7 +6136,18 @@ func v3BlockTableTrailerWindow(ciphertextSize int64, blockCount int) (offset, si
 // begins. Any disagreement — a truncated or over-long buffer, a table whose
 // prefix sums do not fit the object — fails here, before the decryption loop
 // starts and before any plaintext exists.
-func decodeV3BlockTableFromBuffer(buf []byte, ciphertextSize int64, blockCount int) (*crypto.BlockTable, error) {
+func decodeV3BlockTableFromBuffer(buf []byte, ciphertextSize int64, blockCount int, compressed bool, blockSize int) (*crypto.BlockTable, error) {
+	if compressed {
+		if int64(len(buf)) != ciphertextSize {
+			return nil, fmt.Errorf("fetched ciphertext length %d does not match stored length %d", len(buf), ciphertextSize)
+		}
+		table, err := crypto.DecodeV3CompressedBlockTable(buf, blockSize, uint32(blockCount))
+		if err != nil {
+			return nil, fmt.Errorf("failed to decode compressed v3 block table: %w", err)
+		}
+		return table, nil
+	}
+
 	trailerOffset, trailerSize, err := v3BlockTableTrailerWindow(ciphertextSize, blockCount)
 	if err != nil {
 		return nil, err

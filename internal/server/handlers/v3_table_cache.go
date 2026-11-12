@@ -161,6 +161,31 @@ func (h *Handlers) fetchV3BlockTable(ctx context.Context, bucket, key string, tr
 	return table, nil
 }
 
+// loadV3CompressedBlockTable reads a whole-object-compressed v3 envelope and
+// lets the crypto package infer the shorter trailer table from the envelope's
+// actual ciphertext span. This path is bounded by the single-PUT compression
+// threshold and is needed because the legacy compressed layout has no table
+// count field from which a ranged trailer offset can be derived directly.
+func (h *Handlers) loadV3CompressedBlockTable(ctx context.Context, bucket, key string, ciphertextSize int64, maxBlockCount int, blockSize int) (*crypto.BlockTable, error) {
+	if ciphertextSize < crypto.HeaderSize {
+		return nil, fmt.Errorf("compressed v3 object is shorter than its header: %d bytes", ciphertextSize)
+	}
+	body, err := h.backend.GetRange(ctx, bucket, key, 0, ciphertextSize)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch compressed v3 envelope: %w", err)
+	}
+	defer body.Close()
+	data, err := readSmallFetchBody(body, ciphertextSize)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read compressed v3 envelope: %w", err)
+	}
+	table, err := crypto.DecodeV3CompressedBlockTable(data, blockSize, uint32(maxBlockCount))
+	if err != nil {
+		return nil, err
+	}
+	return table, nil
+}
+
 // loadV3BlockTable returns the decoded block table for a v3 stored object,
 // going through the generation-keyed cache. gen must come from the
 // authoritative HEAD the current request already performed (GetObject's
