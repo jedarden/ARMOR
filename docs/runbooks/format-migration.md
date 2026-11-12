@@ -96,13 +96,13 @@ verifies integrity, and writes nothing. It reports the same failure set the
 live run would.
 
 ```bash
-# Preferred: in-pod, no network exposure (the CLI's own POST times out at
-# 120 s — see §6 before relying on it for a long walk)
+# Preferred: in-pod, no network exposure. The POST only creates a durable
+# operation; -watch follows it with bounded, reconnecting status requests.
 kubectl exec deploy/armor -n <namespace> -- env \
   ARMOR_ADMIN_TOKEN="$(kubectl get secret -n <namespace> armor-secrets \
     -o jsonpath='{.data.admin-token}' | base64 -d)" \
   armor migrate -admin-url http://localhost:9001 \
-    -dry-run -target v3 -include v1,v2 -json > dry-run.json
+    -inventory-only -target 3 -include 1,2 -watch -json > dry-run.json
 ```
 
 ```bash
@@ -167,34 +167,32 @@ disposition (§9).
 
 ## 4. The live run
 
-Same command without `-dry-run`. Two rules from §0 decide the mechanics:
+Same command without `-dry-run`. The CLI starts a durable server-side
+operation and prints its operation ID immediately:
 
-- **Explicitly pass the include list**: `-include v1,v2`.
-- **Respect the 120 s client timeout.** The POST is synchronous — the
-  response carries the final report — and `armor migrate` uses a 120 s HTTP
-  client. A walk longer than that is cut by the *client*, the server marks
-  the run `interrupted`, and the CLI exits non-zero. For anything but a
-  small bucket, drive the POST with a client that has no short timeout
-  (`curl`), and monitor separately (§5):
+- **Explicitly pass the include list**: `-include 1,2`.
+- **Keep every request bounded.** The start request and each status poll have
+  a 30-second timeout. The migration itself is not tied to either request;
+  `-watch` reconnects to the operation after a dropped connection:
 
-```bash
-curl -s -X POST \
-  -H "Authorization: Bearer $ARMOR_ADMIN_TOKEN" \
-  "http://127.0.0.1:8001/api/v1/namespaces/<namespace>/services/armor:9001/proxy/admin/format/migrate?include=v1,v2" \
-  | jq . > live-run.json
+```text
+Migration operation started: migration-…
 ```
 
 Expected outcomes:
 
-- **`200` + `status: "completed"`** — the walk finished. Still check
+- **`202` + `operation_id`** — the operation was accepted and can be watched
+  or resumed by ID. A `200` terminal response is also accepted for older
+  servers.
+- **`status: "completed"`** — the walk finished. Still check
   `failed_objects`: anything failed, the CLI's watch mode says
   `Migration had N failures.` and exits 1, and the JSON carries the full
   `failures` array.
 - **`500` + `{"status":"failed", "error": ...}`** — the run aborted: a
   whole-bucket listing failed, state could not be persisted, or the request
   context was cancelled. The partial result rides along in `result`.
-- **Client timeout / dropped connection** — the server marks the run
-  `interrupted` and stops between pages. This is recoverable (§6).
+- **Client timeout / dropped connection** — the durable operation continues;
+  rerun `armor migrate -resume <operation-id> -watch` to reconnect (§6).
 - **`400`** — request rejected before anything ran: `target` mismatch,
   `include` version not older than the target, `concurrency` outside 1–50.
 - **`403`/`401`** — admin token unset on the server / wrong token.
@@ -205,7 +203,7 @@ Poll the state endpoint; it answers with the full persisted state:
 
 ```bash
 watch -n 30 'curl -s -H "Authorization: Bearer $ARMOR_ADMIN_TOKEN" \
-  "http://127.0.0.1:8001/api/v1/namespaces/<namespace>/services/armor:9001/proxy/admin/format/migrate" | jq "{status, processed_objects, total_objects, failed_objects, last_key}"'
+  "http://127.0.0.1:8001/api/v1/namespaces/<namespace>/services/armor:9001/proxy/admin/format/migrate?operation_id=<operation-id>" | jq "{status, processed_objects, total_objects, failed_objects, unknown_objects, last_key, classification}"'
 ```
 
 - Progress is saved at run start, **every 100 objects**, and at completion —
@@ -214,8 +212,9 @@ watch -n 30 'curl -s -H "Authorization: Bearer $ARMOR_ADMIN_TOKEN" \
 - `status` reads `in_progress` → `completed`, or `interrupted` /
   `failed` on the abort paths. There is no cancel endpoint: to stop a run,
   disconnect the client (the walk stops at the next page boundary).
-- `armor migrate -watch` does the same polling at a 2 s cadence after its
-  POST — but see §4 on the 120 s POST timeout before choosing it.
+- `armor migrate -watch` polls at a 2 s cadence after its POST. If the CLI is
+  disconnected, use `armor migrate -resume <operation-id> -watch`; the
+  operation ID scopes every poll to the same durable run.
 
 ## 6. Failure recovery
 
@@ -223,8 +222,10 @@ watch -n 30 'curl -s -H "Authorization: Bearer $ARMOR_ADMIN_TOKEN" \
 
 - A graceful cancellation saves `status: "interrupted"`; a crash leaves the
   last periodic save, `status: "in_progress"` with `last_key`.
-- **A re-POST resumes only an `in_progress` state** — from `last_key`, with
-  counters and failure records carried forward (cumulative across runs).
+- **Reattach with the operation ID** —
+  `armor migrate -resume <operation-id> -watch` reconnects to the persisted
+  state without starting a second walk. The server's durable worker resumes
+  from its last checkpoint after a request or pod interruption.
 - An `interrupted` state is *not* resumed: the next POST starts a fresh run
   (new migration id, cursor at the beginning). Already-migrated objects are
   re-classified as at-target and skipped, so no work is undone — but the

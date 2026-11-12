@@ -849,6 +849,13 @@ func TestMigrateJSONReportAllCategories(t *testing.T) {
 	rerr, werr, _ := os.Pipe()
 	os.Stdout = wout
 	os.Stderr = werr
+	oldExit := exit
+	var exitCode int
+	exit = func(code int) {
+		exitCode = code
+		panic("exit")
+	}
+	defer func() { exit = oldExit }()
 
 	cmd := commands["migrate"]
 	// -watch=false explicitly: the flag variables are package globals and an
@@ -857,7 +864,10 @@ func TestMigrateJSONReportAllCategories(t *testing.T) {
 
 	done := make(chan struct{})
 	go func() {
-		defer close(done)
+		defer func() {
+			recover() // expected exit for failed inventory
+			close(done)
+		}()
 		cmd.Func(cmd.Flags)
 	}()
 
@@ -865,6 +875,9 @@ func TestMigrateJSONReportAllCategories(t *testing.T) {
 	case <-done:
 	case <-time.After(10 * time.Second):
 		t.Fatal("migration did not complete within timeout")
+	}
+	if exitCode != 1 {
+		t.Fatalf("expected failed inventory to exit 1, got %d", exitCode)
 	}
 
 	wout.Close()

@@ -323,10 +323,13 @@ per-object keys. The CLI is a thin client of the admin API
 |------|---------|
 | `-admin-url` | Admin API endpoint (required), e.g. `http://127.0.0.1:9001` |
 | `-dry-run` | Verify objects could be migrated without changing anything |
+| `-inventory-only` | Inventory and integrity-check candidates without writing migrated objects; implies `-dry-run` |
 | `-target` | Target format version (`v3` or `3`); must match the server's configured write version |
-| `-include` | Comma-separated source versions to migrate (default: `v2` for a v3 target, `v1` for a v2 target) |
+| `-include` | Comma-separated source versions to migrate (default: `1,2` for a V3 migration) |
 | `-concurrency` | Concurrent workers (default: the server's own default) |
 | `-watch` | Poll progress every 2 seconds until the migration completes |
+| `-resume` | Attach to an existing durable migration operation by ID; does not start a new operation |
+| `-operation-id` | Alias for `-resume` |
 | `-json` | Print the completion report as JSON on stdout |
 
 - **Inputs:** the admin URL and a bearer token: `ARMOR_ADMIN_TOKEN` is
@@ -337,10 +340,12 @@ per-object keys. The CLI is a thin client of the admin API
   document goes to stdout and progress lines move to stderr, so stdout carries
   nothing but JSON.
 - **Exit codes:** 0 when the migration was accepted or completed without
-  failures (a `-watch` poll that finds no migration in progress also exits 0);
-  1 when `ARMOR_ADMIN_TOKEN` is unset, an HTTP request fails, the response
-  cannot be parsed, the watch fails, or the migration completed with failed
-  objects; 2 on a missing `-admin-url` or unexpected positional arguments.
+  failures; 1 when `ARMOR_ADMIN_TOKEN` is unset, an HTTP request fails, the
+  response cannot be parsed, the operation is unavailable, or the migration
+  completed with failed or unknown objects; 2 on a missing `-admin-url`,
+  conflicting operation IDs, or unexpected positional arguments. Start and
+  status requests each have a bounded 30-second timeout; `-watch` reconnects
+  to the durable operation rather than holding one synchronous request open.
 - **Credentials/keys:** `ARMOR_ADMIN_TOKEN` only. The MEK never travels
   through this command — the server holds it.
 - **Safe use:** this mutates objects (re-encryption in place). Always start
