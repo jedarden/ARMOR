@@ -216,7 +216,7 @@ func TestDocumentedHelpContract(t *testing.T) {
 	armorSections := sectionsByHeading(t, armorDoc, armorSectionHeading)
 	companionSections := sectionsByHeading(t, companionDoc, companionSectionHeading)
 
-	wantArmor := []string{"serve", "demo", "check", "config", "decrypt", "verify", "migrate", "client-config", "version", "help"}
+	wantArmor := []string{"init", "serve", "demo", "check", "config", "decrypt", "verify", "migrate", "client-config", "version", "help"}
 	wantCompanions := []string{"restore-verifier", "armor-fleet"}
 	assertNames := func(label string, got map[string]string, want []string) {
 		t.Helper()
@@ -286,7 +286,7 @@ type exitCase struct {
 func TestDocumentedExitContract(t *testing.T) {
 	bins := builtBinaries(t)
 	var cases []exitCase
-	for _, name := range []string{"serve", "demo", "check", "config", "decrypt", "verify", "migrate", "client-config", "version"} {
+	for _, name := range []string{"init", "serve", "demo", "check", "config", "decrypt", "verify", "migrate", "client-config", "version"} {
 		cases = append(cases, exitCase{
 			name: name + " rejects a positional argument", binaryName: "armor",
 			args: []string{name, "cli-contract-positional"}, wantExit: 2,

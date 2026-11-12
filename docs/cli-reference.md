@@ -210,6 +210,39 @@ before the deployment is reachable.
   and init containers); `show` answers "what will ARMOR actually read from
   what I set?" without starting a server.
 
+## `armor init`
+
+Create or update a local environment file for a new B2-backed deployment.
+Missing MEK and admin-token values are generated independently as 32 random
+bytes encoded as 64 lowercase hexadecimal characters. Existing non-empty
+values are preserved, so rerunning the command does not rotate live secrets.
+
+| Flag | Meaning |
+|------|---------|
+| `-env-file` | Environment file to create or update (default `.env`) |
+| `-non-interactive` | Do not prompt; leave unspecified service values empty |
+| `-region` | B2 region; defaults from `ARMOR_B2_REGION` |
+| `-b2-region` | Deprecated alias of `-region` |
+| `-bucket` | B2 bucket name; defaults from `ARMOR_BUCKET` |
+| `-b2-access-key-id` | B2 application key ID; defaults from `ARMOR_B2_ACCESS_KEY_ID` |
+| `-cf-domain` | Cloudflare read hostname; defaults from `ARMOR_CF_DOMAIN` |
+| `-auth-access-key` | ARMOR client access key; defaults from `ARMOR_AUTH_ACCESS_KEY` |
+| `-b2-secret-access-key-file` | Read the B2 application key from a file instead of prompting or using `ARMOR_B2_SECRET_ACCESS_KEY` |
+| `-auth-secret-key-file` | Read the ARMOR client secret from a file instead of prompting or using `ARMOR_AUTH_SECRET_KEY` |
+
+- **Inputs:** when stderr and stdin are terminals, missing service values are
+  prompted for. In scripts, use `-non-interactive` and provide values through
+  the environment or protected input files; raw credential values have no
+  command-line flags.
+- **Outputs:** a mode-0600 env file and a reminder to back up the MEK. The
+  generated MEK, admin token, and supplied credentials are never printed.
+- **Exit codes:** 0 after the file is written; 1 on input or filesystem
+  failure; 2 on unexpected positional arguments.
+- **Credentials/keys:** none are required to generate the two local values.
+- **Safe use:** keep the resulting file out of version control and back up the
+  MEK before writing objects. The command atomically installs the file and
+  enforces mode 0600.
+
 ## `armor decrypt`
 
 Decrypt one ARMOR-encrypted object offline — break-glass recovery with no

@@ -106,35 +106,23 @@ your shell or set `ARMOR_VERSION` in `.env`.
    guide](docs/cloudflare-setup.md). Record the Cloudflare hostname without
    `https://`. Set it as `ARMOR_CF_DOMAIN`. If you leave that variable empty,
    ARMOR reads directly from B2 and B2 egress charges apply.
-3. **Create the environment file and keys.** The following generates a random
-   32-byte MEK and a separate admin bearer token directly into the ignored
-   `.env` file; it prints neither value. Back up the MEK securely before
-   writing objects. Losing it makes existing objects unreadable.
+3. **Create the environment file and keys.** Run the image's offline
+   provisioner from the directory containing `compose.yaml`. It prompts for
+   the B2 and ARMOR client values, generates a random 32-byte MEK and a
+   separate admin bearer token directly into the ignored `.env` file, and
+   prints neither secret value. Back up the MEK securely before writing
+   objects. Losing it makes existing objects unreadable.
 
    ```bash
-   umask 077
-   cp -n .env.example .env
-   python3 - <<'PY'
-   from pathlib import Path
-   import secrets
-
-   path = Path('.env')
-   values = path.read_text()
-   for name in ('ARMOR_MEK', 'ARMOR_ADMIN_TOKEN'):
-       values = values.replace(f'{name}=\n', f'{name}={secrets.token_hex(32)}\n', 1)
-   path.write_text(values)
-   PY
+   docker run --rm -it --user "$(id -u):$(id -g)" \
+     -v "$PWD:/work" -w /work \
+     ghcr.io/jedarden/armor:"$ARMOR_VERSION" init -env-file .env
    ```
 
-4. **Fill in the B2 and client credentials** in `.env`. Set
-   `ARMOR_B2_REGION`, `ARMOR_B2_ACCESS_KEY_ID`, `ARMOR_B2_SECRET_ACCESS_KEY`,
-   `ARMOR_BUCKET`, `ARMOR_CF_DOMAIN`, `ARMOR_AUTH_ACCESS_KEY`, and
-   `ARMOR_AUTH_SECRET_KEY`. Use distinct ARMOR client credentials; they are
-   separate from the B2 application key. [Required configuration](#required-configuration)
-   lists the minimum, and the [configuration reference](docs/configuration.md)
-   explains every setting. Set `ARMOR_VERSION` there if the shell export above
-   will not persist.
-5. **Start and verify.** Compose passes the MEK and admin token from `.env` to
+   For scripts, add `-non-interactive` and provide credential values through
+   the environment or protected input files. Never put a credential value in
+   an argv example. Existing non-empty values in `.env` are preserved.
+4. **Start and verify.** Compose passes the MEK and admin token from `.env` to
    the server. `armor check` loads that same environment and probes the bucket,
    Cloudflare path, and MEK/canary state. An empty new bucket can produce
    warnings until the canary exists; investigate any `FAIL` result.
@@ -187,7 +175,7 @@ the [continuous restore verifier](docs/restore-verifier-deployment-guide.md).
 
 ### Subcommands
 
-`armor help` lists `serve`, `demo`, `check`, `client-config`, `decrypt`,
+`armor help` lists `init`, `serve`, `demo`, `check`, `client-config`, `decrypt`,
 `verify`, `migrate`, and `version`. The [CLI reference](docs/cli-reference.md)
 documents flags, exit codes, credentials, and safe use.
 

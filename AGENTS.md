@@ -22,7 +22,7 @@ The release-image boundary and known limitations are maintained in
 
 | Path | What it is |
 |---|---|
-| `cmd/armor` | The server binary and its subcommands (`serve`, `demo`, `check`, `decrypt`, `verify`, `migrate`, `client-config`, `version`, `help`) |
+| `cmd/armor` | The server binary and its subcommands (`init`, `serve`, `demo`, `check`, `decrypt`, `verify`, `migrate`, `client-config`, `version`, `help`) |
 | `cmd/restore-verifier`, `cmd/armor-fleet` | Companion binaries (restore verification harness, fleet console). The old offline verifier `cmd/verify-objects` was deleted 2026-09-20 — stale against fingerprinted DEKs and v3, and fully folded into `armor verify` (armor-da67956d). The current source has focused coverage for ring fallback and v3 manifest/sidecar verification; release and live DR evidence remains bounded by [docs/release-status.md](docs/release-status.md) |
 | `internal/` | All packages: `server` (S3 + admin handlers), `crypto`, `backend`, `config`, `keymanager`, `manifest`, `acl`, `canary`, `dashboard`, `presign`, `provenance`, `replication`, `restoreverifier`, `metrics`, `logging`, `b2keys`, `docsindex`, `version`, `testutil` |
 | `tests/` | Go test suites outside the package tree: `integration/` (real B2, build-tagged), `aws-cli-compatibility/`, `docker-demo-smoke/`, `fixtures/`; plus the Python gate suites, enumerated in `tests/gate-suites.txt` — the single edit point for the gate inventory, held to every documented surface by `tests/test_gate_inventory.py` (per-suite detail in the `tests/README.md` Suites table) |

@@ -164,7 +164,7 @@ func TestTopLevelHelpListsSubcommands(t *testing.T) {
 	printTopLevelHelp(&buf)
 	out := buf.String()
 
-	for _, name := range []string{"serve", "demo", "check", "client-config", "decrypt", "migrate", "verify", "version", "help"} {
+	for _, name := range []string{"init", "serve", "demo", "check", "client-config", "decrypt", "migrate", "verify", "version", "help"} {
 		if cmd, exists := commands[name]; exists {
 			if !strings.Contains(out, name) {
 				t.Errorf("top-level help does not list %q", name)
