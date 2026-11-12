@@ -83,6 +83,18 @@ func TestParseMigrationStateCountsUnknownCollections(t *testing.T) {
 	}
 }
 
+func TestMigrationUnknownObjectsIncludesMalformedClassification(t *testing.T) {
+	got := migrationUnknownObjects(map[string]interface{}{
+		"classification": map[string]interface{}{
+			"malformed":     float64(2),
+			"contradictory": float64(1),
+		},
+	})
+	if got != 3 {
+		t.Fatalf("unknown objects = %d, want 3", got)
+	}
+}
+
 func TestReportMigrationFailsForFailuresAndUnknownObjects(t *testing.T) {
 	oldJSON := jsonOutputFlag
 	jsonOutputFlag = false

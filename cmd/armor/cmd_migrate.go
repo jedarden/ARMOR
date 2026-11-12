@@ -388,6 +388,15 @@ func migrationUnknownObjects(m map[string]interface{}) int {
 			count = n
 		}
 	}
+	if count == 0 {
+		// Older servers expose unknown source formats through the inventory
+		// classification rather than a top-level counter. Treat malformed and
+		// contradictory entries as unknown objects so they cannot yield a false
+		// zero exit.
+		if cls, ok := m["classification"].(map[string]interface{}); ok {
+			count = jsonNumberOrCollectionCount(cls["malformed"]) + jsonNumberOrCollectionCount(cls["contradictory"])
+		}
+	}
 	return count
 }
 
@@ -404,6 +413,9 @@ func jsonNumberOrCollectionCount(v interface{}) int {
 	case []interface{}:
 		return len(value)
 	case map[string]interface{}:
+		if count := jsonNumberOrCollectionCount(value["count"]); count > 0 {
+			return count
+		}
 		return len(value)
 	}
 	return 0
