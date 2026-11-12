@@ -32,6 +32,15 @@ func NewDecryptor(dek, iv []byte, blockSize int) (*Decryptor, error) {
 	return NewDecryptorWithVersion(dek, iv, blockSize, Version2)
 }
 
+// OpenDecryptor creates a decryptor using the version, IV, and block size
+// recorded in an envelope header.
+func OpenDecryptor(header *EnvelopeHeader, dek []byte) (*Decryptor, error) {
+	if header == nil {
+		return nil, ErrInvalidHeader
+	}
+	return NewDecryptorWithVersion(dek, header.IV[:], header.BlockSize(), header.Version)
+}
+
 // NewDecryptorWithVersion creates a new decryptor with the specified version.
 // The version must match the version used during encryption.
 func NewDecryptorWithVersion(dek, iv []byte, blockSize int, version uint8) (*Decryptor, error) {
@@ -474,9 +483,9 @@ func Decompress(compressed []byte) ([]byte, error) {
 	// Handle nil data
 	if compressed == nil {
 		return nil, &DecompressionError{
-			Err:        fmt.Errorf("nil data provided"),
-			ErrType:    ErrTypeClient,
-			Cause:      "nil_data",
+			Err:     fmt.Errorf("nil data provided"),
+			ErrType: ErrTypeClient,
+			Cause:   "nil_data",
 		}
 	}
 
@@ -512,9 +521,9 @@ func DecompressGzip(compressed []byte) ([]byte, error) {
 	// Handle nil data
 	if compressed == nil {
 		return nil, &DecompressionError{
-			Err:        fmt.Errorf("nil data provided"),
-			ErrType:    ErrTypeClient,
-			Cause:      "nil_data",
+			Err:     fmt.Errorf("nil data provided"),
+			ErrType: ErrTypeClient,
+			Cause:   "nil_data",
 		}
 	}
 
@@ -531,9 +540,9 @@ func DecompressGzip(compressed []byte) ([]byte, error) {
 	reader, err := gzip.NewReader(bytes.NewReader(compressed))
 	if err != nil {
 		return nil, &DecompressionError{
-			Err:        fmt.Errorf("failed to create gzip reader: %w", err),
-			ErrType:    classifyDecompressionError(err),
-			Cause:      "decoder_init_failed",
+			Err:     fmt.Errorf("failed to create gzip reader: %w", err),
+			ErrType: classifyDecompressionError(err),
+			Cause:   "decoder_init_failed",
 		}
 	}
 	defer reader.Close()
@@ -541,9 +550,9 @@ func DecompressGzip(compressed []byte) ([]byte, error) {
 	decompressed, err := io.ReadAll(reader)
 	if err != nil {
 		return nil, &DecompressionError{
-			Err:        err,
-			ErrType:    classifyDecompressionError(err),
-			Cause:      determineErrorCause(err),
+			Err:     err,
+			ErrType: classifyDecompressionError(err),
+			Cause:   determineErrorCause(err),
 		}
 	}
 
@@ -556,9 +565,9 @@ func DecompressZlib(compressed []byte) ([]byte, error) {
 	// Handle nil data
 	if compressed == nil {
 		return nil, &DecompressionError{
-			Err:        fmt.Errorf("nil data provided"),
-			ErrType:    ErrTypeClient,
-			Cause:      "nil_data",
+			Err:     fmt.Errorf("nil data provided"),
+			ErrType: ErrTypeClient,
+			Cause:   "nil_data",
 		}
 	}
 
@@ -582,9 +591,9 @@ func DecompressZlib(compressed []byte) ([]byte, error) {
 	decompressed, err := io.ReadAll(reader)
 	if err != nil {
 		return nil, &DecompressionError{
-			Err:        err,
-			ErrType:    classifyDecompressionError(err),
-			Cause:      determineErrorCause(err),
+			Err:     err,
+			ErrType: classifyDecompressionError(err),
+			Cause:   determineErrorCause(err),
 		}
 	}
 
