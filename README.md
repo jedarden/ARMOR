@@ -106,17 +106,15 @@ your shell or set `ARMOR_VERSION` in `.env`.
    guide](docs/cloudflare-setup.md). Record the Cloudflare hostname without
    `https://`. Set it as `ARMOR_CF_DOMAIN`. If you leave that variable empty,
    ARMOR reads directly from B2 and B2 egress charges apply.
-3. **Create the environment file and keys.** Run the image's offline
-   provisioner from the directory containing `compose.yaml`. It prompts for
-   the B2 and ARMOR client values, generates a random 32-byte MEK and a
-   separate admin bearer token directly into the ignored `.env` file, and
-   prints neither secret value. Back up the MEK securely before writing
-   objects. Losing it makes existing objects unreadable.
+3. **Create the environment file and keys.** Run the offline provisioner from
+   this checkout. It prompts for the B2 and ARMOR client values, generates a
+   random 32-byte MEK and a separate admin bearer token directly into the
+   ignored `.env` file, and prints neither secret value. Back up the MEK
+   securely before writing objects. Losing it makes existing objects
+   unreadable.
 
    ```bash
-   docker run --rm -it --user "$(id -u):$(id -g)" \
-     -v "$PWD:/work" -w /work \
-     ghcr.io/jedarden/armor:"$ARMOR_VERSION" init -env-file .env
+   go run ./cmd/armor init -env-file .env
    ```
 
    For scripts, add `-non-interactive` and provide credential values through
