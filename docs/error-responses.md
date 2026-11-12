@@ -325,7 +325,7 @@ All authentication/authorization errors return HTTP 403 with CORS headers. The t
 | HeadObject | Content-Type, Content-Length, ETag, Last-Modified, Accept-Ranges | (none) | InternalError |
 | PutObject | ETag, X-Armor-Streaming (if >10MB) | InvalidRequest, InvalidArgument, PreconditionFailed, NotImplemented | InternalError |
 | DeleteObject | (none - 204 No Content) | (none) | InternalError |
-| CopyObject | Content-Type (XML body with CopyObjectResult) | InvalidCopySource | InternalError |
+| CopyObject | Content-Type (XML body with CopyObjectResult) | AccessDenied, InvalidCopySource | InternalError |
 
 #### Range Requests
 

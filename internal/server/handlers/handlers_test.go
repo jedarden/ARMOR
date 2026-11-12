@@ -1259,6 +1259,9 @@ func TestCopyObjectNonARMOR(t *testing.T) {
 	// Copy the plain file
 	req := httptest.NewRequest(http.MethodPut, "/test-bucket/plain-dest.txt", nil)
 	req.Header.Set("x-amz-copy-source", "/test-bucket/plain-source.txt")
+	req.Header.Set("x-amz-metadata-directive", "REPLACE")
+	req.Header.Set("x-amz-meta-visible", "preserved")
+	req.Header.Set("x-amz-meta-armor-forged", "must-not-be-stored")
 	w := httptest.NewRecorder()
 	h.HandleRoot(w, req)
 
@@ -1277,6 +1280,18 @@ func TestCopyObjectNonARMOR(t *testing.T) {
 
 	if !bytes.Equal(w.Body.Bytes(), plainData) {
 		t.Error("copied plain content does not match source")
+	}
+
+	mb.mu.Lock()
+	destMeta := mb.meta["test-bucket/plain-dest.txt"]
+	armorMeta := destMeta["x-amz-meta-armor-forged"]
+	visibleMeta := destMeta["x-amz-meta-visible"]
+	mb.mu.Unlock()
+	if armorMeta != "" {
+		t.Errorf("client-supplied reserved metadata was copied: %q", armorMeta)
+	}
+	if visibleMeta != "preserved" {
+		t.Errorf("client-supplied metadata = %q, want %q", visibleMeta, "preserved")
 	}
 }
 

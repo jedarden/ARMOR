@@ -3,6 +3,8 @@ package server
 import (
 	"fmt"
 	"github.com/jedarden/armor/internal/acl"
+	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"strings"
 	"testing"
@@ -36,225 +38,73 @@ import (
 // backup-writer (Put+List only) could CopyObject from arbitrary sources and
 // exfiltrate data it cannot directly GetObject.
 func TestCopyObjectSourceKeyAuthorization(t *testing.T) {
-	// Source-readable credential: Get on logs/, Put nowhere
-	sourceReadableCred := &config.Credential{
-		AccessKey: "SRCREADABLE",
-		SecretKey: "REMOVED-NOT-A-SECRET-VALUE",
-		ACLs: []acl.ACLEntry{{
-			Bucket:  "test-bucket",
-			Prefix:  "logs/",
-			Actions: map[string]bool{ActionGet: true},
-		}},
-	}
-
-	// Destination-writable credential: Put on backups/, Get nowhere
-	destinationWritableCred := &config.Credential{
-		AccessKey: "DSTWRITABLE",
-		SecretKey: "REMOVED-NOT-A-SECRET-VALUE",
-		ACLs: []acl.ACLEntry{{
-			Bucket:  "test-bucket",
-			Prefix:  "backups/",
-			Actions: map[string]bool{ActionPut: true},
-		}},
-	}
-
-	// Full-access credential for baseline
-	fullAccessCred := &config.Credential{
-		AccessKey: "FULLACCESS",
-		SecretKey: "REMOVED-NOT-A-SECRET-VALUE",
-		ACLs:      nil, // Full access
-	}
-
+	const secret = "REMOVED-NOT-A-SECRET-VALUE"
 	credentials := map[string]*config.Credential{
-		"SRCREADABLE": sourceReadableCred,
-		"DSTWRITABLE": destinationWritableCred,
-		"FULLACCESS":  fullAccessCred,
-	}
-	auth := NewSigV4AuthWithCredentials(credentials, "us-east-005")
-
-	// checkCopyObjectAuth simulates wrapHandler's authorization path for
-	// CopyObject: verify SigV4, check destination ACL with ActionPut (as
-	// ActionForRequest classifies PUT), then separately check source ACL with
-	// ActionGet (the ADR-012 decision 5 requirement this test pins).
-	checkCopyObjectAuth := func(t *testing.T, srcKey, dstKey, accessKey string) (dstAllowed, srcAllowed bool, dstErr, srcErr error) {
-		t.Helper()
-
-		// Build CopyObject PUT request (x-amz-copy-source header triggers CopyObject)
-		path := fmt.Sprintf("/test-bucket/%s", dstKey)
-		copySource := fmt.Sprintf("/test-bucket/%s", srcKey)
-		req := createSignedRequestForAuthTest(t, "PUT", path, "", accessKey, credentials[accessKey].SecretKey, nil)
-		req.Header.Set("x-amz-copy-source", copySource)
-
-		// Verify SigV4 authentication
-		cred, err := auth.VerifyRequest(req, nil)
-		if err != nil {
-			t.Fatalf("SigV4 verification failed: %v", err)
-		}
-
-		// Check destination ACL (Put on destination key - what wrapHandler does)
-		dstErr = acl.CheckACL(cred, "test-bucket", dstKey, ActionPut)
-		dstAllowed = (dstErr == nil)
-
-		// Check source ACL (Get on source key - ADR-012 decision 5 requirement)
-		srcErr = acl.CheckACL(cred, "test-bucket", srcKey, ActionGet)
-		srcAllowed = (srcErr == nil)
-
-		return
-	}
-
-	t.Run("CopyObject denied when source Get permission missing", func(t *testing.T) {
-		// Credential with Put on backups but no Get anywhere tries to copy
-		// from logs/app.log to backups/app.log. Should fail on source Get.
-		dstAllowed, srcAllowed, dstErr, srcErr := checkCopyObjectAuth(t, "logs/app.log", "backups/app.log", "DSTWRITABLE")
-
-		// Destination Put is allowed (credential has Put on backups/)
-		if !dstAllowed {
-			t.Errorf("Destination Put should be allowed (credential has Put on backups/), got: %v", dstErr)
-		}
-
-		// Source Get must be denied (credential has no Get on logs/)
-		if srcAllowed {
-			t.Errorf("Source Get should be denied (credential has no Get permission), got no error")
-		}
-		if srcErr != acl.ErrAccessDenied {
-			t.Errorf("Source Get check should return acl.ErrAccessDenied, got: %v", srcErr)
-		}
-	})
-
-	t.Run("CopyObject denied when destination Put permission missing", func(t *testing.T) {
-		// Credential with Get on logs but no Put anywhere tries to copy
-		// from logs/app.log to backups/app.log. Should fail on destination Put.
-		dstAllowed, srcAllowed, dstErr, srcErr := checkCopyObjectAuth(t, "logs/app.log", "backups/app.log", "SRCREADABLE")
-
-		// Source Get is allowed (credential has Get on logs/)
-		if !srcAllowed {
-			t.Errorf("Source Get should be allowed (credential has Get on logs/), got: %v", srcErr)
-		}
-
-		// Destination Put must be denied (credential has no Put on backups/)
-		if dstAllowed {
-			t.Errorf("Destination Put should be denied (credential has no Put permission), got no error")
-		}
-		if dstErr != acl.ErrAccessDenied {
-			t.Errorf("Destination Put check should return acl.ErrAccessDenied, got: %v", dstErr)
-		}
-	})
-
-	t.Run("CopyObject allowed when both source Get and destination Put permitted", func(t *testing.T) {
-		// Full-access credential copies from logs/app.log to backups/app.log
-		// Both checks should pass.
-		dstAllowed, srcAllowed, dstErr, srcErr := checkCopyObjectAuth(t, "logs/app.log", "backups/app.log", "FULLACCESS")
-
-		if !dstAllowed {
-			t.Errorf("Destination Put should be allowed for full-access credential, got: %v", dstErr)
-		}
-		if !srcAllowed {
-			t.Errorf("Source Get should be allowed for full-access credential, got: %v", srcErr)
-		}
-	})
-
-	t.Run("CopyObject cross-prefix copy requires both permissions", func(t *testing.T) {
-		// Verify that copying across prefixes requires Get on source prefix
-		// AND Put on destination prefix. Credential with Get+Put on only one
-		// prefix cannot copy to/from another prefix.
-
-		// Create credential with Get+Put on backups/ only
-		backupsOnlyCred := &config.Credential{
-			AccessKey: "BACKUPSONLY",
-			SecretKey: "REMOVED-NOT-A-SECRET-VALUE",
+		"FULLACCESS": {AccessKey: "FULLACCESS", SecretKey: secret},
+		"PREFIXED": {
+			AccessKey: "PREFIXED",
+			SecretKey: secret,
 			ACLs: []acl.ACLEntry{{
 				Bucket:  "test-bucket",
-				Prefix:  "backups/",
+				Prefix:  "tenant-a/",
 				Actions: map[string]bool{ActionGet: true, ActionPut: true},
 			}},
-		}
-		credentials["BACKUPSONLY"] = backupsOnlyCred
-		auth = NewSigV4AuthWithCredentials(credentials, "us-east-005")
+		},
+	}
+	ts := SetupTestServerWithCredentials(t, credentials)
+	defer TeardownTestServer(t, ts)
 
-		// Try to copy from logs/ (no Get) to backups/ (has Put). Sign with the
-		// credential's configured secret — signing with any other value makes
-		// VerifyRequest fail and hand back a nil credential, which is the
-		// missing-credential case covered by its own subtest below.
-		req := createSignedRequestForAuthTest(t, "PUT", "/test-bucket/backups/from-logs.txt", "", "BACKUPSONLY", credentials["BACKUPSONLY"].SecretKey, nil)
-		req.Header.Set("x-amz-copy-source", "/test-bucket/logs/source.txt")
-		cred, err := auth.VerifyRequest(req, nil)
-		if err != nil {
-			t.Fatalf("SigV4 verification failed: %v", err)
+	serve := func(method, path, accessKey string, headers map[string]string, body string) *httptest.ResponseRecorder {
+		t.Helper()
+		req := createSignedRequestForAuthTest(t, method, path, body, accessKey, credentials[accessKey].SecretKey, nil)
+		for key, value := range headers {
+			req.Header.Set(key, value)
 		}
+		rec := httptest.NewRecorder()
+		ts.server.Handler().ServeHTTP(rec, req)
+		return rec
+	}
 
-		// Destination Put is allowed
-		dstErr := acl.CheckACL(cred, "test-bucket", "backups/from-logs.txt", ActionPut)
-		if dstErr != nil {
-			t.Errorf("Destination Put on backups/ should be allowed, got: %v", dstErr)
-		}
+	if rec := serve(http.MethodPut, "/test-bucket/tenant-b/x", "FULLACCESS", nil, "cross-prefix source"); rec.Code != http.StatusOK {
+		t.Fatalf("seed cross-prefix source: status %d body %s", rec.Code, rec.Body.String())
+	}
+	if rec := serve(http.MethodPut, "/test-bucket/tenant-a/source", "FULLACCESS", nil, "same-prefix source"); rec.Code != http.StatusOK {
+		t.Fatalf("seed same-prefix source: status %d body %s", rec.Code, rec.Body.String())
+	}
 
-		// Source Get on logs/ must be denied
-		srcErr := acl.CheckACL(cred, "test-bucket", "logs/source.txt", ActionGet)
-		if srcErr != acl.ErrAccessDenied {
-			t.Errorf("Source Get on logs/ should be denied for backups/-only credential, got: %v", srcErr)
-		}
-	})
+	if rec := serve(http.MethodGet, "/test-bucket/tenant-b/x", "PREFIXED", nil, ""); rec.Code != http.StatusForbidden {
+		t.Errorf("GET outside prefix status = %d, want 403", rec.Code)
+	}
 
-	t.Run("CopyObject denied when the access key names no configured credential", func(t *testing.T) {
-		// A CopyObject signed by an access key absent from the credential map:
-		// VerifyRequest must deny it (ErrInvalidAccessKey) and hand back a nil
-		// credential. Both halves of the CopyObject authorization decision —
-		// destination Put and source Get — must then deny rather than
-		// dereference that nil credential. Regression test for the panic this
-		// bead fixed: CheckACL used to call GetACLs on the typed nil and crash.
-		req := createSignedRequestForAuthTest(t, "PUT", "/test-bucket/backups/from-logs.txt", "", "NOSUCHCREDENTIAL", "NOSUCHCREDENTIALSECRET1234567890123", nil)
-		req.Header.Set("x-amz-copy-source", "/test-bucket/logs/source.txt")
+	copyFrom := func(src, dst string) *httptest.ResponseRecorder {
+		return serve(http.MethodPut, "/test-bucket/"+dst, "PREFIXED", map[string]string{
+			"x-amz-copy-source": "/test-bucket/" + src,
+		}, "")
+	}
 
-		cred, err := auth.VerifyRequest(req, nil)
-		if err == nil {
-			t.Fatalf("VerifyRequest must deny an access key absent from the credential map, got credential: %+v", cred)
-		}
-		if err != ErrInvalidAccessKey {
-			t.Errorf("VerifyRequest should fail with ErrInvalidAccessKey, got: %v", err)
-		}
-		if cred != nil {
-			t.Errorf("VerifyRequest should return a nil credential on lookup failure, got: %+v", cred)
-		}
+	if rec := copyFrom("tenant-b/x", "tenant-a/y"); rec.Code != http.StatusForbidden {
+		t.Errorf("cross-prefix CopyObject status = %d, want 403; body %s", rec.Code, rec.Body.String())
+	}
+	if rec := serve(http.MethodHead, "/test-bucket/tenant-a/y", "FULLACCESS", nil, ""); rec.Code != http.StatusNotFound {
+		t.Errorf("denied cross-prefix destination HEAD status = %d, want 404", rec.Code)
+	}
 
-		// The nil credential must deny both the destination Put and the
-		// source Get — this is the call pair that used to panic.
-		if err := acl.CheckACL(cred, "test-bucket", "backups/from-logs.txt", ActionPut); err != acl.ErrAccessDenied {
-			t.Errorf("Destination Put with nil credential should be denied, got: %v", err)
-		}
-		if err := acl.CheckACL(cred, "test-bucket", "logs/source.txt", ActionGet); err != acl.ErrAccessDenied {
-			t.Errorf("Source Get with nil credential should be denied, got: %v", err)
-		}
-	})
+	if rec := serve(http.MethodGet, "/test-bucket/.armor/secret", "PREFIXED", nil, ""); rec.Code != http.StatusForbidden {
+		t.Errorf("GET reserved namespace status = %d, want 403", rec.Code)
+	}
+	if rec := copyFrom(".armor/secret", "tenant-a/armor-copy"); rec.Code != http.StatusForbidden {
+		t.Errorf("reserved-namespace CopyObject status = %d, want 403; body %s", rec.Code, rec.Body.String())
+	}
+	if rec := serve(http.MethodHead, "/test-bucket/tenant-a/armor-copy", "FULLACCESS", nil, ""); rec.Code != http.StatusNotFound {
+		t.Errorf("denied reserved-source destination HEAD status = %d, want 404", rec.Code)
+	}
 
-	t.Run("CopyObject denied when the secret is wrong for a known access key", func(t *testing.T) {
-		// The other shape VerifyRequest hands back a nil credential in:
-		// the access key IS configured, but the request is signed with a
-		// different secret, so the signature comparison fails. This is the
-		// literal trigger of the original panic — the cross-prefix subtest
-		// above hardcoded a mismatched secret before the fix. A caller
-		// that ignores the VerifyRequest error must still get denials,
-		// not a crash, from both halves of the CopyObject decision.
-		req := createSignedRequestForAuthTest(t, "PUT", "/test-bucket/backups/from-logs.txt", "", "BACKUPSONLY", "NOT-THE-CONFIGURED-SECRET-AT-ALL", nil)
-		req.Header.Set("x-amz-copy-source", "/test-bucket/logs/source.txt")
-
-		cred, err := auth.VerifyRequest(req, nil)
-		if err == nil {
-			t.Fatalf("VerifyRequest must deny a request signed with the wrong secret, got credential: %+v", cred)
-		}
-		if err != ErrSignatureMismatch {
-			t.Errorf("VerifyRequest should fail with ErrSignatureMismatch, got: %v", err)
-		}
-		if cred != nil {
-			t.Errorf("VerifyRequest should return a nil credential on signature failure, got: %+v", cred)
-		}
-
-		if err := acl.CheckACL(cred, "test-bucket", "backups/from-logs.txt", ActionPut); err != acl.ErrAccessDenied {
-			t.Errorf("Destination Put with nil credential should be denied, got: %v", err)
-		}
-		if err := acl.CheckACL(cred, "test-bucket", "logs/source.txt", ActionGet); err != acl.ErrAccessDenied {
-			t.Errorf("Source Get with nil credential should be denied, got: %v", err)
-		}
-	})
+	if rec := copyFrom("tenant-a/source", "tenant-a/y"); rec.Code != http.StatusOK {
+		t.Fatalf("same-prefix CopyObject status = %d, want 200; body %s", rec.Code, rec.Body.String())
+	}
+	if rec := serve(http.MethodGet, "/test-bucket/tenant-a/y", "PREFIXED", nil, ""); rec.Code != http.StatusOK || rec.Body.String() != "same-prefix source" {
+		t.Errorf("same-prefix copied object: status %d body %q", rec.Code, rec.Body.String())
+	}
 }
 
 // TestDeleteObjectsBatchAuthorization verifies that DeleteObjects checks

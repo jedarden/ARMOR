@@ -2998,6 +2998,22 @@ func (h *Handlers) CopyObject(w http.ResponseWriter, r *http.Request, dstBucket,
 	// resolves the same way the URL bucket does. Without this the copy fails
 	// with NoSuchKey against a bucket that no longer holds anything.
 	srcBucket = h.config.ResolveBucket(srcBucket)
+
+	// CopyObject reads the source object on behalf of the caller, so the
+	// source needs its own Get authorization in addition to the destination's
+	// Put check in the server wrapper. Keep direct handler callers (which have
+	// no authenticated context) compatible with the legacy handler tests; every
+	// client-facing request reaches this point with a credential in context.
+	if strings.HasPrefix(srcKey, ".armor/") {
+		h.writeError(w, r, "AccessDenied", "Access to .armor/ reserved namespace is denied", http.StatusForbidden)
+		return
+	}
+	if cred := acl.CredentialFromContext(ctx); cred != nil {
+		if err := acl.CheckACL(cred, srcBucket, srcKey, acl.ActionGet); err != nil {
+			h.writeError(w, r, "AccessDenied", fmt.Sprintf("Access denied: GET access to /%s/%s", srcBucket, srcKey), http.StatusForbidden)
+			return
+		}
+	}
 	if srcBucket == dstBucket && srcKey == dstKey {
 		h.writeError(w, r, "InvalidRequest", "Cannot copy an object onto itself", http.StatusBadRequest)
 		return
@@ -3199,7 +3215,8 @@ func (h *Handlers) CopyObject(w http.ResponseWriter, r *http.Request, dstBucket,
 			meta["Content-Type"] = ct
 		}
 		for k, v := range r.Header {
-			if strings.HasPrefix(k, "X-Amz-Meta-") {
+			lower := strings.ToLower(k)
+			if strings.HasPrefix(lower, "x-amz-meta-") && !strings.HasPrefix(lower, "x-amz-meta-armor-") {
 				meta[strings.ToLower(k)] = v[0]
 			}
 		}

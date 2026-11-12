@@ -54,6 +54,10 @@ If no actions are specified, all verbs are permitted.
 An entry granting `delete` continues to grant `abort` (abort was part of delete
 before it became its own verb); the reverse does not hold.
 
+CopyObject requires both permissions: `put` on the destination and `get` on
+the `x-amz-copy-source` object. Sources in the reserved `.armor/` namespace
+are always denied.
+
 ```bash
 # All verbs on logs/ (no action segment = all permitted)
 ARMOR_AUTH_LOGS_ACL="mybucket:logs/*"
