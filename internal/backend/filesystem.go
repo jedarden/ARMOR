@@ -13,14 +13,16 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
 // FSBackend implements the Backend interface using a local filesystem.
 // This is designed as a secondary replication target per ADR-006.
 type FSBackend struct {
-	basePath  string
-	keyPrefix string
+	basePath      string
+	keyPrefix     string
+	conditionalMu sync.Mutex
 }
 
 // FSConfig contains configuration for the filesystem backend.
@@ -129,11 +131,15 @@ func (fs *FSBackend) saveMetadata(bucket, key string, meta *fsMetadata) error {
 
 // Put stores an object.
 func (fs *FSBackend) Put(ctx context.Context, bucket, key string, body io.Reader, size int64, meta map[string]string) error {
+	fs.conditionalMu.Lock()
+	defer fs.conditionalMu.Unlock()
 	return fs.put(ctx, bucket, key, body, size, meta, false)
 }
 
 // PutIfAbsent stores an object only when its key does not already exist.
 func (fs *FSBackend) PutIfAbsent(ctx context.Context, bucket, key string, body io.Reader, size int64, meta map[string]string) error {
+	fs.conditionalMu.Lock()
+	defer fs.conditionalMu.Unlock()
 	return fs.put(ctx, bucket, key, body, size, meta, true)
 }
 
@@ -524,6 +530,29 @@ func (fs *FSBackend) list(ctx context.Context, bucket, prefix, delimiter, contin
 
 // Copy copies an object, supporting cross-bucket copy.
 func (fs *FSBackend) Copy(ctx context.Context, srcBucket, srcKey, dstBucket, dstKey string, meta map[string]string, replaceMetadata bool) error {
+	fs.conditionalMu.Lock()
+	defer fs.conditionalMu.Unlock()
+	return fs.copy(ctx, srcBucket, srcKey, dstBucket, dstKey, meta, replaceMetadata)
+}
+
+// CopyIfMatch publishes a staged object only when the destination's metadata
+// ETag still matches the value observed before migration. The mutex covers
+// normal writes in this process and the final rename is performed only after
+// that check, making the filesystem backend's commit point atomic locally.
+func (fs *FSBackend) CopyIfMatch(ctx context.Context, srcBucket, srcKey, dstBucket, dstKey, expectedETag string, meta map[string]string, replaceMetadata bool) error {
+	fs.conditionalMu.Lock()
+	defer fs.conditionalMu.Unlock()
+	current, err := fs.Head(ctx, dstBucket, dstKey)
+	if err != nil {
+		return err
+	}
+	if current.ETag != expectedETag {
+		return ErrPreconditionFailed
+	}
+	return fs.copy(ctx, srcBucket, srcKey, dstBucket, dstKey, meta, replaceMetadata)
+}
+
+func (fs *FSBackend) copy(ctx context.Context, srcBucket, srcKey, dstBucket, dstKey string, meta map[string]string, replaceMetadata bool) error {
 	// Read source object
 	srcData, srcInfo, err := fs.Get(ctx, srcBucket, srcKey)
 	if err != nil {
@@ -550,7 +579,7 @@ func (fs *FSBackend) Copy(ctx context.Context, srcBucket, srcKey, dstBucket, dst
 		}
 	}
 
-	return fs.Put(ctx, dstBucket, dstKey, srcData, size, finalMeta)
+	return fs.put(ctx, dstBucket, dstKey, srcData, size, finalMeta, false)
 }
 
 // GetDirect retrieves an object directly (same as Get for filesystem).

@@ -19,6 +19,7 @@ import (
 	"net/http/httptest"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"golang.org/x/sync/errgroup"
@@ -92,6 +93,8 @@ type Server struct {
 	metrics        *metrics.Metrics
 	requestTracker *metrics.RequestTracker
 	logger         *logging.Logger
+	migrationMu    sync.Mutex
+	migrationRun   bool
 }
 
 // New creates a new ARMOR server.
@@ -240,7 +243,14 @@ func New(cfg *config.Config) (*Server, error) {
 	// Create B2 keys client (for B2 native API key management)
 	// Uses the same B2 credentials as the S3 backend
 	var b2keysClient *b2keys.Client
-	if cfg.Bucket != "" {
+	if cfg.Backend != "b2" {
+		// B2 native key management talks to the B2 account API; on any other
+		// backend (the filesystem demo) there is nothing to manage and
+		// nothing to announce — "B2 key management disabled" on a filesystem
+		// deployment reads like a fault in a server that never had a B2
+		// account. The client stays nil, exactly as the bucket-scoped case
+		// below leaves it.
+	} else if cfg.Bucket != "" {
 		// Bucket-scoped configuration: application key is restricted to a single bucket
 		// and cannot call account-level B2 API endpoints (like b2_authorize_account).
 		// Key management is unavailable in this mode, which is expected and intentional.
@@ -692,7 +702,11 @@ func (s *Server) healthz(w http.ResponseWriter, r *http.Request) {
 // state is the sole signal — no backend call is made. When the canary is
 // disabled (ARMOR_CANARY_DISABLED=true), /readyz always returns 200 and the
 // liveness probe (/healthz) is the sole health guard. When the canary is not
-// configured, the manifest writer's last flush is used as the health signal.
+// configured, the manifest writer's last flush is used as the health signal —
+// except on the filesystem backend, where readiness does not wait for a
+// flush: an idle filesystem deployment (the demo) never writes a delta, and
+// the local directory it serves from has no remote dependency to probe once
+// the cold load has resolved.
 //
 // Response JSON fields:
 //   - ready (bool): true if service is ready
@@ -804,6 +818,26 @@ func (s *Server) readyz(w http.ResponseWriter, r *http.Request) {
 			MultipartCanaryHealthy: false,
 			ManifestFlushedS:       0,
 			Reason:                 "Not ready - manifest cold load in progress",
+		}))
+		return
+	}
+
+	// Filesystem-backend deployments (the demo) must not gate readiness on a
+	// manifest flush: they run no canary, and an idle but perfectly healthy
+	// demo never writes a delta, so "never flushed" would hold /readyz at
+	// 503 for the process's whole lifetime. The filesystem backend has no
+	// remote dependency to probe — once the cold load above has resolved,
+	// the local directory is as ready as it will ever be. B2 deployments
+	// keep the flush-recency signal below; production readiness semantics
+	// are unchanged.
+	if s.config != nil && s.config.Backend == "filesystem" {
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(s.noteManifestDegraded(readyzResponse{
+			Ready:                  true,
+			CanaryAgeS:             0,
+			MultipartCanaryHealthy: false,
+			ManifestFlushedS:       0,
+			Reason:                 "Ready - filesystem backend (readiness does not wait for a manifest flush)",
 		}))
 		return
 	}
@@ -1248,22 +1282,63 @@ func (s *Server) migrateFormat(w http.ResponseWriter, r *http.Request) {
 
 	// Migrate toward the validated target (always the configured write version).
 	migrator := NewFormatMigrator(s.backend, s.config.Bucket, key.MEK, key.Name, targetVersion, includeVersions, s.manifestIndex()).WithKeyPrefix(s.config.Prefix)
-
-	// Perform migration
-	result, err := migrator.Migrate(r.Context(), dryRun, concurrency)
-	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"status": "failed",
-			"error":  err.Error(),
-			"result": result,
-		})
-		return
+	// Preserve the inexpensive empty-bucket contract: there is no background
+	// object work to detach, so completing it inline keeps existing operators'
+	// probes deterministic. Any non-empty migration always follows the durable
+	// background path below.
+	if page, listErr := s.backend.List(r.Context(), s.config.Bucket, "", "", "", 1); listErr == nil {
+		hasObject := false
+		for _, obj := range page.Objects {
+			if !migrator.isInternalKey(obj.Key) {
+				hasObject = true
+				break
+			}
+		}
+		if !hasObject && !page.IsTruncated {
+			result, runErr := migrator.RunDurable(r.Context(), dryRun, concurrency)
+			if runErr != nil {
+				w.WriteHeader(http.StatusInternalServerError)
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{"status": "failed", "error": runErr.Error(), "result": result})
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_ = json.NewEncoder(w).Encode(result)
+			return
+		}
 	}
 
+	// The request owns validation and admission only. The worker uses a
+	// process-independent bucket lease and a background context so a client
+	// timeout cannot cancel object work halfway through a staged upload.
+	s.migrationMu.Lock()
+	if s.migrationRun {
+		s.migrationMu.Unlock()
+		http.Error(w, "a format migration is already running", http.StatusConflict)
+		return
+	}
+	s.migrationRun = true
+	s.migrationMu.Unlock()
+	go func() {
+		defer func() {
+			s.migrationMu.Lock()
+			s.migrationRun = false
+			s.migrationMu.Unlock()
+		}()
+		if _, err := migrator.RunDurable(context.Background(), dryRun, concurrency); err != nil {
+			log.Printf("format migration failed: %v", err)
+		}
+	}()
+
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(result)
+	w.WriteHeader(http.StatusAccepted)
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"status":                "in_progress",
+		"include_versions":      includeVersions,
+		"current_write_version": targetVersion,
+		"dry_run":               dryRun,
+		"concurrency":           concurrency,
+	})
 }
 
 // handleMigrationProgress returns the current migration progress.

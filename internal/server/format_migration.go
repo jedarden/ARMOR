@@ -77,6 +77,42 @@ type MigrationState struct {
 	ErrorMessage string `json:"error_message,omitempty"`
 	// Detailed classification counts
 	Classification ObjectClassification `json:"classification,omitempty"`
+	// ConfigDigest binds checkpoints to the exact migration parameters and
+	// active key identity. A resumed worker refuses to reuse a checkpoint from
+	// a different migration contract.
+	ConfigDigest string `json:"config_digest,omitempty"`
+	// LeaseKey identifies the bucket-scoped lease held by the durable engine.
+	LeaseKey string `json:"lease_key,omitempty"`
+	// Checkpoints are per-object durable state. They are intentionally keyed by
+	// client object key rather than by list position so pagination and pod
+	// restart cannot lose completed work.
+	Checkpoints map[string]MigrationCheckpoint `json:"checkpoints,omitempty"`
+	// CommitPoint records the last durable manifest/source commit transition.
+	CommitPoint string `json:"commit_point,omitempty"`
+	// Rollback records staged references that remain safe to remove after a
+	// pre-commit failure; the source object is never changed until commit.
+	Rollback []MigrationRollback `json:"rollback,omitempty"`
+}
+
+// MigrationCheckpoint is the durable per-object state machine.
+type MigrationCheckpoint struct {
+	Key           string    `json:"key"`
+	SourceETag    string    `json:"source_etag,omitempty"`
+	SourceVersion string    `json:"source_version,omitempty"`
+	StagingKey    string    `json:"staging_key,omitempty"`
+	Status        string    `json:"status"` // running, staged, committed, skipped, failed
+	Error         string    `json:"error,omitempty"`
+	UpdatedAt     time.Time `json:"updated_at"`
+}
+
+// MigrationRollback is retained until the migration reaches its commit point.
+// It gives operators a precise cleanup target without making a staged object
+// authoritative by accident.
+type MigrationRollback struct {
+	Key        string    `json:"key"`
+	StagingKey string    `json:"staging_key"`
+	Reason     string    `json:"reason,omitempty"`
+	CreatedAt  time.Time `json:"created_at"`
 }
 
 // MigrationFailure records a failed migration attempt.
@@ -409,6 +445,7 @@ type FormatMigrator struct {
 	// state tracks migration progress
 	state     *MigrationState
 	stateMu   sync.Mutex
+	persistMu sync.Mutex
 	statePath string // <keyPrefix>.armor/migration-state.json
 }
 
@@ -1491,8 +1528,19 @@ func (fm *FormatMigrator) loadState(ctx context.Context) (*MigrationState, error
 
 // saveState saves the migration state to storage.
 func (fm *FormatMigrator) saveState(ctx context.Context) error {
+	fm.persistMu.Lock()
+	defer fm.persistMu.Unlock()
 	fm.stateMu.Lock()
 	state := *fm.state
+	if fm.state.Checkpoints != nil {
+		state.Checkpoints = make(map[string]MigrationCheckpoint, len(fm.state.Checkpoints))
+		for key, checkpoint := range fm.state.Checkpoints {
+			state.Checkpoints[key] = checkpoint
+		}
+	}
+	state.IncludeVersions = append([]string(nil), fm.state.IncludeVersions...)
+	state.Failures = append([]MigrationFailure(nil), fm.state.Failures...)
+	state.Rollback = append([]MigrationRollback(nil), fm.state.Rollback...)
 	fm.stateMu.Unlock()
 
 	data, err := json.MarshalIndent(state, "", "  ")

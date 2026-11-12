@@ -40,6 +40,11 @@ func IsNoSuchUpload(err error) bool {
 	return errors.As(err, &apiErr) && apiErr.ErrorCode() == "NoSuchUpload"
 }
 
+func isS3PreconditionFailed(err error) bool {
+	var apiErr smithy.APIError
+	return errors.As(err, &apiErr) && (apiErr.ErrorCode() == "PreconditionFailed" || apiErr.ErrorCode() == "412")
+}
+
 // B2Backend implements the Backend interface using B2's S3 API.
 type B2Backend struct {
 	s3Client         *s3.Client
@@ -1125,6 +1130,30 @@ func (b *B2Backend) Copy(ctx context.Context, srcBucket, srcKey, dstBucket, dstK
 	_, err := b.s3Client.CopyObject(ctx, input)
 	if err != nil {
 		return fmt.Errorf("CopyObject failed: %w", err)
+	}
+	return nil
+}
+
+// CopyIfMatch publishes a staged object only when the destination still has
+// the ETag observed by the migration worker. S3 evaluates this precondition
+// while copying, so an overwrite racing the migration cannot be replaced.
+func (b *B2Backend) CopyIfMatch(ctx context.Context, srcBucket, srcKey, dstBucket, dstKey, expectedETag string, meta map[string]string, replaceMetadata bool) error {
+	input := &s3.CopyObjectInput{
+		Bucket:            aws.String(dstBucket),
+		CopySource:        aws.String(copySource(srcBucket, srcKey)),
+		Key:               aws.String(dstKey),
+		CopySourceIfMatch: aws.String(expectedETag),
+	}
+	if replaceMetadata {
+		input.MetadataDirective = types.MetadataDirectiveReplace
+		input.Metadata = toS3Metadata(meta)
+	}
+	_, err := b.s3Client.CopyObject(ctx, input)
+	if err != nil {
+		if isS3PreconditionFailed(err) {
+			return ErrPreconditionFailed
+		}
+		return fmt.Errorf("conditional CopyObject failed: %w", err)
 	}
 	return nil
 }
