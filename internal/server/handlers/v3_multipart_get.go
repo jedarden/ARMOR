@@ -24,12 +24,13 @@ import (
 // one plaintext block, never a whole part. Time-to-first-byte is the first
 // fetched chunk, not the first full part (armor-272299ca).
 //
-// Integrity and termination: DecryptBlockV3 verifies each block's HMAC against
-// the sidecar before any plaintext is released, and Content-Length is declared
-// from the sidecar up front. A backend error or HMAC mismatch after the
-// headers are sent therefore truncates the body against the declared length —
-// the client observes a broken transfer instead of a clean-EOF truncated
-// success, and no XML error body is appended to partial plaintext.
+// Integrity and termination: the request's v3 block cryptor verifies each
+// block's HMAC against the sidecar before any plaintext is released, and
+// Content-Length is declared from the sidecar up front. A backend error or
+// HMAC mismatch after the headers are sent therefore truncates the body
+// against the declared length — the client observes a broken transfer
+// instead of a clean-EOF truncated success, and no XML error body is
+// appended to partial plaintext.
 func (h *Handlers) handleV3MultipartGet(w http.ResponseWriter, r *http.Request, bucket, key, prefixedKey string, decryptor *crypto.Decryptor, armorMeta *backend.ARMORMetadata, plaintextSize int64, lastModified time.Time) {
 	ctx := r.Context()
 
@@ -100,6 +101,17 @@ func (h *Handlers) handleV3MultipartGet(w http.ResponseWriter, r *http.Request, 
 func streamV3MultipartBlocks(out io.Writer, body io.Reader, sidecar *backend.MultipartSidecarEntry, decryptor *crypto.Decryptor, iv []byte, blockSize int, plaintextSize int64) error {
 	var emitted int64
 
+	// One cryptor and one pair of caller-owned buffers serve the whole
+	// (part, block) walk: key material and the reusable HMAC state are
+	// derived once, each block's HMAC is verified exactly once by the
+	// cryptor, and the ciphertext and plaintext buffers are reused across
+	// blocks (armor-61a35059).
+	cryptor, err := decryptor.V3BlockCryptor(blockSize)
+	if err != nil {
+		return fmt.Errorf("v3 block cryptor: %w", err)
+	}
+
+	var ciphertextBuf, plaintextBuf []byte
 	for partIdx := 0; partIdx < sidecar.PartCount(); partIdx++ {
 		part := sidecar.Sidecar.Parts[partIdx]
 
@@ -117,16 +129,20 @@ func streamV3MultipartBlocks(out io.Writer, body io.Reader, sidecar *backend.Mul
 				return fmt.Errorf("after %d of %d plaintext bytes: get compression flag (part %d, block %d): %w", emitted, plaintextSize, part.N, blockIdx, err)
 			}
 
-			blockCiphertext := make([]byte, blockLen)
+			if needed := int(blockLen); cap(ciphertextBuf) < needed {
+				ciphertextBuf = make([]byte, needed)
+				plaintextBuf = make([]byte, needed)
+			}
+			blockCiphertext := ciphertextBuf[:blockLen]
 			if _, err := io.ReadFull(body, blockCiphertext); err != nil {
 				return fmt.Errorf("after %d of %d plaintext bytes: read ciphertext for part %d block %d: %w", emitted, plaintextSize, part.N, blockIdx, err)
 			}
 
-			// DecryptBlockV3 verifies the block HMAC first and decrypts only
-			// on a match, so unverified plaintext never reaches out. The
-			// counter namespace is (part, block-within-part).
-			plaintext, err := crypto.DecryptBlockV3(decryptor.DEK(), iv, uint16(part.N), uint32(blockIdx), blockCiphertext, expectedHMAC, blockSize)
-			if err != nil {
+			// DecryptBlockInto verifies the block HMAC first and decrypts
+			// only on a match, so unverified plaintext never reaches out.
+			// The counter namespace is (part, block-within-part).
+			plaintext := plaintextBuf[:blockLen]
+			if err := cryptor.DecryptBlockInto(plaintext, uint16(part.N), uint32(blockIdx), blockCiphertext, expectedHMAC); err != nil {
 				return fmt.Errorf("after %d of %d plaintext bytes: part %d block %d: %w", emitted, plaintextSize, part.N, blockIdx, err)
 			}
 

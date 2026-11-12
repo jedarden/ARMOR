@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"crypto/aes"
 	"crypto/cipher"
+	"crypto/hmac"
+	"crypto/sha256"
 	"encoding/binary"
 	"testing"
 )
@@ -84,6 +86,42 @@ func benchmarkDecryptBlockV3(b *testing.B, n int) {
 	}
 }
 
+// benchmarkDecryptBlockV3Cryptor is the per-object shape the v3 read paths
+// run after armor-61a35059: one cryptor holds the AES cipher, the derived
+// HMAC key, and a Reset-reusable HMAC state for the whole block loop, and
+// the plaintext destination is a caller-owned buffer reused across blocks.
+// Compare against benchmarkDecryptBlockV3 (the one-shot static entry point
+// the read paths used before): same DEK/IV, same block, so the delta is
+// exactly the per-block key/cipher rebuilds, the second HMAC pass, and the
+// fresh output buffer the one-shot path pays.
+func benchmarkDecryptBlockV3Cryptor(b *testing.B, n int) {
+	dek, iv := benchV3KeyMaterial()
+	plaintext := benchV3Plaintext(n)
+	blockSize := n
+	if blockSize > V3MaxBlockSize {
+		blockSize = V3MaxBlockSize
+	}
+	ciphertext, mac, err := EncryptBlockV3(dek, iv, 0, 0, plaintext, blockSize)
+	if err != nil {
+		b.Fatalf("EncryptBlockV3: %v", err)
+	}
+	cryptor, err := NewV3BlockCryptor(dek, iv, blockSize)
+	if err != nil {
+		b.Fatalf("NewV3BlockCryptor: %v", err)
+	}
+	dst := make([]byte, n)
+	b.SetBytes(int64(n))
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if err := cryptor.DecryptBlockInto(dst, 0, 0, ciphertext, mac); err != nil {
+			b.Fatalf("DecryptBlockInto: %v", err)
+		}
+		if len(dst) != n {
+			b.Fatalf("length mismatch: %d != %d", len(dst), n)
+		}
+	}
+}
+
 // BenchmarkV3KeystreamReference measures the historical keystream
 // construction — one cipher.NewCTR per 16 bytes — so the amplification it
 // caused stays visible next to the optimized numbers without resurrecting
@@ -139,10 +177,65 @@ func benchmarkV3KeystreamReference(b *testing.B, n int) {
 	}
 }
 
+// benchmarkDecryptBlockV3HandlerShape mirrors the per-block work the v3
+// full-GET loop paid before armor-61a35059: a manual HMAC pass over the
+// block (hmac.New, prefix writes — handlers.go had it inline) followed by a
+// one-shot DecryptBlockV3 that verified the same HMAC a second time and
+// rebuilt the cipher and HMAC key. The read call sites run neither of those
+// anymore; this benchmark keeps the removed cost visible next to the
+// cryptor numbers rather than resurrecting the shape anywhere in production.
+func benchmarkDecryptBlockV3HandlerShape(b *testing.B, n int) {
+	dek, iv := benchV3KeyMaterial()
+	plaintext := benchV3Plaintext(n)
+	blockSize := n
+	if blockSize > V3MaxBlockSize {
+		blockSize = V3MaxBlockSize
+	}
+	ciphertext, mac, err := EncryptBlockV3(dek, iv, 0, 0, plaintext, blockSize)
+	if err != nil {
+		b.Fatalf("EncryptBlockV3: %v", err)
+	}
+	hmacKey, err := DeriveHMACKey(dek)
+	if err != nil {
+		b.Fatalf("DeriveHMACKey: %v", err)
+	}
+	b.SetBytes(int64(n))
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		m := hmac.New(sha256.New, hmacKey)
+		var partBytes [2]byte
+		var blockBytes [4]byte
+		binary.BigEndian.PutUint16(partBytes[:], 0) // part=0 for single-PUT
+		m.Write(partBytes[:])
+		binary.BigEndian.PutUint32(blockBytes[:], 0)
+		m.Write(blockBytes[:])
+		m.Write(ciphertext)
+		if !hmac.Equal(m.Sum(nil), mac) {
+			b.Fatal("manual HMAC pass mismatch")
+		}
+		got, err := DecryptBlockV3(dek, iv, 0, 0, ciphertext, mac, blockSize)
+		if err != nil {
+			b.Fatalf("DecryptBlockV3: %v", err)
+		}
+		if len(got) != n {
+			b.Fatalf("length mismatch: %d != %d", len(got), n)
+		}
+	}
+}
+
 func BenchmarkEncryptBlockV3_64KiB(b *testing.B) { benchmarkEncryptBlockV3(b, 64*1024) }
 func BenchmarkDecryptBlockV3_64KiB(b *testing.B) { benchmarkDecryptBlockV3(b, 64*1024) }
 func BenchmarkEncryptBlockV3_1MiB(b *testing.B)  { benchmarkEncryptBlockV3(b, V3MaxBlockSize) }
 func BenchmarkDecryptBlockV3_1MiB(b *testing.B)  { benchmarkDecryptBlockV3(b, V3MaxBlockSize) }
+
+func BenchmarkDecryptBlockV3Cryptor_64KiB(b *testing.B) { benchmarkDecryptBlockV3Cryptor(b, 64*1024) }
+func BenchmarkDecryptBlockV3Cryptor_1MiB(b *testing.B) {
+	benchmarkDecryptBlockV3Cryptor(b, V3MaxBlockSize)
+}
+
+func BenchmarkDecryptBlockV3HandlerShape_64KiB(b *testing.B) {
+	benchmarkDecryptBlockV3HandlerShape(b, 64*1024)
+}
 
 func BenchmarkV3KeystreamReference_64KiB(b *testing.B) { benchmarkV3KeystreamReference(b, 64*1024) }
 func BenchmarkV3KeystreamReference_1MiB(b *testing.B) {

@@ -340,6 +340,27 @@ func (d *Decryptor) BlockSize() int {
 	return d.blockSize
 }
 
+// V3BlockCryptor returns a per-object Version3 block cryptor assembled from
+// this decryptor's already-derived AES cipher and HMAC key — no second
+// key-derivation pass. Callers looping over an object's blocks should hold
+// one cryptor for the whole loop instead of calling DecryptBlockV3 per block,
+// which rebuilds the cipher, re-derives the HMAC key, and re-verifies each
+// block's HMAC that the caller already checked.
+//
+// blockSize must be <= V3MaxBlockSize; it is validated here with the same
+// rule the per-call DecryptBlockV3 path applies. The accessor is
+// version-agnostic on purpose: v3 read paths derive the cryptor from the
+// DEK/IV the decryptor holds regardless of the decryptor's own legacy
+// counter version. The cryptor is NOT safe for concurrent use — build one
+// per request (or guard it); the underlying cipher.Block is shared without
+// risk because cipher.Block implementations are concurrency-safe.
+func (d *Decryptor) V3BlockCryptor(blockSize int) (*V3BlockCryptor, error) {
+	if err := validateV3BlockParams(d.dek, d.iv, blockSize); err != nil {
+		return nil, err
+	}
+	return newV3BlockCryptor(d.block, d.hmacKey, d.iv), nil
+}
+
 // DecryptWithBlockDecompression decrypts encrypted data with per-block decompression.
 // Uses the block table to determine which blocks are compressed and decompresses them
 // after decryption. Handles mixed compressed/uncompressed blocks in the same object.

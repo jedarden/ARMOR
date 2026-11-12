@@ -81,8 +81,18 @@ func (h *Handlers) handleV3RangeRequest(w http.ResponseWriter, r *http.Request, 
 	}
 	defer spanBody.Close()
 
+	// One cryptor serves the whole range: the AES cipher, HKDF HMAC key, and
+	// Reset-reusable HMAC state are derived once instead of per block, and
+	// the ciphertext and plaintext buffers are caller-owned and reused across
+	// blocks (armor-61a35059).
+	v3Cryptor, err := decryptor.V3BlockCryptor(blockSize)
+	if err != nil {
+		h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to build v3 block cryptor for range: %v", err), 500)
+		return
+	}
+
 	// Decrypt and emit one block at a time (armor-31fe90c8): each block is
-	// authenticated by DecryptBlockV3 (which verifies the block's HMAC before
+	// authenticated by the cryptor (which verifies the block's HMAC before
 	// releasing any plaintext; no separate HMAC pass) and written to the
 	// client as soon as it is verified, so in-process memory stays at one
 	// block's ciphertext plus one block's plaintext however long the range
@@ -90,12 +100,17 @@ func (h *Handlers) handleV3RangeRequest(w http.ResponseWriter, r *http.Request, 
 	// first block aborts the connection against that declared length instead
 	// of returning a truncated 206 as success.
 	sw := h.newRangeStreamWriter(w, r, bucket, key, armorMeta, plaintextSize, start, end, lastModified)
+	var ciphertextBuf, plainBuf []byte
 	for blockIndex := startBlock; blockIndex <= endBlock; blockIndex++ {
 		entry := blockTable.Entries[blockIndex]
 		isCompressed := entry.IsCompressed()
 		ciphertextLen := entry.RawLength()
 
-		blockCiphertext := make([]byte, ciphertextLen)
+		if needed := int(ciphertextLen); cap(ciphertextBuf) < needed {
+			ciphertextBuf = make([]byte, needed)
+			plainBuf = make([]byte, needed)
+		}
+		blockCiphertext := ciphertextBuf[:ciphertextLen]
 		if _, err := io.ReadFull(spanBody, blockCiphertext); err != nil {
 			sw.abort(fmt.Sprintf("Failed to read v3 block %d from fetched span: %v", blockIndex, err))
 			return
@@ -103,8 +118,8 @@ func (h *Handlers) handleV3RangeRequest(w http.ResponseWriter, r *http.Request, 
 
 		// Decrypt block using v3 counter construction (verifies the block's
 		// HMAC first)
-		decrypted, err := crypto.DecryptBlockV3(decryptor.DEK(), armorMeta.IV, 0, uint32(blockIndex), blockCiphertext, entry.HMAC[:], blockSize)
-		if err != nil {
+		decrypted := plainBuf[:ciphertextLen]
+		if err := v3Cryptor.DecryptBlockInto(decrypted, 0, uint32(blockIndex), blockCiphertext, entry.HMAC[:]); err != nil {
 			sw.abort(fmt.Sprintf("v3 block %d authentication/decryption failed: %v", blockIndex, err))
 			return
 		}

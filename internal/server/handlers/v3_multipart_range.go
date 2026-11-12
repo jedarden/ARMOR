@@ -41,6 +41,16 @@ func (h *Handlers) handleV3MultipartRangeRequest(w http.ResponseWriter, r *http.
 		return
 	}
 
+	// One cryptor serves the whole range: the AES cipher, HKDF HMAC key, and
+	// Reset-reusable HMAC state are derived once instead of per block, and
+	// the ciphertext and plaintext buffers are caller-owned and reused
+	// across blocks (armor-61a35059).
+	v3Cryptor, err := decryptor.V3BlockCryptor(blockSize)
+	if err != nil {
+		h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to build v3 block cryptor for range: %v", err), 500)
+		return
+	}
+
 	// Fetch and decrypt only the needed blocks, emitting each one as it is
 	// verified (armor-31fe90c8). Contiguous runs of blocks are fetched with
 	// one ranged request per run: the backend's pipelined reader then
@@ -51,6 +61,7 @@ func (h *Handlers) handleV3MultipartRangeRequest(w http.ResponseWriter, r *http.
 	// declared length instead of returning a truncated 206 as success.
 	sw := h.newRangeStreamWriter(w, r, bucket, key, armorMeta, plaintextSize, rangeStart, rangeEnd, lastModified)
 
+	var ciphertextBuf, plainBuf []byte
 	for _, run := range rangeInfo.BlockRuns {
 		partNum := sidecar.Sidecar.Parts[run.PartIdx].N
 
@@ -68,7 +79,11 @@ func (h *Handlers) handleV3MultipartRangeRequest(w http.ResponseWriter, r *http.
 				sw.abort(fmt.Sprintf("Failed to get block length (part %d, block %d): %v", run.PartIdx, blockIdx, err))
 				return
 			}
-			blockCiphertext := make([]byte, blockLen)
+			if needed := int(blockLen); cap(ciphertextBuf) < needed {
+				ciphertextBuf = make([]byte, needed)
+				plainBuf = make([]byte, needed)
+			}
+			blockCiphertext := ciphertextBuf[:blockLen]
 			if _, err := io.ReadFull(runBody, blockCiphertext); err != nil {
 				runBody.Close()
 				sw.abort(fmt.Sprintf("Failed to read block ciphertext (part %d, block %d): %v", run.PartIdx, blockIdx, err))
@@ -82,12 +97,12 @@ func (h *Handlers) handleV3MultipartRangeRequest(w http.ResponseWriter, r *http.
 				return
 			}
 
-			// DecryptBlockV3 verifies the block's HMAC as part of
+			// DecryptBlockInto verifies the block's HMAC as part of
 			// decryption and releases the plaintext only on a match, so no
 			// separate verification pass runs here (the single-PUT range
 			// path relies on the same guarantee).
-			decryptedBlock, err := crypto.DecryptBlockV3(decryptor.DEK(), armorMeta.IV, uint16(partNum), uint32(blockIdx), blockCiphertext, expectedHMAC, blockSize)
-			if err != nil {
+			decryptedBlock := plainBuf[:blockLen]
+			if err := v3Cryptor.DecryptBlockInto(decryptedBlock, uint16(partNum), uint32(blockIdx), blockCiphertext, expectedHMAC); err != nil {
 				runBody.Close()
 				sw.abort(fmt.Sprintf("Decryption failed (part %d, block %d): %v", run.PartIdx, blockIdx, err))
 				return

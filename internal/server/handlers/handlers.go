@@ -2011,6 +2011,18 @@ func (h *Handlers) handleFullObjectStream(w http.ResponseWriter, r *http.Request
 			}
 		} else if v3BlockTable, isV3 := decodeV3BlockTableFromTransport(hmacTable); isV3 {
 			// v3 single-PUT: read blocks using the trailer's prefix sums.
+			// One cryptor serves the whole object: the AES cipher, HKDF HMAC
+			// key, and Reset-reusable HMAC state are derived once instead of
+			// per block, each block's HMAC is verified exactly once (by the
+			// cryptor, before any plaintext is released), and the read and
+			// plaintext buffers are caller-owned and reused across blocks
+			// (armor-61a35059).
+			v3Cryptor, cryptorErr := decryptor.V3BlockCryptor(blockSize)
+			if cryptorErr != nil {
+				pw.CloseWithError(fmt.Errorf("v3 block cryptor: %w", cryptorErr))
+				return
+			}
+			var encryptedBuf, plainBuf []byte
 			for blockIndex := 0; blockIndex < blockCount; blockIndex++ {
 				if blockIndex >= v3BlockTable.EntryCount() {
 					pw.CloseWithError(fmt.Errorf("block index %d out of range (v3 table has %d entries)", blockIndex, v3BlockTable.EntryCount()))
@@ -2018,7 +2030,11 @@ func (h *Handlers) handleFullObjectStream(w http.ResponseWriter, r *http.Request
 				}
 
 				entry := v3BlockTable.Entries[blockIndex]
-				encryptedBuf := make([]byte, entry.RawLength())
+				if needed := int(entry.RawLength()); cap(encryptedBuf) < needed {
+					encryptedBuf = make([]byte, needed)
+					plainBuf = make([]byte, needed)
+				}
+				encryptedBuf = encryptedBuf[:entry.RawLength()]
 				n, err := io.ReadFull(dataBody, encryptedBuf)
 				if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
 					pw.CloseWithError(fmt.Errorf("read error at v3 block %d: %w", blockIndex, err))
@@ -2029,23 +2045,12 @@ func (h *Handlers) handleFullObjectStream(w http.ResponseWriter, r *http.Request
 				}
 				encryptedBuf = encryptedBuf[:n]
 
-				expectedHMAC := entry.HMAC[:]
-				mac := hmac.New(sha256.New, decryptor.HMACKey())
-				partBytes := make([]byte, 2)
-				binary.BigEndian.PutUint16(partBytes, 0) // part=0 for single-PUT
-				mac.Write(partBytes)
-				blockBytes := make([]byte, 4)
-				binary.BigEndian.PutUint32(blockBytes, uint32(blockIndex))
-				mac.Write(blockBytes)
-				mac.Write(encryptedBuf)
-				if !hmac.Equal(mac.Sum(nil), expectedHMAC) {
-					pw.CloseWithError(fmt.Errorf("v3 block %d: HMAC verification failed", blockIndex))
-					return
-				}
-
-				decrypted, err := crypto.DecryptBlockV3(decryptor.DEK(), armorMeta.IV, 0, uint32(blockIndex), encryptedBuf, expectedHMAC, blockSize)
-				if err != nil {
-					pw.CloseWithError(fmt.Errorf("v3 block %d decryption failed: %w", blockIndex, err))
+				// DecryptBlockInto verifies the block's (part, block)-bound
+				// HMAC first and releases plaintext only on a match, so no
+				// separate verification pass runs here.
+				decrypted := plainBuf[:len(encryptedBuf)]
+				if err := v3Cryptor.DecryptBlockInto(decrypted, 0, uint32(blockIndex), encryptedBuf, entry.HMAC[:]); err != nil {
+					pw.CloseWithError(fmt.Errorf("v3 block %d authentication/decryption failed: %w", blockIndex, err))
 					return
 				}
 				if entry.IsCompressed() {

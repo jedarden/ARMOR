@@ -243,19 +243,38 @@ func (c *V3BlockCryptor) encryptBlockInto(dst, macOut []byte, part uint16, block
 // field would wrap or carry into the part/block namespace and decrypt with
 // reused keystream.
 func (c *V3BlockCryptor) DecryptBlock(part uint16, block uint32, ciphertext []byte, expectedHMAC []byte) (plaintext []byte, err error) {
-	if err := validateV3BlockPayload(ciphertext); err != nil {
+	plaintext = make([]byte, len(ciphertext))
+	if err := c.DecryptBlockInto(plaintext, part, block, ciphertext, expectedHMAC); err != nil {
 		return nil, err
+	}
+	return plaintext, nil
+}
+
+// DecryptBlockInto decrypts one ARMOR block into the caller-owned dst buffer,
+// which must be exactly len(ciphertext) bytes; callers decrypting a run of
+// blocks reuse one buffer instead of allocating per block. Verification and
+// rejection semantics are DecryptBlock's: the HMAC is verified exactly once
+// before any byte of dst is written, and a ciphertext longer than
+// V3MaxBlockSize is rejected before any keystream is generated (the u16
+// aesBlock counter field would wrap or carry into the part/block namespace
+// and decrypt with reused keystream). On an error dst holds no plaintext:
+// verification runs before the XOR, and the XOR itself cannot fail partway.
+func (c *V3BlockCryptor) DecryptBlockInto(dst []byte, part uint16, block uint32, ciphertext []byte, expectedHMAC []byte) error {
+	if err := validateV3BlockPayload(ciphertext); err != nil {
+		return err
+	}
+	if len(dst) != len(ciphertext) {
+		return fmt.Errorf("v3 block output buffer is %d bytes, ciphertext is %d", len(dst), len(ciphertext))
 	}
 
 	if err := c.verifyBlockHMAC(part, block, ciphertext, expectedHMAC); err != nil {
-		return nil, fmt.Errorf("HMAC verification failed for part %d block %d: %w", part, block, err)
+		return fmt.Errorf("HMAC verification failed for part %d block %d: %w", part, block, err)
 	}
 
 	// Decrypt the whole ARMOR block with one CTR stream (see newV3CTR).
-	plaintext = make([]byte, len(ciphertext))
-	newV3CTR(c.blockCipher, c.iv, part, block).XORKeyStream(plaintext, ciphertext)
+	newV3CTR(c.blockCipher, c.iv, part, block).XORKeyStream(dst, ciphertext)
 
-	return plaintext, nil
+	return nil
 }
 
 // computeBlockHMAC computes HMAC-SHA256 over the v3 (part, block, ciphertext)

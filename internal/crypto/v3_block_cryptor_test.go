@@ -108,6 +108,132 @@ func TestV3BlockCryptorRejectsBadInput(t *testing.T) {
 	}
 }
 
+// DecryptBlockInto must write exactly len(ciphertext) plaintext bytes into the
+// caller's buffer and nothing beyond it, and must refuse a wrongly-sized
+// buffer outright.
+func TestV3BlockCryptorDecryptBlockInto(t *testing.T) {
+	dek, iv := benchV3KeyMaterial()
+
+	cryptor, err := NewV3BlockCryptor(dek, iv, 64*1024)
+	if err != nil {
+		t.Fatalf("NewV3BlockCryptor: %v", err)
+	}
+
+	plaintext := benchV3Plaintext(1000)
+	ciphertext, mac, err := cryptor.EncryptBlock(3, 9, plaintext)
+	if err != nil {
+		t.Fatalf("EncryptBlock: %v", err)
+	}
+
+	// Sentinels bracket the destination so an out-of-bounds write cannot
+	// hide: both must still hold their original fill after the decrypt.
+	const (
+		preFill  = 0xAA
+		postFill = 0xBB
+	)
+	buf := make([]byte, 3*len(plaintext))
+	for i := range buf[:len(plaintext)] {
+		buf[i] = preFill
+	}
+	for i := range buf[2*len(plaintext):] {
+		buf[2*len(plaintext)+i] = postFill
+	}
+	dst := buf[len(plaintext) : 2*len(plaintext)]
+
+	if err := cryptor.DecryptBlockInto(dst, 3, 9, ciphertext, mac); err != nil {
+		t.Fatalf("DecryptBlockInto: %v", err)
+	}
+	if !bytes.Equal(dst, plaintext) {
+		t.Fatal("DecryptBlockInto roundtrip mismatch")
+	}
+	for i := range buf[:len(plaintext)] {
+		if buf[i] != preFill {
+			t.Fatalf("prefix sentinel overwritten at %d", i)
+		}
+	}
+	for i := range buf[2*len(plaintext):] {
+		if buf[2*len(plaintext)+i] != postFill {
+			t.Fatalf("suffix sentinel overwritten at %d", i)
+		}
+	}
+
+	// A wrongly-sized buffer is rejected before any keystream runs.
+	if err := cryptor.DecryptBlockInto(dst[:999], 3, 9, ciphertext, mac); err == nil {
+		t.Fatal("short dst accepted")
+	}
+	if err := cryptor.DecryptBlockInto(append(dst[:0:0], dst...), 3, 9, ciphertext[:len(ciphertext)-1], mac); err == nil {
+		t.Fatal("length mismatch between dst and ciphertext accepted")
+	}
+
+	// Tampered input fails closed and writes no plaintext.
+	bad := append([]byte(nil), ciphertext...)
+	bad[len(bad)/2] ^= 0x01
+	for i := range dst {
+		dst[i] = 0
+	}
+	if err := cryptor.DecryptBlockInto(dst, 3, 9, bad, mac); !errors.Is(err, ErrHMACMismatch) {
+		t.Fatalf("tampered ciphertext: got %v, want ErrHMACMismatch", err)
+	}
+	for i := range dst {
+		if dst[i] != 0 {
+			t.Fatalf("plaintext written for a tampered block at %d", i)
+		}
+	}
+
+	// Oversized ciphertext is rejected before any keystream is generated.
+	oversized := make([]byte, V3MaxBlockSize+1)
+	if err := cryptor.DecryptBlockInto(make([]byte, len(oversized)), 0, 0, oversized, mac); err == nil {
+		t.Fatal("oversized ciphertext accepted")
+	}
+}
+
+// A cryptor assembled from a Decryptor's already-derived state must produce
+// byte-identical blocks to one built fresh from the same DEK/IV, and must
+// reject an over-maximum block size like the fresh constructor does.
+func TestDecryptorV3BlockCryptorMatchesFreshCryptor(t *testing.T) {
+	dek, iv := benchV3KeyMaterial()
+	const blockSize = 64 * 1024
+
+	decryptor, err := NewDecryptorWithVersion(dek, iv, blockSize, Version3)
+	if err != nil {
+		t.Fatalf("NewDecryptorWithVersion: %v", err)
+	}
+	cryptor, err := decryptor.V3BlockCryptor(blockSize)
+	if err != nil {
+		t.Fatalf("V3BlockCryptor: %v", err)
+	}
+
+	fresh, err := NewV3BlockCryptor(dek, iv, blockSize)
+	if err != nil {
+		t.Fatalf("NewV3BlockCryptor: %v", err)
+	}
+
+	plaintext := benchV3Plaintext(5000)
+	gotCiphertext, gotHMAC, err := cryptor.EncryptBlock(2, 7, plaintext)
+	if err != nil {
+		t.Fatalf("EncryptBlock: %v", err)
+	}
+	wantCiphertext, wantHMAC, err := fresh.EncryptBlock(2, 7, plaintext)
+	if err != nil {
+		t.Fatalf("fresh EncryptBlock: %v", err)
+	}
+	if !bytes.Equal(gotCiphertext, wantCiphertext) || !bytes.Equal(gotHMAC, wantHMAC) {
+		t.Fatal("decryptor-assembled cryptor diverges from fresh cryptor")
+	}
+
+	gotPlain, err := fresh.DecryptBlock(2, 7, gotCiphertext, gotHMAC)
+	if err != nil {
+		t.Fatalf("fresh DecryptBlock of assembled ciphertext: %v", err)
+	}
+	if !bytes.Equal(gotPlain, plaintext) {
+		t.Fatal("roundtrip mismatch")
+	}
+
+	if _, err := decryptor.V3BlockCryptor(V3MaxBlockSize + 1); err == nil {
+		t.Fatal("blockSize over the v3 maximum accepted")
+	}
+}
+
 // The pooled zstd codecs must survive reuse across calls — including a call
 // that errored on malformed input — without cross-call state leakage.
 func TestZstdCodecPoolReuse(t *testing.T) {
