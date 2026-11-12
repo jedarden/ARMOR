@@ -1931,6 +1931,27 @@ work that depends on one waits.
    rs-manager, since it reuses the endpoint and its verification exactly;
    until decided, the four migration beads cover the four served buckets
    only.
+9. **Whole-object authentication in envelope v3 before the migration (8.1,
+   8.11; raised by the 2026-11-11 review, `armor-d09d1184`).** v3
+   authenticates each block, but nothing binds the IV, version, block size,
+   plaintext size, part count and order, or the object key to the object.
+   A v3 single-PUT object truncated at a block boundary reads as a complete
+   `200`, and the threat-model claim that the HMAC table length validates the
+   block count does not hold, because that length is derived from
+   unauthenticated metadata. Forces: the migration rewrites every legacy
+   object once; adding an object MAC afterwards means rewriting them all a
+   second time, or leaving migrated objects without it. Options: (a) add an
+   object MAC to v3 now — `HMAC(hmacKey, version ‖ blockSize ‖ IV ‖
+   plaintextSize ‖ partCount ‖ per-part(n, length, blockCount) ‖
+   SHA-256(object key))`, stored in the metadata or sidecar and verified
+   before the first byte, shipped reader-first under the Phase 9
+   zero-downtime rule — and migrate once; binding the object key means
+   CopyObject and any rename must recompute it; (b) migrate to today's v3 and
+   accept a second rewrite later; (c) accept the gap and rely on B2
+   write-access control for whole-object integrity. Proposed: (a). Until
+   decided, the V1/V2→V3 write paths (`armor-bd53db4a`, `armor-ae75292d`)
+   wait; inventory, the migration API contract and the tests of the existing
+   paths do not.
 
 ---
 
