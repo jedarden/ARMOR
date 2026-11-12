@@ -78,7 +78,10 @@ func TestSmallFetchBoundarySizes(t *testing.T) {
 				}
 			}
 
-			// One byte over: the streaming path, three data-path requests.
+			// One byte over: v2 keeps its header/table/data shape. v3 takes
+			// the header from the data stream and overlaps table/data; this
+			// second GET also reuses the table/header cache warmed by the
+			// at-threshold GET, so only the data range is fetched.
 			cfg.SmallObjectFetchBytes = storedLen - 1
 			cb.resetCalls()
 			got = getObjectThroughHandler(t, h, bucket, key)
@@ -94,9 +97,13 @@ func TestSmallFetchBoundarySizes(t *testing.T) {
 					dataPath++
 				}
 			}
-			if dataPath != 3 {
-				t.Fatalf("over-threshold GET made %d data-path ranged calls, want the streaming shape's 3\ncalls: %s",
-					dataPath, formatCalls(cb.recordedCalls()))
+			wantDataPath := 3
+			if version == 3 {
+				wantDataPath = 1
+			}
+			if dataPath != wantDataPath {
+				t.Fatalf("over-threshold GET made %d data-path ranged calls, want the streaming shape's %d\ncalls: %s",
+					dataPath, wantDataPath, formatCalls(cb.recordedCalls()))
 			}
 		})
 	}

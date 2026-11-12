@@ -34,25 +34,84 @@ import (
 func (h *Handlers) handleV3MultipartGet(w http.ResponseWriter, r *http.Request, bucket, key, prefixedKey string, decryptor *crypto.Decryptor, armorMeta *backend.ARMORMetadata, plaintextSize int64, lastModified time.Time) {
 	ctx := r.Context()
 
-	// Load the v3 sidecar (with caching)
-	sidecar, err := h.loadV3MultipartSidecar(ctx, bucket, key, prefixedKey, armorMeta.ETag)
-	if err != nil {
-		h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to load v3 sidecar: %v", err), 500)
-		return
+	var sidecar *backend.MultipartSidecarEntry
+	var body io.ReadCloser
+	var err error
+	if armorMeta.CiphertextSize > 0 {
+		// The authoritative ciphertext HEAD already supplied the stored size.
+		// Start the sidecar and whole-ciphertext reads together so the sidecar
+		// no longer adds a full round trip before the first data byte.
+		parallelCtx, cancel := context.WithCancel(ctx)
+		// Keep this child context alive until the returned range reader is
+		// closed; canceling it immediately after GetRange returns would abort
+		// the backend's read-ahead pipeline before the stream consumes it.
+		type sidecarResult struct {
+			sidecar *backend.MultipartSidecarEntry
+			err     error
+		}
+		type bodyResult struct {
+			body io.ReadCloser
+			err  error
+		}
+		sidecarCh := make(chan sidecarResult, 1)
+		bodyCh := make(chan bodyResult, 1)
+		go func() {
+			loaded, loadErr := h.loadV3MultipartSidecar(parallelCtx, bucket, key, prefixedKey, armorMeta.ETag)
+			sidecarCh <- sidecarResult{sidecar: loaded, err: loadErr}
+		}()
+		go func() {
+			loaded, loadErr := h.backend.GetRange(parallelCtx, bucket, prefixedKey, 0, armorMeta.CiphertextSize)
+			bodyCh <- bodyResult{body: loaded, err: loadErr}
+		}()
+		sidecarRes := <-sidecarCh
+		bodyRes := <-bodyCh
+		if sidecarRes.err != nil {
+			cancel()
+			if bodyRes.body != nil {
+				bodyRes.body.Close()
+			}
+			h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to load v3 sidecar: %v", sidecarRes.err), 500)
+			return
+		}
+		if bodyRes.err != nil {
+			cancel()
+			h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to fetch v3 multipart object: %v", bodyRes.err), 500)
+			return
+		}
+		sidecar, body = sidecarRes.sidecar, &cancelingReadCloser{ReadCloser: bodyRes.body, cancel: cancel}
+	} else {
+		// Direct unit-test callers may omit CiphertextSize. Keep a sidecar-first
+		// fallback for that helper contract; production GetObject always sets it
+		// from the authoritative HEAD.
+		sidecar, err = h.loadV3MultipartSidecar(ctx, bucket, key, prefixedKey, armorMeta.ETag)
+		if err != nil {
+			h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to load v3 sidecar: %v", err), 500)
+			return
+		}
+		totalCiphertext, totalErr := sidecar.TotalCiphertextSize()
+		if totalErr != nil {
+			h.writeError(w, r, "InternalError", fmt.Sprintf("Invalid v3 sidecar: %v", totalErr), 500)
+			return
+		}
+		body, err = h.backend.GetRange(ctx, bucket, prefixedKey, 0, totalCiphertext)
+		if err != nil {
+			h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to fetch v3 multipart object: %v", err), 500)
+			return
+		}
 	}
 
-	// Fetch the whole concatenated ciphertext. The part offsets in the sidecar
-	// were summed once with checked int64 addition at sidecar load, so the
-	// address is correct past 4GiB (armor-817d9d92) and a sidecar whose
-	// offsets overflow is rejected before any byte is served.
+	// The sidecar is authoritative for part boundaries. It must describe the
+	// same stored object length that HEAD selected before any response byte is
+	// released; otherwise a stale sidecar could pair with a different body.
 	totalCiphertext, err := sidecar.TotalCiphertextSize()
 	if err != nil {
+		body.Close()
 		h.writeError(w, r, "InternalError", fmt.Sprintf("Invalid v3 sidecar: %v", err), 500)
 		return
 	}
-	body, err := h.backend.GetRange(ctx, bucket, prefixedKey, 0, totalCiphertext)
-	if err != nil {
-		h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to fetch v3 multipart object: %v", err), 500)
+	if armorMeta.CiphertextSize > 0 && totalCiphertext != armorMeta.CiphertextSize {
+		body.Close()
+		h.writeError(w, r, "InternalError", fmt.Sprintf("v3 sidecar ciphertext size %d does not match stored size %d", totalCiphertext, armorMeta.CiphertextSize), 500)
 		return
 	}
 

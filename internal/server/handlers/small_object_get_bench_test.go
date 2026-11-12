@@ -178,14 +178,15 @@ func runBenchCell(t *testing.T, cell benchCell, rtt time.Duration) []float64 {
 	// whole-envelope ranged request parsed locally. Nothing is cacheable and
 	// nothing warms up: even v3's trailer table is sliced out of the fetched
 	// buffer, so no generation-keyed table load happens on any GET.
-	// Streaming A/B cells measure the pre-98864f12 shape: v2 makes 5 calls
-	// per GET (probe ∥ HEAD, envelope header, inline HMAC prefetch, data);
-	// v3 makes 4 (probe ∥ HEAD, header, data) plus exactly one generation-
-	// keyed trailer-table fetch on the cell's first GET (armor-c3199f1c).
+	// Streaming A/B cells keep the per-region v2 shape: v2 makes 5 calls per
+	// GET (probe ∥ HEAD, envelope header, inline HMAC prefetch, data). The v3
+	// path makes 3 steady-state calls (probe ∥ HEAD, data), plus exactly one
+	// first-GET trailer-table fetch; its header comes from the data stream and
+	// table/data overlap (armor-43e2062b).
 	callsPerGET, warmupCalls := 3, 0
 	if cell.streaming {
 		if cell.version == 3 {
-			callsPerGET, warmupCalls = 4, 1
+			callsPerGET, warmupCalls = 3, 1
 		} else {
 			callsPerGET, warmupCalls = 5, 0
 		}
@@ -229,7 +230,7 @@ func reportBenchCell(t *testing.T, cell benchCell, rtt time.Duration, latencies 
 	if cell.streaming {
 		criticalPath = 4
 		if cell.version == 3 {
-			criticalPath = 3
+			criticalPath = 2
 		}
 	}
 	expected := float64(criticalPath) * float64(rtt.Milliseconds())

@@ -15,12 +15,12 @@ import (
 // v3TableCacheMetrics are the cumulative counters for the v3 block-table
 // cache. They are read with atomics; Snapshot is safe alongside any load.
 type v3TableCacheMetrics struct {
-	Hits       uint64 // lookups served from a cached decoded table
-	Misses     uint64 // lookups that had to fetch and decode the trailer
-	Coalesced  uint64 // waiters that rode an in-flight load instead of starting one
-	Loads      uint64 // trailer fetches issued to the backend (one per miss generation)
-	LoadBytes  uint64 // trailer bytes downloaded across those fetches
-	Evictions  uint64 // entries dropped by the entry/byte bounds
+	Hits      uint64 // lookups served from a cached decoded table
+	Misses    uint64 // lookups that had to fetch and decode the trailer
+	Coalesced uint64 // waiters that rode an in-flight load instead of starting one
+	Loads     uint64 // trailer fetches issued to the backend (one per miss generation)
+	LoadBytes uint64 // trailer bytes downloaded across those fetches
+	Evictions uint64 // entries dropped by the entry/byte bounds
 }
 
 // v3TableKeyParts is the stored-object generation a block table belongs to.
@@ -63,6 +63,7 @@ func generationFromInfo(info *backend.ObjectInfo) v3TableKeyParts {
 // v3TableCacheEntry is one decoded block table plus its byte cost.
 type v3TableCacheEntry struct {
 	table     *crypto.BlockTable
+	header    *crypto.EnvelopeHeader
 	bytes     int64
 	expiresAt time.Time
 }
@@ -130,6 +131,47 @@ func (c *v3BlockTableCache) get(key string) (*crypto.BlockTable, bool) {
 		return nil, false
 	}
 	return entry.table, true
+}
+
+// getHeader returns the decoded envelope header stored alongside a live block
+// table entry. Keeping both values under the same generation key means a
+// range read cannot reuse a header after the table it describes has expired or
+// been evicted.
+func (c *v3BlockTableCache) getHeader(key string) (*crypto.EnvelopeHeader, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	entry, ok := c.entries[key]
+	if !ok || entry.header == nil || time.Now().After(entry.expiresAt) {
+		return nil, false
+	}
+	return entry.header, true
+}
+
+// storeHeader attaches a decoded header to an existing table entry. The table
+// is inserted first by the normal table-load path; refusing to create a
+// header-only entry keeps the cache key's table/header pairing atomic.
+func (c *v3BlockTableCache) storeHeader(key string, header *crypto.EnvelopeHeader) {
+	if header == nil {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	entry, ok := c.entries[key]
+	if ok && time.Now().Before(entry.expiresAt) {
+		entry.header = header
+	}
+}
+
+// storeDecodedTable admits a table obtained from an already-fetched object
+// (for example the small single-PUT whole-envelope path) without counting a
+// trailer fetch in the cache's backend-load metrics.
+func (c *v3BlockTableCache) storeDecodedTable(key string, table *crypto.BlockTable) {
+	if table == nil {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.storeLocked(key, table)
 }
 
 // fetchV3BlockTable downloads and decodes the trailer block table. This is
@@ -246,6 +288,31 @@ func (h *Handlers) loadV3BlockTable(ctx context.Context, bucket, storedKey strin
 	return table, err
 }
 
+// cachedV3Header returns a header only when the matching generation's decoded
+// block table is still cached. Header and table are deliberately one cache
+// entry: a header from a different ciphertext layout is not safe to use for a
+// range read even if the plaintext ETag happens to match.
+func (h *Handlers) cachedV3Header(bucket, storedKey string, gen v3TableKeyParts) (*crypto.EnvelopeHeader, bool) {
+	if h.v3Tables == nil || gen == (v3TableKeyParts{}) {
+		return nil, false
+	}
+	return h.v3Tables.getHeader(gen.key(bucket, storedKey))
+}
+
+func (h *Handlers) cacheV3DecodedTable(bucket, storedKey string, gen v3TableKeyParts, table *crypto.BlockTable) {
+	if h.v3Tables == nil || gen == (v3TableKeyParts{}) || table == nil {
+		return
+	}
+	h.v3Tables.storeDecodedTable(gen.key(bucket, storedKey), table)
+}
+
+func (h *Handlers) cacheV3Header(bucket, storedKey string, gen v3TableKeyParts, header *crypto.EnvelopeHeader) {
+	if h.v3Tables == nil || gen == (v3TableKeyParts{}) || header == nil {
+		return
+	}
+	h.v3Tables.storeHeader(gen.key(bucket, storedKey), header)
+}
+
 // storeLocked inserts an entry and enforces the entry/byte bounds.
 // c.mu must be held.
 func (c *v3BlockTableCache) storeLocked(key string, table *crypto.BlockTable) {
@@ -256,8 +323,14 @@ func (c *v3BlockTableCache) storeLocked(key string, table *crypto.BlockTable) {
 		c.evictions.Add(1)
 		return
 	}
+	var header *crypto.EnvelopeHeader
+	if old := c.entries[key]; old != nil {
+		c.bytes -= old.bytes
+		header = old.header
+	}
 	c.entries[key] = &v3TableCacheEntry{
 		table:     table,
+		header:    header,
 		bytes:     entryBytes,
 		expiresAt: time.Now().Add(c.ttl),
 	}

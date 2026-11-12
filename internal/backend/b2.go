@@ -432,17 +432,21 @@ func (b *B2Backend) GetRangeWithHeaders(ctx context.Context, bucket, key string,
 
 	blockCount := 1 + (length-1)/blockSize
 	firstLength := minInt64(blockSize, length)
-	first, headers, err := b.fetchRange(ctx, bucket, key, offset, firstLength)
-	if err != nil {
-		return nil, nil, err
-	}
 	if blockCount == 1 {
+		first, headers, err := b.fetchRange(ctx, bucket, key, offset, firstLength)
+		if err != nil {
+			return nil, nil, err
+		}
 		return &singleBufferReader{buffer: first}, headers, nil
 	}
 
-	// The first request is made synchronously so the existing header-reporting
-	// contract remains intact. The rest of the range is fetched by a bounded
-	// worker pool while the caller consumes the first block.
+	// armor-43e2062b: the first request used to complete synchronously before
+	// the worker pool was even started, so every multi-block read paid one
+	// full serial round trip before any other block was requested. The first
+	// fetch now runs alongside the workers: blocks 1..N download while block
+	// 0 is still in flight, and the caller's first Read is served as soon as
+	// block 0 lands. The first response's headers are still awaited before
+	// return, so the header-reporting contract is unchanged.
 	pipelineCtx, cancel := context.WithCancelCause(ctx)
 	workerCount := concurrency - 1
 	if workerCount < 1 {
@@ -461,6 +465,31 @@ func (b *B2Backend) GetRangeWithHeaders(ctx context.Context, bucket, key string,
 	slots := make(chan struct{}, window)
 	jobs := make(chan rangedBlockJob)
 	results := make(chan rangedBlockResult, window)
+
+	type firstBlock struct {
+		buffer  *readBuffer
+		headers map[string]string
+		err     error
+	}
+	// Reserve block 0's backing buffer before starting workers. This preserves
+	// first-byte progress when several independent readers share a tight byte
+	// budget: read-ahead may use only the capacity left after each caller has
+	// secured its first block.
+	firstBuffer, err := b.acquireReadBuffer(ctx, firstLength)
+	if err != nil {
+		cancel(err)
+		return nil, nil, err
+	}
+	firstCh := make(chan firstBlock, 1)
+	go func() {
+		// Keep block 0 on the caller's context. A later read-ahead failure is
+		// reported by the returned pipeline reader; canceling block 0 here can
+		// turn a successful first fetch into an API-level setup error before the
+		// caller gets its reader.
+		hdrs, fetchErr := b.fetchRangeWithBuffer(ctx, bucket, key, offset, firstLength, firstBuffer)
+		firstCh <- firstBlock{buffer: firstBuffer, headers: hdrs, err: fetchErr}
+	}()
+
 	var workers sync.WaitGroup
 	workers.Add(workerCount)
 	for i := 0; i < workerCount; i++ {
@@ -510,8 +539,21 @@ func (b *B2Backend) GetRangeWithHeaders(ctx context.Context, bucket, key string,
 		close(results)
 	}()
 
+	first := <-firstCh
+	if first.err != nil {
+		// The pipeline machinery is already running: stop it and drain what
+		// the workers managed to buffer before surfacing the failure, so no
+		// fetched block leaks.
+		cancel(fmt.Errorf("fetch range block 0: %w", first.err))
+		workers.Wait()
+		for result := range results {
+			result.buffer.release()
+		}
+		return nil, nil, first.err
+	}
+
 	return &pipelinedRangeReader{
-		current:     first,
+		current:     first.buffer,
 		nextBlock:   1,
 		totalBlocks: blockCount,
 		pipelineCtx: pipelineCtx,
@@ -520,24 +562,36 @@ func (b *B2Backend) GetRangeWithHeaders(ctx context.Context, bucket, key string,
 		results:     results,
 		slots:       slots,
 		pending:     make(map[int64]*readBuffer, window),
-	}, headers, nil
+	}, first.headers, nil
 }
 
 // fetchRange performs one bounded ranged request and fully buffers its block.
 // Buffering is intentional: it lets the caller consume blocks in order while
 // later ranged requests complete out of order, without buffering the object.
 func (b *B2Backend) fetchRange(ctx context.Context, bucket, key string, offset, length int64) (*readBuffer, map[string]string, error) {
+	buffer, err := b.acquireReadBuffer(ctx, length)
+	if err != nil {
+		return nil, nil, err
+	}
+	headers, err := b.fetchRangeWithBuffer(ctx, bucket, key, offset, length, buffer)
+	if err != nil {
+		return nil, nil, err
+	}
+	return buffer, headers, nil
+}
+
+// fetchRangeWithBuffer performs the network portion of one ranged request
+// using a buffer whose budget reservation the caller already owns. This lets
+// GetRangeWithHeaders reserve block 0 before launching read-ahead workers.
+func (b *B2Backend) fetchRangeWithBuffer(ctx context.Context, bucket, key string, offset, length int64, buffer *readBuffer) (map[string]string, error) {
 	if b.readBudget != nil {
 		select {
 		case b.readBudget <- struct{}{}:
 			defer func() { <-b.readBudget }()
 		case <-ctx.Done():
-			return nil, nil, context.Cause(ctx)
+			buffer.release()
+			return nil, context.Cause(ctx)
 		}
-	}
-	buffer, err := b.acquireReadBuffer(ctx, length)
-	if err != nil {
-		return nil, nil, err
 	}
 	timeout := b.readTimeout
 	if timeout <= 0 {
@@ -551,16 +605,16 @@ func (b *B2Backend) fetchRange(ctx context.Context, bucket, key string, offset, 
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	var headers map[string]string
-	err = b.doWithRetry(ctx, func() error {
+	err := b.doWithRetry(ctx, func() error {
 		var fetchErr error
 		headers, fetchErr = b.fetchRangeOnce(ctx, bucket, key, offset, length, buffer)
 		return fetchErr
 	})
 	if err != nil {
 		buffer.release()
-		return nil, nil, err
+		return nil, err
 	}
-	return buffer, headers, nil
+	return headers, nil
 }
 
 func (b *B2Backend) acquireReadBuffer(ctx context.Context, length int64) (*readBuffer, error) {

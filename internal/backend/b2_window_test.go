@@ -48,6 +48,82 @@ func TestB2BackendGetRangeDefaultFetchSizeIsOneRequestPerMiB(t *testing.T) {
 	}
 }
 
+// The first fetch must not be a gate for starting read-ahead. This pins the
+// handler/backend boundary that lets a large GET use the first 1 MiB request
+// and later requests in the same round trip (armor-43e2062b).
+func TestB2BackendStartsReadAheadBeforeFirstFetchCompletes(t *testing.T) {
+	const blockSize = 8
+	object := bytes.Repeat([]byte("x"), blockSize*2)
+	firstStarted := make(chan struct{})
+	secondStarted := make(chan struct{})
+	releaseFirst := make(chan struct{})
+	var firstOnce, secondOnce sync.Once
+
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start, end := testRange(t, r)
+		switch start {
+		case 0:
+			firstOnce.Do(func() { close(firstStarted) })
+			select {
+			case <-releaseFirst:
+			case <-r.Context().Done():
+				return
+			}
+		case blockSize:
+			secondOnce.Do(func() { close(secondStarted) })
+		}
+		w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, end, len(object)))
+		w.WriteHeader(http.StatusPartialContent)
+		_, _ = w.Write(object[start : end+1])
+	}))
+	defer server.Close()
+
+	b := &B2Backend{
+		cfDomain:        strings.TrimPrefix(server.URL, "https://"),
+		httpClient:      server.Client(),
+		readBlockSize:   blockSize,
+		readConcurrency: 2,
+	}
+	result := make(chan struct {
+		body io.ReadCloser
+		err  error
+	}, 1)
+	go func() {
+		body, _, err := b.GetRangeWithHeaders(context.Background(), "bucket", "key", 0, int64(len(object)))
+		result <- struct {
+			body io.ReadCloser
+			err  error
+		}{body: body, err: err}
+	}()
+
+	select {
+	case <-firstStarted:
+	case <-time.After(time.Second):
+		t.Fatal("first range request did not start")
+	}
+	select {
+	case <-secondStarted:
+		// Expected: read-ahead began while block 0 was still held.
+	case <-time.After(time.Second):
+		t.Fatal("second range request waited for the first fetch to complete")
+	}
+	close(releaseFirst)
+
+	select {
+	case res := <-result:
+		if res.err != nil {
+			t.Fatalf("GetRangeWithHeaders: %v", res.err)
+		}
+		got, err := io.ReadAll(res.body)
+		res.body.Close()
+		if err != nil || !bytes.Equal(got, object) {
+			t.Fatalf("read = %d bytes, err %v; want the object", len(got), err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("pipelined range read did not finish after releasing block 0")
+	}
+}
+
 // With block 1 held forever and everything later fast, the number of requests
 // the pipeline starts is bounded by the window, not by object length.
 func TestB2BackendGetRangeStalledBlockKeepsWindowBounded(t *testing.T) {

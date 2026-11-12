@@ -1452,6 +1452,11 @@ func (h *Handlers) GetObject(w http.ResponseWriter, r *http.Request, bucket, key
 		h.writeError(w, r, "InternalError", "Failed to parse ARMOR metadata", 500)
 		return
 	}
+	// The authoritative HEAD's stored length is needed by both v3 full-read
+	// paths: single-PUT uses it to locate the trailer before the data stream's
+	// header arrives, and multipart uses it to start ciphertext and sidecar
+	// reads concurrently.
+	armorMeta.CiphertextSize = info.StoredSize
 
 	// Unwrap DEK using fingerprint with ring fallback
 	// Build a lookup function for the keymanager to find MEK by fingerprint
@@ -1501,6 +1506,15 @@ func (h *Handlers) GetObject(w http.ResponseWriter, r *http.Request, bucket, key
 	_ = usedFingerprint // Currently unused, but available for logging/auditing
 
 	plaintextSize := armorMeta.PlaintextSize
+
+	// Stored-object generation for the v3 table/header cache. Compute it before
+	// the header decision so range reads can reuse a cached header and full
+	// reads can attach the streamed header to the table loaded below.
+	storedGenSource := info
+	if ciphertextInfo != nil {
+		storedGenSource = ciphertextInfo
+	}
+	storedGen := generationFromInfo(storedGenSource)
 
 	// Check if this is a multipart object (HMAC table in sidecar, no embedded header)
 	isMultipart := info.Metadata["x-amz-meta-armor-multipart"] == "true"
@@ -1605,47 +1619,75 @@ func (h *Handlers) GetObject(w http.ResponseWriter, r *http.Request, bucket, key
 			}
 		}
 
-		var headerBuf []byte
-		if singleFetch != nil {
-			// The single fetch already covers the header; no separate read.
-			headerBuf = singleFetch[:crypto.HeaderSize]
-		} else {
-			headerReader, err := h.backend.GetRange(ctx, bucket, prefixedKey, 0, crypto.HeaderSize)
+		// Uncached, uncompressed v3 full GETs locate the trailer from the
+		// authoritative stored length and decode the header from the data stream
+		// itself. Range reads retain the pre-dispatch header read, except when
+		// the matching table cache entry already carries the decoded header.
+		streamHeaderFromData := singleFetch == nil && r.Header.Get("Range") == "" &&
+			armorMeta.Version == crypto.Version3 && !armorMeta.Compressed
+		if streamHeaderFromData {
+			decryptor, err = crypto.NewDecryptorWithVersion(dek, armorMeta.IV, armorMeta.BlockSize, uint8(armorMeta.Version))
 			if err != nil {
-				h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to read envelope header: %v", err), 500)
+				h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to create decryptor: %v", err), 500)
 				return
 			}
-			defer headerReader.Close()
+		} else {
+			var header *crypto.EnvelopeHeader
+			if singleFetch != nil {
+				// The single fetch already covers the header; no separate read.
+				header, err = crypto.DecodeHeader(singleFetch[:crypto.HeaderSize])
+			} else if r.Header.Get("Range") != "" && armorMeta.Version == crypto.Version3 {
+				// A full v3 GET stores this header beside its table, allowing
+				// repeated ranges to skip the 64-byte backend read.
+				header, _ = h.cachedV3Header(bucket, prefixedKey, storedGen)
+				if header == nil {
+					headerReader, readErr := h.backend.GetRange(ctx, bucket, prefixedKey, 0, crypto.HeaderSize)
+					if readErr != nil {
+						h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to read envelope header: %v", readErr), 500)
+						return
+					}
+					defer headerReader.Close()
+					headerBuf := make([]byte, crypto.HeaderSize)
+					if _, readErr := io.ReadFull(headerReader, headerBuf); readErr != nil {
+						h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to read header: %v", readErr), 500)
+						return
+					}
+					header, err = crypto.DecodeHeader(headerBuf)
+				}
+			} else {
+				headerReader, readErr := h.backend.GetRange(ctx, bucket, prefixedKey, 0, crypto.HeaderSize)
+				if readErr != nil {
+					h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to read envelope header: %v", readErr), 500)
+					return
+				}
+				defer headerReader.Close()
+				headerBuf := make([]byte, crypto.HeaderSize)
+				if _, readErr := io.ReadFull(headerReader, headerBuf); readErr != nil {
+					h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to read header: %v", readErr), 500)
+					return
+				}
+				header, err = crypto.DecodeHeader(headerBuf)
+			}
+			if err != nil {
+				h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to decode header: %v", err), 500)
+				return
+			}
+			envelopeHeader = header
+			if header.Version == crypto.Version3 {
+				h.cacheV3Header(bucket, prefixedKey, storedGen, header)
+			}
 
-			headerBuf = make([]byte, crypto.HeaderSize)
-			if _, err := io.ReadFull(headerReader, headerBuf); err != nil {
-				h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to read header: %v", err), 500)
+			// Create decryptor with the version from the envelope header.
+			decryptor, err = crypto.NewDecryptorWithVersion(dek, header.IV[:], header.BlockSize(), header.Version)
+			if err != nil {
+				h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to create decryptor: %v", err), 500)
 				return
 			}
 		}
 
-		header, err := crypto.DecodeHeader(headerBuf)
-		if err != nil {
-			h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to decode header: %v", err), 500)
+		if armorMeta.Version == crypto.Version3 && armorMeta.CiphertextSize == 0 {
+			h.writeError(w, r, "InternalError", "v3 object missing stored ciphertext size", 500)
 			return
-		}
-		envelopeHeader = header
-
-		// Create decryptor with the version from the envelope header
-		decryptor, err = crypto.NewDecryptorWithVersion(dek, header.IV[:], header.BlockSize(), header.Version)
-		if err != nil {
-			h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to create decryptor: %v", err), 500)
-			return
-		}
-
-		// For v3 single-PUT objects, we need the ciphertext size to locate the trailer block table
-		// Store it in a local variable for use in the streaming path
-		if header.Version == crypto.Version3 {
-			armorMeta.CiphertextSize = info.StoredSize
-			if armorMeta.CiphertextSize == 0 {
-				h.writeError(w, r, "InternalError", "v3 object missing stored ciphertext size", 500)
-				return
-			}
 		}
 		singleFetchEnvelope = singleFetch
 	}
@@ -1701,17 +1743,6 @@ func (h *Handlers) GetObject(w http.ResponseWriter, r *http.Request, bucket, key
 		}
 	}
 
-	// Stored-object generation for generation-keyed read caches (v3 block
-	// tables): the manifest path's authoritative ciphertext HEAD, or on the
-	// legacy path the object HEAD itself. Derived fresh per request — never
-	// from a previous request's view — so an overwrite, re-encryption, or
-	// migration misses the cache instead of serving a mismatched table.
-	storedGenSource := info
-	if ciphertextInfo != nil {
-		storedGenSource = ciphertextInfo
-	}
-	storedGen := generationFromInfo(storedGenSource)
-
 	// Check for range request
 	rangeHeader := r.Header.Get("Range")
 	if rangeHeader != "" {
@@ -1765,6 +1796,124 @@ func readSmallFetchBody(body io.Reader, want int64) ([]byte, error) {
 		return nil, fmt.Errorf("got %d bytes, want %d", len(data), want)
 	}
 	return data, nil
+}
+
+// validateEnvelopeHeader checks that the header carried by a streamed
+// ciphertext agrees with the authenticated object metadata selected by the
+// manifest/HEAD path. The stream is not exposed to the client until this
+// check and the v3 table load both succeed.
+func validateEnvelopeHeader(header *crypto.EnvelopeHeader, armorMeta *backend.ARMORMetadata) error {
+	if header == nil || armorMeta == nil {
+		return fmt.Errorf("missing envelope metadata")
+	}
+	if int(header.Version) != armorMeta.Version {
+		return fmt.Errorf("header version %d does not match metadata version %d", header.Version, armorMeta.Version)
+	}
+	if armorMeta.BlockSize > 0 && header.BlockSize() != armorMeta.BlockSize {
+		return fmt.Errorf("header block size %d does not match metadata block size %d", header.BlockSize(), armorMeta.BlockSize)
+	}
+	if len(armorMeta.IV) == len(header.IV) && !bytes.Equal(header.IV[:], armorMeta.IV) {
+		return fmt.Errorf("header IV does not match object metadata")
+	}
+	if armorMeta.PlaintextSize >= 0 && int64(header.PlaintextSize) != armorMeta.PlaintextSize {
+		return fmt.Errorf("header plaintext size %d does not match metadata size %d", header.PlaintextSize, armorMeta.PlaintextSize)
+	}
+	if armorMeta.PlaintextSHA != "" && !strings.EqualFold(hex.EncodeToString(header.PlaintextSHA[:]), armorMeta.PlaintextSHA) {
+		return fmt.Errorf("header plaintext digest does not match object metadata")
+	}
+	return nil
+}
+
+// loadV3FullStream starts the uncached v3 trailer and header+data reads at the
+// same time. The stored size from HEAD makes the trailer window known before
+// the data stream's 64-byte header is decoded: data length is stored size less
+// 36 bytes per expected block. Both results are validated before the caller
+// can send response headers or release plaintext.
+func (h *Handlers) loadV3FullStream(ctx context.Context, bucket, key string, gen v3TableKeyParts, ciphertextSize int64, blockCount int, armorMeta *backend.ARMORMetadata) (io.ReadCloser, *crypto.BlockTable, *crypto.EnvelopeHeader, error) {
+	trailerSize := int64(blockCount) * crypto.BlockTableEntrySize
+	dataSize := ciphertextSize - trailerSize
+	if blockCount <= 0 || dataSize < crypto.HeaderSize {
+		return nil, nil, nil, fmt.Errorf("invalid v3 full-read layout: ciphertext=%d blocks=%d", ciphertextSize, blockCount)
+	}
+
+	parallelCtx, cancel := context.WithCancel(ctx)
+	type tableResult struct {
+		table *crypto.BlockTable
+		err   error
+	}
+	type dataResult struct {
+		body io.ReadCloser
+		err  error
+	}
+	tableCh := make(chan tableResult, 1)
+	dataCh := make(chan dataResult, 1)
+	go func() {
+		table, err := h.loadV3BlockTable(parallelCtx, bucket, key, gen, ciphertextSize, blockCount)
+		tableCh <- tableResult{table: table, err: err}
+	}()
+	go func() {
+		body, err := h.backend.GetRange(parallelCtx, bucket, key, 0, dataSize)
+		dataCh <- dataResult{body: body, err: err}
+	}()
+
+	tableRes := <-tableCh
+	dataRes := <-dataCh
+	if tableRes.err != nil {
+		cancel()
+		if dataRes.body != nil {
+			dataRes.body.Close()
+		}
+		return nil, nil, nil, tableRes.err
+	}
+	if dataRes.err != nil {
+		cancel()
+		return nil, nil, nil, fmt.Errorf("failed to get object stream: %w", dataRes.err)
+	}
+	if tableRes.table == nil {
+		cancel()
+		dataRes.body.Close()
+		return nil, nil, nil, fmt.Errorf("v3 block table load returned nil table")
+	}
+	expectedCiphertext := dataSize - crypto.HeaderSize
+	if tableRes.table.TotalCiphertextLength64() != expectedCiphertext {
+		cancel()
+		dataRes.body.Close()
+		return nil, nil, nil, fmt.Errorf("v3 block table total ciphertext length %d does not match data span %d", tableRes.table.TotalCiphertextLength64(), expectedCiphertext)
+	}
+
+	headerBuf := make([]byte, crypto.HeaderSize)
+	if _, err := io.ReadFull(dataRes.body, headerBuf); err != nil {
+		cancel()
+		dataRes.body.Close()
+		return nil, nil, nil, fmt.Errorf("failed to read streamed envelope header: %w", err)
+	}
+	header, err := crypto.DecodeHeader(headerBuf)
+	if err != nil {
+		cancel()
+		dataRes.body.Close()
+		return nil, nil, nil, fmt.Errorf("failed to decode streamed envelope header: %w", err)
+	}
+	if err := validateEnvelopeHeader(header, armorMeta); err != nil {
+		cancel()
+		dataRes.body.Close()
+		return nil, nil, nil, err
+	}
+	h.cacheV3Header(bucket, key, gen, header)
+	return &cancelingReadCloser{ReadCloser: dataRes.body, cancel: cancel}, tableRes.table, header, nil
+}
+
+// cancelingReadCloser keeps the parallel fetch context alive while the caller
+// consumes the returned pipeline, then releases it with the reader's normal
+// Close. Canceling before return would abort the B2 read-ahead reader itself.
+type cancelingReadCloser struct {
+	io.ReadCloser
+	cancel context.CancelFunc
+}
+
+func (r *cancelingReadCloser) Close() error {
+	err := r.ReadCloser.Close()
+	r.cancel()
+	return err
 }
 
 // handleFullObjectStream handles full object downloads with pipelined stream decryption.
@@ -1829,16 +1978,15 @@ func (h *Handlers) handleFullObjectStream(w http.ResponseWriter, r *http.Request
 		// v1/v2: inline HMAC table at HeaderSize + plaintextSize
 		// v3: trailer block table at ciphertext_length - 36*blockCount
 		//
-		// The envelope header was already read and decoded once in GetObject
-		// (request-local reuse, armor-c3199f1c); no second header read here.
-
-		if header == nil {
-			// Defensive: the single-PUT dispatch always provides the header.
-			h.writeError(w, r, "InternalError", "missing envelope header for single-PUT stream", 500)
-			return
-		}
+		// Range and compressed paths decode the envelope header in GetObject;
+		// an uncached uncompressed v3 full GET deliberately leaves it nil so the
+		// header can arrive as the prefix of the data stream.
 
 		if singleFetch != nil {
+			if header == nil {
+				h.writeError(w, r, "InternalError", "missing envelope header for buffered single-PUT stream", 500)
+				return
+			}
 			// Small single-PUT object: the whole ciphertext is already local
 			// (armor-98864f12). Slice the table and data regions out of the
 			// buffer instead of two more round trips. Every layout invariant
@@ -1861,6 +2009,8 @@ func (h *Handlers) handleFullObjectStream(w http.ResponseWriter, r *http.Request
 				if blockCount > 0 {
 					hmacTable = encodeV3BlockTableForTransport(blockTable)
 				}
+				h.cacheV3DecodedTable(bucket, prefixedKey, storedGen, blockTable)
+				h.cacheV3Header(bucket, prefixedKey, storedGen, header)
 				// blockCount == 0 (an empty envelope): the transport encoder
 				// refuses an empty table by design, and the read loop below
 				// runs zero iterations either way, so no table is transported.
@@ -1877,8 +2027,11 @@ func (h *Handlers) handleFullObjectStream(w http.ResponseWriter, r *http.Request
 			}
 			dataBody = io.NopCloser(bytes.NewReader(singleFetch[crypto.HeaderSize:dataEnd]))
 			defer dataBody.Close()
-		} else if header.Version == crypto.Version3 {
-			// v3: fetch trailer block table and use prefix sums for block offsets
+		} else if armorMeta.Version == crypto.Version3 {
+			// v3: fetch the trailer block table and the header+data stream in
+			// parallel. Uncompressed full GETs decode the header directly from
+			// that stream; compressed v3 retains the bounded whole-envelope
+			// fallback because its trailer length is not derivable up front.
 			if armorMeta.CiphertextSize == 0 {
 				h.writeError(w, r, "InternalError", "v3 object missing ciphertext size", 500)
 				return
@@ -1889,9 +2042,17 @@ func (h *Handlers) handleFullObjectStream(w http.ResponseWriter, r *http.Request
 				err        error
 			)
 			if armorMeta.Compressed {
+				if header == nil {
+					h.writeError(w, r, "InternalError", "missing envelope header for compressed v3 stream", 500)
+					return
+				}
 				blockTable, err = h.loadV3CompressedBlockTable(ctx, bucket, prefixedKey, armorMeta.CiphertextSize, blockCount, header.BlockSize())
 			} else {
-				blockTable, err = h.loadV3BlockTable(ctx, bucket, prefixedKey, storedGen, armorMeta.CiphertextSize, blockCount)
+				if header == nil {
+					dataBody, blockTable, header, err = h.loadV3FullStream(ctx, bucket, prefixedKey, storedGen, armorMeta.CiphertextSize, blockCount, armorMeta)
+				} else {
+					blockTable, err = h.loadV3BlockTable(ctx, bucket, prefixedKey, storedGen, armorMeta.CiphertextSize, blockCount)
+				}
 			}
 			if err != nil {
 				h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to read v3 block table: %v", err), 500)
@@ -1899,20 +2060,23 @@ func (h *Handlers) handleFullObjectStream(w http.ResponseWriter, r *http.Request
 			}
 			blockCount = blockTable.EntryCount()
 
-			// Stream data from the start (header + blocks)
-			streamSize = int64(crypto.HeaderSize) + int64(blockTable.TotalCiphertextLength())
-			dataBody, err = h.backend.GetRange(ctx, bucket, prefixedKey, 0, streamSize)
-			if err != nil {
-				h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to get object stream: %v", err), 500)
-				return
-			}
-			defer dataBody.Close()
+			if dataBody == nil {
+				// Header was already read before dispatch (compressed or a
+				// direct helper call), so open the exact header+data span and
+				// discard only the duplicate header bytes.
+				streamSize = int64(crypto.HeaderSize) + int64(blockTable.TotalCiphertextLength())
+				dataBody, err = h.backend.GetRange(ctx, bucket, prefixedKey, 0, streamSize)
+				if err != nil {
+					h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to get object stream: %v", err), 500)
+					return
+				}
+				defer dataBody.Close()
 
-			// Read and discard the 64-byte header
-			discardBuf := make([]byte, crypto.HeaderSize)
-			if _, err := io.ReadFull(dataBody, discardBuf); err != nil {
-				h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to discard header: %v", err), 500)
-				return
+				discardBuf := make([]byte, crypto.HeaderSize)
+				if _, err := io.ReadFull(dataBody, discardBuf); err != nil {
+					h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to discard header: %v", err), 500)
+					return
+				}
 			}
 
 			// Encode block table for transport to decryption goroutine
@@ -2544,6 +2708,7 @@ func (h *Handlers) handleRangeRequest(w http.ResponseWriter, r *http.Request, bu
 				return
 			}
 			h.handleV3RangeRequest(w, r, bucket, key, prefixedKey, decryptor, armorMeta, plaintextSize, armorMeta.CiphertextSize, lastModified, start, end, storedGen)
+			h.cacheV3Header(bucket, prefixedKey, storedGen, header)
 			return
 		}
 

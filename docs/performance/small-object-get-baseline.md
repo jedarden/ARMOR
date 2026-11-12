@@ -31,15 +31,20 @@ removes one updates the pin **and this table in the same bead**.
 | v1 | single-PUT ≤ threshold | **3** | **2** | manifest GET (404 miss) ∥ HEAD → one whole-envelope GetRange (header + data + inline HMAC table fetched together, parsed locally) |
 | v2 | single-PUT ≤ threshold | **3** | **2** | same as v1 (v1/v2 share the inline-HMAC layout) |
 | v3 | single-PUT ≤ threshold | **3** | **2** | manifest GET (404 miss) ∥ HEAD → one whole-envelope GetRange (header + data + trailer block table fetched together, parsed locally) |
-| v1/v2/v3 | single-PUT > threshold | **5** | **4** | the pre-armor-98864f12 streaming sequence: header GetRange → HMAC-table/trailer GetRange → data GetRange, unchanged |
-| v3 | multipart | **5** | **4** | manifest GET (hit) ∥ plaintext-key HEAD (hit, discarded) → combined freshness/size HEAD → HMAC sidecar GetDirect → one GetRange covering the whole concatenated ciphertext |
+| v1/v2 | single-PUT > threshold | **5** | **4** | manifest GET (404 miss) ∥ HEAD → envelope-header GetRange → inline-HMAC GetRange → data GetRange |
+| v3 | single-PUT > threshold | **4** | **2** | manifest GET (404 miss) ∥ HEAD → trailer-table GetRange ∥ header+data GetRange; the header is decoded from the data stream |
+| v3 | multipart | **5** | **3** | manifest GET (hit) ∥ plaintext-key HEAD (hit, discarded) → combined freshness/size HEAD → HMAC sidecar GetDirect ∥ one GetRange covering the whole concatenated ciphertext |
 
 The threshold is `ARMOR_SMALL_OBJECT_FETCH_BYTES` (default 1 MiB) against the
 **stored** ciphertext size the GET's HEAD reports; `0` restores the streaming
 reads everywhere, and multipart objects never single-fetch.
 
-The table reflects armor-98864f12 (2026-10-24): a full GET of a single-PUT
-object at or below the threshold reads the entire stored envelope in ONE
+The table reflects armor-43e2062b (2026-11-12) on top of armor-98864f12
+(2026-10-24): an uncached, uncompressed v3 full GET takes its header from the
+header+data stream, starts the trailer-table range at the same time, and starts
+the backend's read-ahead workers alongside its first fetch. The v3 multipart
+full GET starts the sidecar and ciphertext range together. A full GET of a
+single-PUT object at or below the threshold reads the entire stored envelope in ONE
 ranged request and slices header, data blocks and the inline HMAC table or
 v3 trailer block table out of that buffer locally, replacing two further
 sequential round trips with extra bytes. Every block's HMAC is verified as
@@ -59,11 +64,12 @@ downstream helpers, and the multipart path's ADR-016 freshness check and
 ciphertext-size lookup shared one authoritative HEAD. armor-272299ca
 (2026-10-24) replaced the multipart GET's one-range-per-part fetch with a
 single ranged request over the whole stored object. Range reads additionally
-reuse the v3 trailer block table across requests through a
-stored-generation-keyed cache — not visible in a first-GET pin; repeated
-same-version ranges skip the trailer fetch entirely. Since armor-98864f12 the
+reuse the v3 trailer block table and decoded envelope header across requests
+through one stored-generation-keyed cache entry — not visible in a first-GET
+pin; repeated same-version ranges skip both reads. Since armor-43e2062b the
 steady-state benefit of that cache applies to over-threshold full GETs and to
-range reads; a small in-threshold full GET never fetches the table at all.
+range reads; a small in-threshold full GET also warms the same paired entry
+from its local whole-envelope decode.
 
 Notes for anyone lowering these:
 
@@ -89,7 +95,35 @@ Test names: `TestSmallObjectFullGETRequestCountSinglePUTV1/V2/V3`,
 `TestSmallObjectFullGETRequestCountMultipartV3`,
 `TestOverThresholdObjectKeepsStreamingPath` (the > threshold row).
 
-## 2. Latency-injected benchmark
+## 2. Latency-injected streaming v3 benchmark (armor-43e2062b)
+
+The explicit 200 ms RTT benchmark for the task acceptance is
+`internal/server/handlers/full_get_pipeline_bench_test.go`:
+
+```sh
+ARMOR_FULL_GET_PIPELINE_BENCH=1 go test ./internal/server/handlers/ \
+  -run TestFullGETPipelineLatency -v -count=1 -timeout 20m
+```
+
+It uses uncached, uncompressed v3 single-PUT objects with
+`ARMOR_SMALL_OBJECT_FETCH_BYTES=0` semantics and verifies the plaintext. The
+serialized pre-change path was approximately four RTTs (manifest/HEAD overlap,
+header, trailer, data); the new path is two RTTs before the first body byte
+(manifest/HEAD overlap, trailer/data overlap). Results recorded on codinghome,
+linux/amd64, 2026-11-12, with 200 ms injected before every backend read:
+
+| Plaintext | TTFB | Total | Serialized baseline | Reduction |
+|---:|---:|---:|---:|---:|
+| 1 MiB | 401 ms | 403 ms | ≈800 ms | ≈2.0x TTFB |
+| 8 MiB | 401 ms | 416 ms | ≈800 ms | ≈2.0x TTFB |
+| 64 MiB | 401 ms | 567 ms | ≈800 ms | ≈2.0x TTFB |
+
+The same change leaves five total backend calls on the multipart path, but its
+sidecar and ciphertext range now overlap, reducing its pre-first-byte chain
+from four to three RTTs. The pinned multipart request-count test covers that
+ordering-independent pair.
+
+## 3. Latency-injected small-object benchmark
 
 `TestSmallObjectFullGETLatencyMatrix` in
 `internal/server/handlers/small_object_get_bench_test.go` reuses the counting

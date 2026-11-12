@@ -31,6 +31,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -68,15 +69,29 @@ type callCountingBackend struct {
 	headSeen     chan struct{}
 	headSeenOnce sync.Once
 
-	mu          sync.Mutex
-	calls       []backendCall
-	manifestSaw bool
+	mu              sync.Mutex
+	calls           []backendCall
+	manifestSaw     bool
+	rangeInFlight   atomic.Int32
+	rangeOverlap    atomic.Bool
+	payloadInFlight atomic.Int32
+	payloadOverlap  atomic.Bool
 }
 
-func (c *callCountingBackend) record(method, key string, offset, length int64, hit bool) {
+func (c *callCountingBackend) beforeCall() {
 	if c.delay > 0 {
 		time.Sleep(c.delay)
 	}
+}
+
+func (c *callCountingBackend) enterPayload() func() {
+	if n := c.payloadInFlight.Add(1); n > 1 {
+		c.payloadOverlap.Store(true)
+	}
+	return func() { c.payloadInFlight.Add(-1) }
+}
+
+func (c *callCountingBackend) record(method, key string, offset, length int64, hit bool) {
 	c.mu.Lock()
 	c.calls = append(c.calls, backendCall{Method: method, Key: key, Offset: offset, Length: length, Hit: hit})
 	c.mu.Unlock()
@@ -91,6 +106,7 @@ func (c *callCountingBackend) manifestSawHead() bool {
 }
 
 func (c *callCountingBackend) Get(ctx context.Context, bucket, key string) (io.ReadCloser, *backend.ObjectInfo, error) {
+	c.beforeCall()
 	body, info, err := c.mockBackend.Get(ctx, bucket, key)
 	c.record("GET", bucket+"/"+key, 0, 0, err == nil)
 	if c.overlapGuard && strings.HasSuffix(key, ".armor-manifest") {
@@ -110,24 +126,42 @@ func (c *callCountingBackend) Get(ctx context.Context, bucket, key string) (io.R
 }
 
 func (c *callCountingBackend) GetDirect(ctx context.Context, bucket, key string) (io.ReadCloser, *backend.ObjectInfo, error) {
+	leave := c.enterPayload()
+	defer leave()
+	c.beforeCall()
 	body, info, err := c.mockBackend.GetDirect(ctx, bucket, key)
 	c.record("GET_DIRECT", bucket+"/"+key, 0, 0, err == nil)
 	return body, info, err
 }
 
 func (c *callCountingBackend) GetRange(ctx context.Context, bucket, key string, offset, length int64) (io.ReadCloser, error) {
+	leavePayload := c.enterPayload()
+	defer leavePayload()
+	if n := c.rangeInFlight.Add(1); n > 1 {
+		c.rangeOverlap.Store(true)
+	}
+	defer c.rangeInFlight.Add(-1)
+	c.beforeCall()
 	body, _, err := c.mockBackend.GetRangeWithHeaders(ctx, bucket, key, offset, length)
 	c.record("GET_RANGE", bucket+"/"+key, offset, length, err == nil)
 	return body, err
 }
 
 func (c *callCountingBackend) GetRangeWithHeaders(ctx context.Context, bucket, key string, offset, length int64) (io.ReadCloser, map[string]string, error) {
+	leavePayload := c.enterPayload()
+	defer leavePayload()
+	if n := c.rangeInFlight.Add(1); n > 1 {
+		c.rangeOverlap.Store(true)
+	}
+	defer c.rangeInFlight.Add(-1)
+	c.beforeCall()
 	body, headers, err := c.mockBackend.GetRangeWithHeaders(ctx, bucket, key, offset, length)
 	c.record("GET_RANGE", bucket+"/"+key, offset, length, err == nil)
 	return body, headers, err
 }
 
 func (c *callCountingBackend) Head(ctx context.Context, bucket, key string) (*backend.ObjectInfo, error) {
+	c.beforeCall()
 	info, err := c.mockBackend.Head(ctx, bucket, key)
 	c.record("HEAD", bucket+"/"+key, 0, 0, err == nil)
 	c.headSeenOnce.Do(func() { close(c.headSeen) })
@@ -149,6 +183,16 @@ func (c *callCountingBackend) resetCalls() {
 	c.mu.Lock()
 	c.calls = nil
 	c.mu.Unlock()
+	c.rangeOverlap.Store(false)
+	c.payloadOverlap.Store(false)
+}
+
+func (c *callCountingBackend) rangedCallsOverlapped() bool {
+	return c.rangeOverlap.Load()
+}
+
+func (c *callCountingBackend) payloadCallsOverlapped() bool {
+	return c.payloadOverlap.Load()
 }
 
 // countingTestSetup builds a Handlers over a call-counting backend. delay is
@@ -481,16 +525,16 @@ func TestSmallObjectFullGETRequestCountSinglePUTV3(t *testing.T) {
 }
 
 // TestOverThresholdObjectKeepsStreamingPath pins the request count for an
-// object one byte over the small-fetch threshold: the per-region streaming
-// reads are unchanged (armor-98864f12 only moved the small-object baseline).
-// Same shape as the pre-armor-98864f12 small-object pins: overlapped
-// manifest-probe/HEAD pair, envelope header, trailer block table, data.
+// uncached v3 streaming object. The header is consumed from the data stream,
+// while the trailer table and data range start together (armor-43e2062b), so
+// the post-probe calls are one unordered table/data pair rather than the old
+// header -> table -> data chain.
 func TestOverThresholdObjectKeepsStreamingPath(t *testing.T) {
 	const bucket = "test-bucket"
 	const key = "over-threshold-v3.bin"
-	plaintext := smallGETPlaintext(23 * 1024)
+	plaintext := smallGETPlaintext(2 * 1024 * 1024)
 
-	cfg, cb, h, _ := countingTestSetup(t, 3, 0)
+	cfg, cb, h, _ := countingTestSetup(t, 3, 5*time.Millisecond)
 	putObjectThroughHandler(t, h, bucket, key, plaintext)
 
 	storedLen := int64(len(cb.objects[bucket+"/"+key]))
@@ -504,26 +548,77 @@ func TestOverThresholdObjectKeepsStreamingPath(t *testing.T) {
 	}
 
 	calls := cb.recordedCalls()
-	if len(calls) != 5 {
-		t.Fatalf("over-threshold v3: %d backend calls recorded, baseline is 5 (manifest probe ∥ head, header, trailer block table, data): %s",
+	if len(calls) != 4 {
+		t.Fatalf("over-threshold v3: %d backend calls recorded, baseline is 4 (manifest probe ∥ head, concurrent trailer/data): %s",
 			len(calls), formatCalls(calls))
 	}
 	assertProbePair(t, cb,
 		backendCall{Method: "GET", Key: bucket + "/" + key + ".armor-manifest", Hit: false},
 		backendCall{Method: "HEAD", Key: bucket + "/" + key, Hit: true},
 		"over-threshold v3")
-	header := calls[2]
-	if header.Method != "GET_RANGE" || header.Offset != 0 || header.Length != crypto.HeaderSize {
-		t.Fatalf("over-threshold v3: call 3 should be the envelope header read, got %+v", header)
-	}
 	blockCount := crypto.ComputeBlockCount(int64(len(plaintext)), 65536)
-	trailer := calls[3]
-	if trailer.Method != "GET_RANGE" || trailer.Length != int64(blockCount)*crypto.BlockTableEntrySize || trailer.Offset <= crypto.HeaderSize {
-		t.Fatalf("over-threshold v3: call 4 should be the trailer block table read (%d entries), got %+v", blockCount, trailer)
+	trailerSize := int64(blockCount) * crypto.BlockTableEntrySize
+	var sawTrailer, sawData bool
+	for _, call := range calls[2:] {
+		if call.Method != "GET_RANGE" {
+			t.Fatalf("over-threshold v3: post-probe call is not a range read: %+v", call)
+		}
+		switch {
+		case call.Offset == storedLen-trailerSize && call.Length == trailerSize:
+			sawTrailer = true
+		case call.Offset == 0 && call.Length == storedLen-trailerSize:
+			sawData = true
+		default:
+			t.Fatalf("over-threshold v3: unexpected post-probe range: %+v", call)
+		}
 	}
-	data := calls[4]
-	if data.Method != "GET_RANGE" || data.Offset != 0 || data.Length != storedLen-int64(blockCount)*crypto.BlockTableEntrySize {
-		t.Fatalf("over-threshold v3: call 5 should be the header+data stream read, got %+v", data)
+	if !sawTrailer || !sawData {
+		t.Fatalf("over-threshold v3: want one trailer and one header+data range, got %s", formatCalls(calls))
+	}
+	if !cb.rangedCallsOverlapped() {
+		t.Fatalf("over-threshold v3: trailer and data ranges did not overlap")
+	}
+}
+
+// TestV3RangeReusesHeaderAndTableFromFullGET proves that the generation-keyed
+// v3 cache carries both decoded values: after one uncached full GET, the next
+// range request needs only its ciphertext span, not a second 64-byte header
+// read or a trailer-table read.
+func TestV3RangeReusesHeaderAndTableFromFullGET(t *testing.T) {
+	const bucket = "test-bucket"
+	const key = "cached-header-v3.bin"
+	plaintext := smallGETPlaintext(2 * 1024 * 1024)
+
+	cfg, cb, h, _ := countingTestSetup(t, 3, 0)
+	putObjectThroughHandler(t, h, bucket, key, plaintext)
+	storedLen := int64(len(cb.objects[bucket+"/"+key]))
+	cfg.SmallObjectFetchBytes = storedLen - 1
+	if got := getObjectThroughHandler(t, h, bucket, key); !bytes.Equal(got, plaintext) {
+		t.Fatalf("warming full GET did not round-trip: got %d bytes, want %d", len(got), len(plaintext))
+	}
+	cb.resetCalls()
+
+	req := httptest.NewRequest(http.MethodGet, "/"+bucket+"/"+key, nil)
+	req.Header.Set("Range", "bytes=131072-196607")
+	w := httptest.NewRecorder()
+	h.HandleRoot(w, req)
+	if w.Code != http.StatusPartialContent {
+		t.Fatalf("range GET failed: status %d: %s", w.Code, w.Body.String())
+	}
+	if want := plaintext[131072 : 196607+1]; !bytes.Equal(w.Body.Bytes(), want) {
+		t.Fatalf("range body mismatch: got %d bytes, want %d", len(w.Body.Bytes()), len(want))
+	}
+	calls := cb.recordedCalls()
+	if len(calls) != 3 {
+		t.Fatalf("cached v3 range made %d calls, want probe pair plus one span: %s", len(calls), formatCalls(calls))
+	}
+	assertProbePair(t, cb,
+		backendCall{Method: "GET", Key: bucket + "/" + key + ".armor-manifest", Hit: false},
+		backendCall{Method: "HEAD", Key: bucket + "/" + key, Hit: true},
+		"cached v3 range")
+	span := calls[2]
+	if span.Method != "GET_RANGE" || span.Offset != crypto.HeaderSize+131072 || span.Length != 65536 {
+		t.Fatalf("cached v3 range made unexpected span read: %+v", span)
 	}
 }
 
@@ -551,7 +646,7 @@ func TestSmallObjectFullGETRequestCountMultipartV3(t *testing.T) {
 	part2 := smallGETPlaintext(33 * 1024)
 	plaintext := append(append([]byte{}, part1...), part2...)
 
-	_, cb, h, _ := countingTestSetup(t, 3, 0)
+	_, cb, h, _ := countingTestSetup(t, 3, 5*time.Millisecond)
 	uploadID := initiateMultipart(t, h, bucket, key)
 	etag1 := uploadPart(t, h, bucket, key, uploadID, 1, part1)
 	etag2 := uploadPart(t, h, bucket, key, uploadID, 2, part2)
@@ -564,8 +659,10 @@ func TestSmallObjectFullGETRequestCountMultipartV3(t *testing.T) {
 	}
 
 	calls := cb.recordedCalls()
-	// 4 fixed calls (probe pair, combined freshness/size HEAD, sidecar)
-	// plus one whole-object GET_RANGE (armor-272299ca).
+	// 4 fixed calls (probe pair, combined freshness/size HEAD, sidecar/data
+	// pair) plus one whole-object GET_RANGE (armor-272299ca). The sidecar and
+	// ciphertext range start together (armor-43e2062b), so they add one
+	// sequential round trip rather than two.
 	const wantCount = 4 + 1
 	if len(calls) != wantCount {
 		t.Fatalf("v3 multipart: %d backend calls recorded, baseline is %d (manifest hit ∥ discarded plaintext-key probe head, combined freshness/size head, sidecar, one whole-object range): %s",
@@ -580,11 +677,21 @@ func TestSmallObjectFullGETRequestCountMultipartV3(t *testing.T) {
 	if calls[2].Method != "HEAD" || !calls[2].Hit {
 		t.Fatalf("v3 multipart: call 3 should be the combined ciphertext freshness/size head, got %+v", calls[2])
 	}
-	if calls[3].Method != "GET_DIRECT" || !calls[3].Hit {
-		t.Fatalf("v3 multipart: call 4 should be the HMAC sidecar load, got %+v", calls[3])
+	var sawSidecar, sawData bool
+	for _, call := range calls[3:] {
+		switch {
+		case call.Method == "GET_DIRECT" && call.Hit:
+			sawSidecar = true
+		case call.Method == "GET_RANGE" && call.Offset == 0 && call.Length > 0:
+			sawData = true
+		default:
+			t.Fatalf("v3 multipart: unexpected sidecar/data call: %+v", call)
+		}
 	}
-	data := calls[4]
-	if data.Method != "GET_RANGE" || data.Offset != 0 || data.Length <= 0 {
-		t.Fatalf("v3 multipart: call 5 should be the whole-object range read from offset 0, got %+v", data)
+	if !sawSidecar || !sawData {
+		t.Fatalf("v3 multipart: want sidecar and whole-object range calls, got %s", formatCalls(calls))
+	}
+	if !cb.payloadCallsOverlapped() {
+		t.Fatalf("v3 multipart: sidecar and ciphertext ranges did not overlap")
 	}
 }
