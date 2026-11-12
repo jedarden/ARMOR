@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
-	"strconv"
 	"time"
 
 	"github.com/jedarden/armor/internal/backend"
@@ -41,19 +41,22 @@ func (h *Handlers) handleV3MultipartRangeRequest(w http.ResponseWriter, r *http.
 		return
 	}
 
-	// Build the plaintext by fetching and decrypting only the needed blocks.
-	// Contiguous runs of blocks are fetched with one ranged request per run:
-	// the backend's pipelined reader then parallelizes the round trips, which
-	// keeps a large range (hundreds of blocks) within the client's read
-	// timeout. One request per block does not — see armor-817d9d92.
-	var plaintextBuilder []byte
+	// Fetch and decrypt only the needed blocks, emitting each one as it is
+	// verified (armor-31fe90c8). Contiguous runs of blocks are fetched with
+	// one ranged request per run: the backend's pipelined reader then
+	// parallelizes the round trips, which keeps a large range (hundreds of
+	// blocks) within the client's read timeout. One request per block does
+	// not — see armor-817d9d92. The writer declares Content-Length up front;
+	// a failure after the first block aborts the connection against that
+	// declared length instead of returning a truncated 206 as success.
+	sw := h.newRangeStreamWriter(w, r, bucket, key, armorMeta, plaintextSize, rangeStart, rangeEnd, lastModified)
 
 	for _, run := range rangeInfo.BlockRuns {
 		partNum := sidecar.Sidecar.Parts[run.PartIdx].N
 
 		runBody, err := h.fetchV3MultipartBlockRun(ctx, bucket, prefixedKey, sidecar, run)
 		if err != nil {
-			h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to fetch blocks (part %d, blocks %d-%d): %v", run.PartIdx, run.StartBlock, run.EndBlock, err), 500)
+			sw.abort(fmt.Sprintf("Failed to fetch blocks (part %d, blocks %d-%d): %v", run.PartIdx, run.StartBlock, run.EndBlock, err))
 			return
 		}
 
@@ -62,34 +65,31 @@ func (h *Handlers) handleV3MultipartRangeRequest(w http.ResponseWriter, r *http.
 			blockLen, err := sidecar.GetBlockLength(run.PartIdx, blockIdx)
 			if err != nil {
 				runBody.Close()
-				h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to get block length (part %d, block %d): %v", run.PartIdx, blockIdx, err), 500)
+				sw.abort(fmt.Sprintf("Failed to get block length (part %d, block %d): %v", run.PartIdx, blockIdx, err))
 				return
 			}
 			blockCiphertext := make([]byte, blockLen)
 			if _, err := io.ReadFull(runBody, blockCiphertext); err != nil {
 				runBody.Close()
-				h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to read block ciphertext (part %d, block %d): %v", run.PartIdx, blockIdx, err), 500)
+				sw.abort(fmt.Sprintf("Failed to read block ciphertext (part %d, block %d): %v", run.PartIdx, blockIdx, err))
 				return
 			}
 
-			// Verify HMAC
 			expectedHMAC, err := sidecar.GetBlockHMAC(run.PartIdx, blockIdx)
 			if err != nil {
 				runBody.Close()
-				h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to get HMAC (part %d, block %d): %v", run.PartIdx, blockIdx, err), 500)
-				return
-			}
-			if err := verifyV3BlockHMAC(blockCiphertext, expectedHMAC, decryptor.HMACKey(), partNum, uint32(blockIdx)); err != nil {
-				runBody.Close()
-				h.writeError(w, r, "InternalError", fmt.Sprintf("HMAC verification failed (part %d, block %d): %v", run.PartIdx, blockIdx, err), 500)
+				sw.abort(fmt.Sprintf("Failed to get HMAC (part %d, block %d): %v", run.PartIdx, blockIdx, err))
 				return
 			}
 
-			// Decrypt
+			// DecryptBlockV3 verifies the block's HMAC as part of
+			// decryption and releases the plaintext only on a match, so no
+			// separate verification pass runs here (the single-PUT range
+			// path relies on the same guarantee).
 			decryptedBlock, err := crypto.DecryptBlockV3(decryptor.DEK(), armorMeta.IV, uint16(partNum), uint32(blockIdx), blockCiphertext, expectedHMAC, blockSize)
 			if err != nil {
 				runBody.Close()
-				h.writeError(w, r, "InternalError", fmt.Sprintf("Decryption failed (part %d, block %d): %v", run.PartIdx, blockIdx, err), 500)
+				sw.abort(fmt.Sprintf("Decryption failed (part %d, block %d): %v", run.PartIdx, blockIdx, err))
 				return
 			}
 
@@ -97,7 +97,7 @@ func (h *Handlers) handleV3MultipartRangeRequest(w http.ResponseWriter, r *http.
 			isCompressed, err := sidecar.IsBlockCompressed(run.PartIdx, blockIdx)
 			if err != nil {
 				runBody.Close()
-				h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to check compression (part %d, block %d): %v", run.PartIdx, blockIdx, err), 500)
+				sw.abort(fmt.Sprintf("Failed to check compression (part %d, block %d): %v", run.PartIdx, blockIdx, err))
 				return
 			}
 
@@ -105,39 +105,25 @@ func (h *Handlers) handleV3MultipartRangeRequest(w http.ResponseWriter, r *http.
 				decryptedBlock, err = crypto.DecompressBlock(decryptedBlock, true)
 				if err != nil {
 					runBody.Close()
-					h.writeError(w, r, "InternalError", fmt.Sprintf("Decompression failed (part %d, block %d): %v", run.PartIdx, blockIdx, err), 500)
+					sw.abort(fmt.Sprintf("Decompression failed (part %d, block %d): %v", run.PartIdx, blockIdx, err))
 					return
 				}
 			}
 
-			// Append to builder
-			plaintextBuilder = append(plaintextBuilder, decryptedBlock...)
+			blockPlainOffset := sidecar.PartPrefixSums[run.PartIdx] + int64(blockIdx)*int64(blockSize)
+			if err := sw.emitBlock(blockPlainOffset, decryptedBlock); err != nil {
+				runBody.Close()
+				log.Printf("GET %s/%s: v3 multipart range stream write failed: %v", bucket, key, err)
+				return
+			}
 		}
 
 		runBody.Close()
 	}
 
-	// Slice to the exact requested range
-	resultStart := rangeInfo.FirstBlockOffset
-	resultEnd := resultStart + (rangeEnd - rangeStart + 1)
-	if resultEnd > int64(len(plaintextBuilder)) {
-		resultEnd = int64(len(plaintextBuilder))
-	}
-	result := plaintextBuilder[resultStart:resultEnd]
-
-	// Cache the Parquet footer when this read covered the tail, the same way
-	// the generic range path does (armor-c3199f1c).
-	h.storeFooterCacheIfTail(bucket, key, armorMeta, result, plaintextSize, rangeEnd)
-
-	// Set response headers
-	w.Header().Set("Content-Length", strconv.FormatInt(int64(len(result)), 10))
-	w.Header().Set("Content-Type", armorMeta.ContentType)
-	w.Header().Set("ETag", fmt.Sprintf(`"%s"`, armorMeta.ETag))
-	w.Header().Set("Accept-Ranges", "bytes")
-	w.Header().Set("Last-Modified", lastModified.UTC().Format(http.TimeFormat))
-	w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", rangeStart, rangeEnd, plaintextSize))
-	w.WriteHeader(http.StatusPartialContent)
-	w.Write(result)
+	// Verifies the emitted length matches the declared range and warms the
+	// Parquet footer cache from the retained tail when this read covered it.
+	sw.finish()
 }
 
 // V3MultipartRangeInfo describes how to fetch a plaintext range from a v3 multipart object.

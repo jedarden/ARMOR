@@ -2469,6 +2469,7 @@ func (h *Handlers) handleRangeRequest(w http.ResponseWriter, r *http.Request, bu
 	}
 
 	var hmacTable []byte
+	var hmacBody io.ReadCloser
 	var startBlockIndex int
 	// dataBody streams the encrypted bytes of exactly the blocks the range
 	// needs; the plaintext is decrypted and emitted block by block rather
@@ -2565,16 +2566,14 @@ func (h *Handlers) handleRangeRequest(w http.ResponseWriter, r *http.Request, bu
 		})
 
 		g.Go(func() error {
-			hmacBody, err := h.backend.GetRange(gctx, bucket, prefixedKey, translation.HMACOffset, translation.HMACLength)
+			body, err := h.backend.GetRange(gctx, bucket, prefixedKey, translation.HMACOffset, translation.HMACLength)
 			if err != nil {
 				return fmt.Errorf("failed to fetch HMAC table: %w", err)
 			}
-			defer hmacBody.Close()
-
-			hmacTable, err = io.ReadAll(hmacBody)
-			if err != nil {
-				return fmt.Errorf("failed to read HMAC table: %w", err)
-			}
+			// Keep the HMAC table as a bounded reader. The range decrypt loop
+			// consumes one entry per block; buffering every entry made a
+			// bytes=0- request retain an object-sized side table.
+			hmacBody = body
 			return nil
 		})
 
@@ -2582,13 +2581,17 @@ func (h *Handlers) handleRangeRequest(w http.ResponseWriter, r *http.Request, bu
 			if dataBody != nil {
 				dataBody.Close()
 			}
+			if hmacBody != nil {
+				hmacBody.Close()
+			}
 			h.writeError(w, r, "InternalError", err.Error(), 500)
 			return
 		}
 		defer dataBody.Close()
+		defer hmacBody.Close()
 		streamBlockEnd = translation.BlockEnd
-		// The inline table slice holds only this range's blocks: relative
-		// block indices.
+		// The inline table reader yields only this range's blocks in relative
+		// order, one HMAC entry at a time.
 		streamHMACIsFull = false
 	}
 
@@ -2598,7 +2601,7 @@ func (h *Handlers) handleRangeRequest(w http.ResponseWriter, r *http.Request, bu
 	// connection against that declared length instead of returning a
 	// truncated 206 as success.
 	sw := h.newRangeStreamWriter(w, r, bucket, key, armorMeta, plaintextSize, start, end, lastModified)
-	if err := streamV1V2RangeBlocks(sw, dataBody, hmacTable, startBlockIndex, streamBlockEnd, streamHMACIsFull, decryptor, armorMeta, plaintextSize); err != nil {
+	if err := streamV1V2RangeBlocks(sw, dataBody, hmacTable, hmacBody, startBlockIndex, streamBlockEnd, streamHMACIsFull, decryptor, armorMeta, plaintextSize); err != nil {
 		sw.abort(err.Error())
 		return
 	}

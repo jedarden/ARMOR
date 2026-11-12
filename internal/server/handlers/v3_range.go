@@ -4,8 +4,8 @@ package handlers
 import (
 	"fmt"
 	"io"
+	"log"
 	"net/http"
-	"strconv"
 	"time"
 
 	"github.com/jedarden/armor/internal/backend"
@@ -81,11 +81,15 @@ func (h *Handlers) handleV3RangeRequest(w http.ResponseWriter, r *http.Request, 
 	}
 	defer spanBody.Close()
 
-	// Build the plaintext by slicing each block's ciphertext off the span and
-	// decrypting it. DecryptBlockV3 authenticates each original ARMOR block
-	// exactly once before any plaintext is released; the handler performs no
-	// separate HMAC pass.
-	var plaintextBuilder []byte
+	// Decrypt and emit one block at a time (armor-31fe90c8): each block is
+	// authenticated by DecryptBlockV3 (which verifies the block's HMAC before
+	// releasing any plaintext; no separate HMAC pass) and written to the
+	// client as soon as it is verified, so in-process memory stays at one
+	// block's ciphertext plus one block's plaintext however long the range
+	// is. The writer declares Content-Length up front; a failure after the
+	// first block aborts the connection against that declared length instead
+	// of returning a truncated 206 as success.
+	sw := h.newRangeStreamWriter(w, r, bucket, key, armorMeta, plaintextSize, start, end, lastModified)
 	for blockIndex := startBlock; blockIndex <= endBlock; blockIndex++ {
 		entry := blockTable.Entries[blockIndex]
 		isCompressed := entry.IsCompressed()
@@ -93,7 +97,7 @@ func (h *Handlers) handleV3RangeRequest(w http.ResponseWriter, r *http.Request, 
 
 		blockCiphertext := make([]byte, ciphertextLen)
 		if _, err := io.ReadFull(spanBody, blockCiphertext); err != nil {
-			h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to read v3 block %d from fetched span: %v", blockIndex, err), 500)
+			sw.abort(fmt.Sprintf("Failed to read v3 block %d from fetched span: %v", blockIndex, err))
 			return
 		}
 
@@ -101,7 +105,7 @@ func (h *Handlers) handleV3RangeRequest(w http.ResponseWriter, r *http.Request, 
 		// HMAC first)
 		decrypted, err := crypto.DecryptBlockV3(decryptor.DEK(), armorMeta.IV, 0, uint32(blockIndex), blockCiphertext, entry.HMAC[:], blockSize)
 		if err != nil {
-			h.writeError(w, r, "InternalError", fmt.Sprintf("v3 block %d authentication/decryption failed: %v", blockIndex, err), 500)
+			sw.abort(fmt.Sprintf("v3 block %d authentication/decryption failed: %v", blockIndex, err))
 			return
 		}
 
@@ -109,50 +113,17 @@ func (h *Handlers) handleV3RangeRequest(w http.ResponseWriter, r *http.Request, 
 		if isCompressed {
 			decrypted, err = crypto.DecompressBlock(decrypted, true)
 			if err != nil {
-				h.writeError(w, r, "InternalError", fmt.Sprintf("v3 block %d decompression failed: %v", blockIndex, err), 500)
+				sw.abort(fmt.Sprintf("v3 block %d decompression failed: %v", blockIndex, err))
 				return
 			}
 		}
 
-		// Append to builder
-		plaintextBuilder = append(plaintextBuilder, decrypted...)
-	}
-
-	// Slice to the requested range
-	startOffsetInBlock := start % int64(blockSize)
-	endOffsetInBlock := end % int64(blockSize)
-	var plaintext []byte
-	if startBlock == endBlock {
-		// Range is within a single block
-		if int64(len(plaintextBuilder)) <= endOffsetInBlock {
-			h.writeError(w, r, "InternalError", fmt.Sprintf("v3 block %d decrypted short: %d bytes", startBlock, len(plaintextBuilder)), 500)
+		if err := sw.emitBlock(int64(blockIndex)*int64(blockSize), decrypted); err != nil {
+			log.Printf("GET %s/%s: v3 range stream write failed: %v", bucket, key, err)
 			return
 		}
-		plaintext = plaintextBuilder[startOffsetInBlock : endOffsetInBlock+1]
-	} else {
-		// Range spans multiple blocks
-		if int64(len(plaintextBuilder)) <= startOffsetInBlock {
-			h.writeError(w, r, "InternalError", fmt.Sprintf("v3 blocks %d-%d decrypted short: %d bytes", startBlock, endBlock, len(plaintextBuilder)), 500)
-			return
-		}
-		plaintext = plaintextBuilder[startOffsetInBlock:]
-		expectedLen := end - start + 1
-		if int64(len(plaintext)) > expectedLen {
-			plaintext = plaintext[:expectedLen]
-		}
 	}
-
-	// Cache the Parquet footer when this read covered the tail, the same way
-	// the generic range path does (armor-c3199f1c).
-	h.storeFooterCacheIfTail(bucket, key, armorMeta, plaintext, plaintextSize, end)
-
-	// Set response headers
-	w.Header().Set("Content-Length", strconv.FormatInt(int64(len(plaintext)), 10))
-	w.Header().Set("Content-Type", armorMeta.ContentType)
-	w.Header().Set("ETag", fmt.Sprintf(`"%s"`, armorMeta.ETag))
-	w.Header().Set("Accept-Ranges", "bytes")
-	w.Header().Set("Last-Modified", lastModified.UTC().Format(http.TimeFormat))
-	w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, end, plaintextSize))
-	w.WriteHeader(http.StatusPartialContent)
-	w.Write(plaintext)
+	// Verifies the emitted length matches the declared range and warms the
+	// Parquet footer cache from the retained tail when this read covered it.
+	sw.finish()
 }

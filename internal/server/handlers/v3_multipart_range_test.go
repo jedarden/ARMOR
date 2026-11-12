@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"io"
 	"net/http/httptest"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -380,17 +379,21 @@ func TestV3MultipartRunCiphertextOffsetBeyondUint32(t *testing.T) {
 }
 
 // TestV3MultipartRangeShortRunReadIsRejected verifies a truncated run body
-// surfaces as a 500 rather than silently decrypting short data.
+// aborts after the authenticated prefix rather than silently completing a
+// short 206 response.
 func TestV3MultipartRangeShortRunReadIsRejected(t *testing.T) {
 	fx := newV3RangeFixture(t, []int{4, 4}, 128)
 
 	be := newRangeBackend(fx.ciphertext[:len(fx.ciphertext)-16]) // truncate last block
 	w := runV3RangeHandler(t, fx, be, 0, int64(len(fx.plaintext))-1)
-	if w.Code != 500 {
-		t.Fatalf("status = %d, want 500; body: %s", w.Code, w.Body.String())
+	if w.Code != 206 {
+		t.Fatalf("status = %d, want 206 before mid-stream abort", w.Code)
 	}
-	if !strings.Contains(w.Body.String(), "InternalError") {
-		t.Errorf("error body missing InternalError code: %s", w.Body.String())
+	if got, want := w.Body.Bytes(), fx.plaintext[:4*fx.blockSize]; !bytes.Equal(got, want) {
+		t.Fatalf("body after truncated run = %d bytes, want authenticated prefix %d", len(got), len(want))
+	}
+	if got, want := w.Header().Get("Content-Length"), fmt.Sprint(len(fx.plaintext)); got != want {
+		t.Errorf("Content-Length = %q, want declared full range length %q", got, want)
 	}
 }
 

@@ -1,13 +1,17 @@
 package handlers
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"fmt"
 	"io"
+	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"runtime"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"testing"
@@ -152,7 +156,7 @@ func TestV3SinglePUTRangeOneFetchForManyBlocks(t *testing.T) {
 	beb := newRangeBackend(obj.stored)
 
 	start := int64(2*blockSize + 17) // mid-block 2
-	end := int64(9*blockSize + 5)   // mid-block 9
+	end := int64(9*blockSize + 5)    // mid-block 9
 	w := runV3SinglePUTRange(t, obj, beb, start, end)
 
 	if w.Code != 206 {
@@ -266,13 +270,66 @@ func TestV3SinglePUTRangeCorruptBlockRejected(t *testing.T) {
 	end := int64(4 * blockSize)
 	w := runV3SinglePUTRange(t, obj, beb, start, end)
 
-	// The handler must fail closed: 500, and the error body is the generic
-	// S3 XML (no plaintext, no internal detail).
-	if w.Code != 500 {
-		t.Fatalf("status = %d, want 500 for corrupt block", w.Code)
+	// The first authenticated blocks are already on the wire when block 3
+	// fails. The streaming contract therefore keeps the 206 status and
+	// declared full Content-Length; the short body makes a real HTTP client
+	// observe the connection abort instead of accepting a truncated success.
+	if w.Code != 206 {
+		t.Fatalf("status = %d, want 206 before mid-stream abort", w.Code)
 	}
-	if strings.Contains(w.Body.String(), string(obj.plaintext[start:start+32])) {
-		t.Error("error response leaked plaintext")
+	if got, want := w.Body.Bytes(), obj.plaintext[start:3*blockSize]; !bytes.Equal(got, want) {
+		t.Fatalf("body after mid-stream abort = %d bytes, want authenticated prefix %d", len(got), len(want))
+	}
+	if got, want := w.Header().Get("Content-Length"), fmt.Sprint(end-start+1); got != want {
+		t.Errorf("Content-Length = %q, want declared full range length %q", got, want)
+	}
+}
+
+// TestV3SinglePUTRangeCorruptBlockAbortsHTTPStream checks the transport
+// contract, not just httptest.ResponseRecorder's in-process view: after an
+// authenticated prefix is written, the declared Content-Length makes the
+// real client report an unexpected EOF when the next block fails.
+func TestV3SinglePUTRangeCorruptBlockAbortsHTTPStream(t *testing.T) {
+	const blockSize = 1024
+	obj := newV3SinglePUTObject(t, 6, blockSize, 0)
+	obj.stored[obj.cipherSpan[0]+obj.blockOffset(t, 3)+11] ^= 0xff
+
+	beb := newRangeBackend(obj.stored)
+	h := &Handlers{backend: beb}
+	decryptor, err := crypto.NewDecryptor(obj.dek, obj.iv, obj.blockSize)
+	if err != nil {
+		t.Fatalf("NewDecryptor: %v", err)
+	}
+	armorMeta := &backend.ARMORMetadata{
+		BlockSize:   obj.blockSize,
+		IV:          obj.iv,
+		ETag:        "etag-v3-singleput-range",
+		ContentType: "application/octet-stream",
+	}
+	const start = int64(blockSize / 2)
+	const end = int64(4*blockSize - 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h.handleV3RangeRequest(w, r, "bucket", "key", "prefixed/key", decryptor, armorMeta, int64(len(obj.plaintext)), int64(len(obj.stored)), time.Now(), start, end, v3TableKeyParts{})
+	}))
+	defer server.Close()
+
+	resp, err := http.Get(server.URL)
+	if err != nil {
+		t.Fatalf("GET: %v", err)
+	}
+	body, readErr := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusPartialContent {
+		t.Fatalf("status = %d, want 206", resp.StatusCode)
+	}
+	if readErr == nil {
+		t.Fatalf("ReadAll succeeded for a mid-stream integrity failure; body=%d declared=%d", len(body), resp.ContentLength)
+	}
+	if len(body) != 3*blockSize-int(start) {
+		t.Fatalf("body length = %d, want authenticated prefix %d", len(body), 3*blockSize-int(start))
+	}
+	if resp.ContentLength != end-start+1 {
+		t.Fatalf("Content-Length = %d, want %d", resp.ContentLength, end-start+1)
 	}
 }
 
@@ -288,9 +345,158 @@ func TestV3SinglePUTRangeShortSpanReadRejected(t *testing.T) {
 	end := int64(5*blockSize - 1)
 	w := runV3SinglePUTRange(t, obj, beb, start, end)
 
-	// The short span read must fail the request, never serve a short 206.
-	if w.Code != 500 {
-		t.Fatalf("status = %d, want 500 for truncated span", w.Code)
+	// The first blocks are authenticated and emitted before the span ends.
+	// The declared length remains the requested range length, so a real client
+	// sees an unexpected EOF/connection close rather than a successful short
+	// 206 response.
+	if w.Code != 206 {
+		t.Fatalf("status = %d, want 206 before mid-stream abort", w.Code)
+	}
+	if got, want := w.Body.Bytes(), obj.plaintext[start:4*blockSize]; !bytes.Equal(got, want) {
+		t.Fatalf("body after truncated span = %d bytes, want authenticated prefix %d", len(got), len(want))
+	}
+	if got, want := w.Header().Get("Content-Length"), fmt.Sprint(end-start+1); got != want {
+		t.Errorf("Content-Length = %q, want declared full range length %q", got, want)
+	}
+}
+
+// discardRangeWriter observes the response without retaining its body. It
+// samples HeapAlloc after each block-sized Write so the test measures the
+// handler's live working set rather than httptest.ResponseRecorder's body.
+type discardRangeWriter struct {
+	header  http.Header
+	status  int
+	bytes   int64
+	maxHeap uint64
+}
+
+func (w *discardRangeWriter) Header() http.Header {
+	if w.header == nil {
+		w.header = make(http.Header)
+	}
+	return w.header
+}
+
+func (w *discardRangeWriter) WriteHeader(status int) {
+	if w.status == 0 {
+		w.status = status
+	}
+}
+
+func (w *discardRangeWriter) Write(p []byte) (int, error) {
+	if w.status == 0 {
+		w.status = http.StatusOK
+	}
+	w.bytes += int64(len(p))
+	var stats runtime.MemStats
+	runtime.ReadMemStats(&stats)
+	if stats.HeapAlloc > w.maxHeap {
+		w.maxHeap = stats.HeapAlloc
+	}
+	return len(p), nil
+}
+
+// TestV3SinglePUTRangeHeapBounded exercises a 256 MiB v3 single-PUT range
+// through the real filesystem backend. The backend returns an os.File-backed
+// reader, so any object-sized heap growth would come from the range handler,
+// not the fixture. The response writer discards output and samples live heap
+// after every block; the allowance covers a bounded ciphertext/plaintext pair,
+// the decoded table, and runtime allocator slack.
+func TestV3SinglePUTRangeHeapBounded(t *testing.T) {
+	const (
+		blockSize     = 64 << 10
+		plaintextSize = 256 << 20
+		blockCount    = plaintextSize / blockSize
+	)
+
+	oldGCPercent := debug.SetGCPercent(25)
+	defer debug.SetGCPercent(oldGCPercent)
+
+	base := t.TempDir()
+	fs, err := backend.NewFSBackend(backend.FSConfig{BasePath: base})
+	if err != nil {
+		t.Fatalf("NewFSBackend: %v", err)
+	}
+	const bucket, key = "bucket", "prefixed/key"
+	objectPath := filepath.Join(base, bucket, filepath.FromSlash(key))
+	if err := os.MkdirAll(filepath.Dir(objectPath), 0755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	object, err := os.Create(objectPath)
+	if err != nil {
+		t.Fatalf("Create object: %v", err)
+	}
+
+	dek := sha256.Sum256([]byte("armor-range-heap-dek"))
+	iv := sha256.Sum256([]byte("armor-range-heap-iv"))
+	table := crypto.NewBlockTable(blockSize, blockCount)
+	if _, err := object.Write(make([]byte, crypto.HeaderSize)); err != nil {
+		t.Fatalf("write header: %v", err)
+	}
+	plain := make([]byte, blockSize)
+	for block := 0; block < blockCount; block++ {
+		for i := range plain {
+			plain[i] = byte((block + i) % 251)
+		}
+		ciphertext, hmacValue, err := crypto.EncryptBlockV3(dek[:], iv[:16], 0, uint32(block), plain, blockSize)
+		if err != nil {
+			t.Fatalf("EncryptBlockV3(%d): %v", block, err)
+		}
+		if _, err := object.Write(ciphertext); err != nil {
+			t.Fatalf("write block %d: %v", block, err)
+		}
+		var hmacArray [crypto.HMACSize]byte
+		copy(hmacArray[:], hmacValue)
+		if err := table.AddEntry(crypto.NewBlockTableEntry(hmacArray, uint32(len(ciphertext)), false)); err != nil {
+			t.Fatalf("table entry %d: %v", block, err)
+		}
+	}
+	trailer, err := table.Encode()
+	if err != nil {
+		t.Fatalf("table.Encode: %v", err)
+	}
+	if _, err := object.Write(trailer); err != nil {
+		t.Fatalf("write trailer: %v", err)
+	}
+	if err := object.Close(); err != nil {
+		t.Fatalf("close object: %v", err)
+	}
+
+	storedSize := int64(crypto.HeaderSize) + table.TotalCiphertextLength64() + int64(len(trailer))
+	h := &Handlers{backend: fs}
+	decryptor, err := crypto.NewDecryptorWithVersion(dek[:], iv[:16], blockSize, crypto.Version3)
+	if err != nil {
+		t.Fatalf("NewDecryptor: %v", err)
+	}
+	armorMeta := &backend.ARMORMetadata{
+		BlockSize:   blockSize,
+		IV:          iv[:16],
+		ETag:        "etag-range-heap",
+		ContentType: "application/octet-stream",
+	}
+	r := httptest.NewRequest("GET", "/bucket/key", nil)
+	w := &discardRangeWriter{}
+	runtime.GC()
+	var before runtime.MemStats
+	runtime.ReadMemStats(&before)
+	h.handleV3RangeRequest(w, r, bucket, key, key, decryptor, armorMeta, plaintextSize, storedSize, time.Now(), 0, plaintextSize-1, v3TableKeyParts{})
+	var after runtime.MemStats
+	runtime.ReadMemStats(&after)
+
+	if w.status != http.StatusPartialContent {
+		t.Fatalf("status = %d, want 206", w.status)
+	}
+	if w.bytes != plaintextSize {
+		t.Fatalf("streamed bytes = %d, want %d", w.bytes, plaintextSize)
+	}
+	peak := w.maxHeap
+	if after.HeapAlloc > peak {
+		peak = after.HeapAlloc
+	}
+	growth := peak - before.HeapAlloc
+	const maxGrowth = 16*blockSize + 4<<20
+	if growth > maxGrowth {
+		t.Fatalf("peak heap growth = %d MiB, want <= %d MiB (block=%d KiB)", growth>>20, maxGrowth>>20, blockSize>>10)
 	}
 }
 
