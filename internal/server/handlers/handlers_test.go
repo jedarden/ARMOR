@@ -1983,6 +1983,257 @@ func (c *multipartUploadsListCaptureBackend) lastPrefix() string {
 	return c.gotPrefix
 }
 
+// multipartUploadsMarkerStubBackend returns a fixed, stored-space upload set
+// from ListMultipartUploads so the handler-side key-marker/upload-id-marker
+// filtering and max-uploads truncation can be asserted without a live backend.
+// Keys carry the configured prefix so the marker composition and strip
+// round-trip is exercised alongside the filter itself. Each call receives a
+// fresh copy of the fixed set: the handler filters in place over
+// result.Uploads, so a shared backing array would be mutated across calls.
+type multipartUploadsMarkerStubBackend struct {
+	*mockBackend
+	mu      sync.Mutex
+	uploads []backend.UploadInfo
+	calls   int
+}
+
+func (s *multipartUploadsMarkerStubBackend) ListMultipartUploads(ctx context.Context, bucket, prefix string) (*backend.ListMultipartUploadsResult, error) {
+	s.mu.Lock()
+	s.calls++
+	uploads := append([]backend.UploadInfo(nil), s.uploads...)
+	s.mu.Unlock()
+	return &backend.ListMultipartUploadsResult{
+		Bucket:      bucket,
+		Uploads:     uploads,
+		IsTruncated: false,
+	}, nil
+}
+
+// TestListMultipartUploads_KeyMarkerExcludesMarkedKey verifies S3 key-marker
+// semantics on a prefixed deployment: with key-marker set and no
+// upload-id-marker, uploads whose key equals the marker are excluded — only
+// keys lexicographically greater are returned (armor-4e5b7a10). This is the
+// same assertion TestListMultipartUploads_WithKeyMarker makes against a live
+// prefixed endpoint in the armor-integration gate.
+func TestListMultipartUploads_KeyMarkerExcludesMarkedKey(t *testing.T) {
+	mek := make([]byte, 32)
+	if _, err := rand.Read(mek); err != nil {
+		t.Fatalf("failed to generate MEK: %v", err)
+	}
+
+	cfg := &config.Config{
+		BlockSize:     65536,
+		Prefix:        "vault/",
+		AuthAccessKey: "test-access-key",
+		AuthSecretKey: "REMOVED-NOT-A-SECRET-VALUE",
+	}
+
+	mb := newMockBackend()
+	sb := &multipartUploadsMarkerStubBackend{
+		mockBackend: mb,
+		uploads: []backend.UploadInfo{
+			{UploadID: "id-a", Key: "vault/pfx/m-a", Initiated: time.Now()},
+			{UploadID: "id-b", Key: "vault/pfx/m-b", Initiated: time.Now()},
+			{UploadID: "id-c", Key: "vault/pfx/m-c", Initiated: time.Now()},
+		},
+	}
+	cache := backend.NewMetadataCache(1000, 300)
+	footerCache := backend.NewFooterCache(1000, 300)
+	km, err := keymanager.New(mek, nil, nil)
+	if err != nil {
+		t.Fatalf("failed to create key manager: %v", err)
+	}
+
+	h := handlers.New(cfg, sb, cache, footerCache, km, nil)
+
+	// The client marks the middle key in client space; the handler must compose
+	// the configured prefix onto it and exclude the marked key itself.
+	req := httptest.NewRequest(http.MethodGet, "/test-bucket?uploads=&prefix=pfx/&key-marker=pfx/m-b", nil)
+	w := httptest.NewRecorder()
+	h.HandleRoot(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("ListMultipartUploads failed: status %d, body: %s", w.Code, w.Body.String())
+	}
+
+	var result struct {
+		Uploads []struct {
+			Key string `xml:"Key"`
+		} `xml:"Upload"`
+	}
+	body, err := io.ReadAll(w.Body)
+	if err != nil {
+		t.Fatalf("failed to read response body: %v", err)
+	}
+	if err := xml.Unmarshal(body, &result); err != nil {
+		t.Fatalf("failed to parse XML: %v\nResponse: %s", err, string(body))
+	}
+
+	if len(result.Uploads) != 1 {
+		t.Fatalf("ListMultipartUploads returned %d uploads (%v), want exactly the one key strictly after the marker", len(result.Uploads), result.Uploads)
+	}
+	if got, want := result.Uploads[0].Key, "pfx/m-c"; got != want {
+		t.Errorf("ListMultipartUploads key-marker=pfx/m-b returned key %q, want %q", got, want)
+	}
+}
+
+// TestListMultipartUploads_KeyMarkerWithUploadIDMarker verifies the paired
+// cursor form: with key-marker AND upload-id-marker, uploads for the marked
+// key return when their upload ID is lexicographically greater than the
+// upload-id-marker, alongside every key strictly greater than the key-marker.
+func TestListMultipartUploads_KeyMarkerWithUploadIDMarker(t *testing.T) {
+	mek := make([]byte, 32)
+	if _, err := rand.Read(mek); err != nil {
+		t.Fatalf("failed to generate MEK: %v", err)
+	}
+
+	cfg := &config.Config{
+		BlockSize:     65536,
+		Prefix:        "vault/",
+		AuthAccessKey: "test-access-key",
+		AuthSecretKey: "REMOVED-NOT-A-SECRET-VALUE",
+	}
+
+	mb := newMockBackend()
+	sb := &multipartUploadsMarkerStubBackend{
+		mockBackend: mb,
+		uploads: []backend.UploadInfo{
+			{UploadID: "id-b1", Key: "vault/pfx/m-b", Initiated: time.Now()},
+			{UploadID: "id-b2", Key: "vault/pfx/m-b", Initiated: time.Now()},
+			{UploadID: "id-c", Key: "vault/pfx/m-c", Initiated: time.Now()},
+		},
+	}
+	cache := backend.NewMetadataCache(1000, 300)
+	footerCache := backend.NewFooterCache(1000, 300)
+	km, err := keymanager.New(mek, nil, nil)
+	if err != nil {
+		t.Fatalf("failed to create key manager: %v", err)
+	}
+
+	h := handlers.New(cfg, sb, cache, footerCache, km, nil)
+
+	// The client resumes from the middle key with a specific upload ID; the
+	// handler must exclude uploads of the marked key at or before that ID while
+	// keeping the same key's greater upload IDs and all greater keys.
+	req := httptest.NewRequest(http.MethodGet, "/test-bucket?uploads=&prefix=pfx/&key-marker=pfx/m-b&upload-id-marker=id-b1", nil)
+	w := httptest.NewRecorder()
+	h.HandleRoot(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("ListMultipartUploads failed: status %d, body: %s", w.Code, w.Body.String())
+	}
+
+	var result struct {
+		Uploads []struct {
+			Key      string `xml:"Key"`
+			UploadID string `xml:"UploadId"`
+		} `xml:"Upload"`
+	}
+	body, err := io.ReadAll(w.Body)
+	if err != nil {
+		t.Fatalf("failed to read response body: %v", err)
+	}
+	if err := xml.Unmarshal(body, &result); err != nil {
+		t.Fatalf("failed to parse XML: %v\nResponse: %s", err, string(body))
+	}
+
+	want := []struct {
+		key      string
+		uploadID string
+	}{
+		{"pfx/m-b", "id-b2"},
+		{"pfx/m-c", "id-c"},
+	}
+	if len(result.Uploads) != len(want) {
+		t.Fatalf("ListMultipartUploads returned %d uploads (%v), want %d", len(result.Uploads), result.Uploads, len(want))
+	}
+	for i, expected := range want {
+		if got := result.Uploads[i].Key; got != expected.key {
+			t.Errorf("upload %d key = %q, want %q", i, got, expected.key)
+		}
+		if got := result.Uploads[i].UploadID; got != expected.uploadID {
+			t.Errorf("upload %d UploadId = %q, want %q", i, got, expected.uploadID)
+		}
+	}
+}
+
+// TestListMultipartUploads_MaxUploadsTruncationEcho verifies handler-side
+// max-uploads truncation returns S3-shaped cursor fields: IsTruncated=true,
+// NextKeyMarker stripped to client space, NextUploadIDMarker set from the last
+// returned upload — so a client can resume with key-marker + upload-id-marker.
+func TestListMultipartUploads_MaxUploadsTruncationEcho(t *testing.T) {
+	mek := make([]byte, 32)
+	if _, err := rand.Read(mek); err != nil {
+		t.Fatalf("failed to generate MEK: %v", err)
+	}
+
+	cfg := &config.Config{
+		BlockSize:     65536,
+		Prefix:        "vault/",
+		AuthAccessKey: "test-access-key",
+		AuthSecretKey: "REMOVED-NOT-A-SECRET-VALUE",
+	}
+
+	mb := newMockBackend()
+	sb := &multipartUploadsMarkerStubBackend{
+		mockBackend: mb,
+		uploads: []backend.UploadInfo{
+			{UploadID: "id-a", Key: "vault/pfx/m-a", Initiated: time.Now()},
+			{UploadID: "id-b", Key: "vault/pfx/m-b", Initiated: time.Now()},
+			{UploadID: "id-c", Key: "vault/pfx/m-c", Initiated: time.Now()},
+		},
+	}
+	cache := backend.NewMetadataCache(1000, 300)
+	footerCache := backend.NewFooterCache(1000, 300)
+	km, err := keymanager.New(mek, nil, nil)
+	if err != nil {
+		t.Fatalf("failed to create key manager: %v", err)
+	}
+
+	h := handlers.New(cfg, sb, cache, footerCache, km, nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/test-bucket?uploads=&prefix=pfx/&max-uploads=2", nil)
+	w := httptest.NewRecorder()
+	h.HandleRoot(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("ListMultipartUploads failed: status %d, body: %s", w.Code, w.Body.String())
+	}
+
+	var result struct {
+		Uploads []struct {
+			Key      string `xml:"Key"`
+			UploadID string `xml:"UploadId"`
+		} `xml:"Upload"`
+		NextKeyMarker      string `xml:"NextKeyMarker"`
+		NextUploadIDMarker string `xml:"NextUploadIdMarker"`
+		IsTruncated        bool   `xml:"IsTruncated"`
+	}
+	body, err := io.ReadAll(w.Body)
+	if err != nil {
+		t.Fatalf("failed to read response body: %v", err)
+	}
+	if err := xml.Unmarshal(body, &result); err != nil {
+		t.Fatalf("failed to parse XML: %v\nResponse: %s", err, string(body))
+	}
+
+	if len(result.Uploads) != 2 {
+		t.Fatalf("ListMultipartUploads returned %d uploads, want 2 under max-uploads=2", len(result.Uploads))
+	}
+	if got, want := result.Uploads[1].Key, "pfx/m-b"; got != want {
+		t.Errorf("last returned upload key = %q, want %q", got, want)
+	}
+	if !result.IsTruncated {
+		t.Error("IsTruncated = false, want true when results exceed max-uploads")
+	}
+	if got, want := result.NextKeyMarker, "pfx/m-b"; got != want {
+		t.Errorf("NextKeyMarker = %q, want %q in client space (configured prefix stripped)", got, want)
+	}
+	if got, want := result.NextUploadIDMarker, "id-b"; got != want {
+		t.Errorf("NextUploadIdMarker = %q, want %q", got, want)
+	}
+}
+
 // TestListMultipartUploads_PrefixEndToEnd verifies the full prefix round-trip when
 // a client supplies a prefix on top of a configured ARMOR_PREFIX:
 //  1. the client prefix is composed with the configured prefix and passed to the backend,

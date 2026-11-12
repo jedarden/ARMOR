@@ -5366,16 +5366,31 @@ func (h *Handlers) ListMultipartUploads(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 
-	// The backend contract predates the marker and max-uploads fields, so apply
-	// those page boundaries here in client-key space while keeping the backend
-	// namespace private. This preserves the existing prefix forwarding without
-	// changing ListObjectsV2 semantics.
-	keyMarker := h.applyPrefix(r.URL.Query().Get("key-marker"))
+	// The backend returns stored-space keys and its contract predates the
+	// marker and max-uploads fields, so apply those page boundaries here while
+	// keeping the backend namespace private. This preserves the existing prefix
+	// forwarding without changing ListObjectsV2 semantics.
+	//
+	// Compose the configured prefix onto the key-marker only when the client
+	// actually sent one — composing onto the empty string would fabricate a
+	// cursor at the bare ARMOR_PREFIX, the same failure shape ListObjectsV2
+	// guards against for StartAfter (armor-56ecc6b7). S3 semantics for the
+	// pair: without upload-id-marker only keys lexicographically GREATER than
+	// the key-marker are listed, so uploads whose key equals the marker are
+	// excluded; with upload-id-marker, uploads for the marked key return only
+	// when their upload ID is lexicographically greater (armor-4e5b7a10).
+	keyMarker := ""
+	if rawKeyMarker := r.URL.Query().Get("key-marker"); rawKeyMarker != "" {
+		keyMarker = h.applyPrefix(rawKeyMarker)
+	}
 	uploadIDMarker := r.URL.Query().Get("upload-id-marker")
 	filtered := result.Uploads[:0]
 	for _, upload := range result.Uploads {
 		if keyMarker != "" {
-			if upload.Key < keyMarker || (upload.Key == keyMarker && upload.UploadID <= uploadIDMarker) {
+			if upload.Key < keyMarker {
+				continue
+			}
+			if upload.Key == keyMarker && (uploadIDMarker == "" || upload.UploadID <= uploadIDMarker) {
 				continue
 			}
 		}
