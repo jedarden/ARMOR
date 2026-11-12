@@ -42,6 +42,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
+	"github.com/jedarden/armor/internal/backend"
 )
 
 const (
@@ -78,6 +79,9 @@ func TestMultipart5GB_B2Integration(t *testing.T) {
 	testBucket := getEnvOr("TEST_BUCKET", "armor-test-bucket")
 
 	client := createS3Client(t, armorEndpoint)
+	// Direct B2 client for assertions about ARMOR's internal namespace
+	// (the HMAC sidecar), which the ARMOR endpoint denies to clients.
+	storageClient := createDirectB2Client(t)
 	ctx, cancel := context.WithTimeout(context.Background(), uploadTimeout)
 	defer cancel()
 
@@ -312,15 +316,19 @@ func TestMultipart5GB_B2Integration(t *testing.T) {
 	}
 
 	// Step 6: Verify HMAC sidecar exists (for v3 format)
+	// The sidecar is ARMOR internal state: with ARMOR_PREFIX set it lives at
+	// <prefix>.armor/hmac/<sha256(prefix+key)> (backend.GetSidecarKey), which
+	// the ARMOR endpoint denies to clients like the rest of the .armor/
+	// namespace. Assert it through the direct B2 client at the composed key.
 	t.Log("Step 6: Verifying HMAC sidecar...")
 
-	sidecarKey := fmt.Sprintf(".armor/hmac/%x", sha256Sum([]byte(key)))
-	sidecarResp, err := client.HeadObject(ctx, &s3.HeadObjectInput{
+	sidecarKey := backend.GetSidecarKey(armorPrefix, key)
+	sidecarResp, err := storageClient.HeadObject(ctx, &s3.HeadObjectInput{
 		Bucket: aws.String(testBucket),
 		Key:    aws.String(sidecarKey),
 	})
 	if err != nil {
-		t.Logf("Warning: HMAC sidecar not found: %v", err)
+		t.Logf("Warning: HMAC sidecar not found at %s: %v", sidecarKey, err)
 	} else {
 		t.Log("✓ HMAC sidecar found")
 		t.Logf("Sidecar size: %d bytes", *sidecarResp.ContentLength)

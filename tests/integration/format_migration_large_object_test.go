@@ -336,9 +336,10 @@ func TestLargeObjectMigrationV1MultipartToV3(t *testing.T) {
 			testKey := "large-v1-multipart-test.dat"
 			b.Delete(ctx, TestBucket, testKey)
 
-			// Delete HMAC sidecar
-			keySHA := sha256.Sum256([]byte(testKey))
-			sidecarPath := fmt.Sprintf(".armor/hmac/%x", keySHA)
+			// Delete the HMAC sidecar at its legacy bucket-root location.
+			// This fixture simulates a pre-prefix deployment, so the
+			// sidecar sits where backend.GetSidecarKey("", key) points.
+			sidecarPath := backend.GetSidecarKey("", testKey)
 			b.Delete(ctx, TestBucket, sidecarPath)
 
 			t.Logf("Cleaned up test object and sidecar: %s", testKey)
@@ -372,9 +373,9 @@ func TestLargeObjectMigrationV1MultipartToV3(t *testing.T) {
 			t.Fatalf("Failed to upload V1 multipart object: %v", err)
 		}
 
-		// Upload HMAC sidecar
-		keySHA := sha256.Sum256([]byte(testKey))
-		sidecarPath := fmt.Sprintf(".armor/hmac/%x", keySHA)
+		// Upload the HMAC sidecar at the legacy bucket-root location the
+		// migrator's SidecarLocations fallback probes (empty prefix).
+		sidecarPath := backend.GetSidecarKey("", testKey)
 		if err := uploadObject(ctx, b, TestBucket, sidecarPath, hmacTable); err != nil {
 			t.Fatalf("Failed to upload HMAC sidecar: %v", err)
 		}

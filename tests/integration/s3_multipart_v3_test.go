@@ -10,7 +10,6 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
-	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"testing"
@@ -21,12 +20,6 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/jedarden/armor/internal/backend"
 )
-
-// sha256Sum computes the SHA-256 hash of the input data
-func sha256Sum(data []byte) []byte {
-	h := sha256.Sum256(data)
-	return h[:]
-}
 
 // TestCompleteMultipartUpload_V3_SinglePart tests a 1-part upload with v3 format
 func TestCompleteMultipartUpload_V3_SinglePart(t *testing.T) {

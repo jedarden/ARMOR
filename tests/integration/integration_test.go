@@ -81,7 +81,11 @@ func TestMain(m *testing.M) {
 	mek = os.Getenv("ARMOR_MEK")
 	armorAccessKey = os.Getenv("ARMOR_AUTH_ACCESS_KEY")
 	armorSecretKey = os.Getenv("ARMOR_AUTH_SECRET_KEY")
-	armorPrefix = os.Getenv("ARMOR_PREFIX")
+	// backend.GetSidecarKey and every direct internal-namespace compose in
+	// this suite require the prefix normalized exactly as the server's
+	// config.normalizePrefix produces (empty, or one trailing slash), so the
+	// raw env value is normalized once here.
+	armorPrefix = normalizeTestPrefix(os.Getenv("ARMOR_PREFIX"))
 	armorAdminToken = os.Getenv("ARMOR_ADMIN_TOKEN")
 
 	missing := []string{}
@@ -116,6 +120,20 @@ func TestMain(m *testing.M) {
 	}
 
 	os.Exit(m.Run())
+}
+
+// normalizeTestPrefix mirrors internal/config normalizePrefix: strip leading
+// slashes, collapse trailing slashes, and add exactly one trailing slash for
+// a non-empty prefix. The server composes stored keys and its internal
+// .armor/ namespace from the normalized form; direct-B2 assertions in this
+// suite must compose identically or they miss the objects ARMOR wrote.
+func normalizeTestPrefix(prefix string) string {
+	prefix = strings.TrimLeft(prefix, "/")
+	prefix = strings.TrimRight(prefix, "/")
+	if prefix != "" {
+		prefix += "/"
+	}
+	return prefix
 }
 
 // generateTestKey creates a unique test key with a prefix
