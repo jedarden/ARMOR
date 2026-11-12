@@ -5,10 +5,12 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -199,27 +201,7 @@ func serve(fs *flag.FlagSet) {
 	// Load configuration
 	cfg, err := config.Load()
 	if err != nil {
-		// Print each error on a separate line for better operator experience
-		var allErrors []error
-
-		// Try to extract multiple errors from errors.Join()
-		switch jointErr := err.(type) {
-		case interface{ Unwrap() []error }:
-			// errors.Join returns an error with Unwrap() []error
-			allErrors = jointErr.Unwrap()
-		default:
-			// Single error or different error type
-			allErrors = []error{err}
-		}
-
-		var errMsg string
-		for i, e := range allErrors {
-			if i > 0 {
-				errMsg += "\n"
-			}
-			errMsg += fmt.Sprintf("  %s", e.Error())
-		}
-		logging.Fatalf("failed to load configuration:\n%s", errMsg)
+		fatalConfigError(err)
 	}
 
 	// Create logger with configuration
@@ -345,4 +327,61 @@ func serve(fs *flag.FlagSet) {
 	srv.StopAuthFileWatcher()
 
 	logger.Info("ARMOR shutdown complete")
+}
+
+// fatalConfigError renders a configuration-load failure on the surface that
+// can actually be read there and exits 1. On a terminal it is plain text,
+// one problem per line — a human debugging a container by hand gets the
+// same legible report `armor config validate` prints. Everywhere else
+// (pipes, files, pod stdout scraped by a log pipeline) it stays the single
+// structured JSON log line those pipelines parse, escapes and all; the
+// machine form is what production runs under, so its bytes do not change.
+func fatalConfigError(err error) {
+	problems := joinedErrorList(err)
+	if stderrIsTerminal() {
+		writeConfigErrorPlainText(os.Stderr, problems)
+		os.Exit(1)
+	}
+	logging.Fatalf("failed to load configuration:\n%s", configErrorLogMessage(problems))
+}
+
+// writeConfigErrorPlainText prints the terminal form: a header naming the
+// command, then each validation problem indented on its own line. Nothing is
+// escaped — an angle bracket appears literally, where the JSON form renders
+// the same character as a backslash-u003c escape on a single line.
+func writeConfigErrorPlainText(w io.Writer, problems []string) {
+	fmt.Fprintln(w, "armor: failed to load configuration:")
+	for _, problem := range problems {
+		fmt.Fprintf(w, "  - %s\n", problem)
+	}
+	fmt.Fprintln(w, "run 'armor config validate' for the same report with an exit-code contract")
+}
+
+// configErrorLogMessage rebuilds the exact multi-problem string the JSON
+// fatal has always carried: problems joined by newlines, each indented two
+// spaces. The logger JSON-escapes the newlines, which is the point — one
+// parseable line for machines.
+func configErrorLogMessage(problems []string) string {
+	var msg strings.Builder
+	for i, problem := range problems {
+		if i > 0 {
+			msg.WriteString("\n")
+		}
+		msg.WriteString("  ")
+		msg.WriteString(problem)
+	}
+	return msg.String()
+}
+
+// stderrIsTerminal reports whether stderr is an interactive terminal rather
+// than a pipe or regular file — the same distinction git and docker draw for
+// human- versus machine-formatted output. /dev/null is a character device
+// and reports true; nothing reads the error there either way, so the rendering
+// does not matter.
+func stderrIsTerminal() bool {
+	info, err := os.Stderr.Stat()
+	if err != nil {
+		return false
+	}
+	return info.Mode()&os.ModeCharDevice != 0
 }

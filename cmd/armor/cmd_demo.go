@@ -8,6 +8,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"os"
@@ -109,23 +110,19 @@ func demo(fs *flag.FlagSet) {
 	logger := logging.New("armor-demo")
 	logging.SetDefault(logger)
 
-	// Print demo banner
-	logger.Info("ARMOR demo mode")
-	logger.WithField("dir", demoDir).Info("Filesystem backend")
-	logger.WithField("listen", cfg.Listen).Info("S3 API")
-	logger.WithField("admin_listen", cfg.AdminListen).Info("Admin API")
-	logger.Info("")
-	logger.WithFields(map[string]interface{}{
-		"dashboard_user": credentials.dashboardUser,
-		"dashboard_pass": credentials.dashboardPass,
-		"admin_token":    credentials.adminToken,
-	}).Info("Demo dashboard credentials")
-	logger.WithField("url", dashboardURL(cfg.AdminListen)).Info("Dashboard")
-	logger.WithField("access_key_id", "armor").Info("S3 access key")
-	logger.WithField("secret_access_key", "armor-demo-secret").Info("S3 secret key")
-
-	// The ready-to-paste AWS CLI block is plain text, separate from the JSON
-	// logger lines above.
+	// Everything the demo says at startup: one structured JSON line for log
+	// pipelines (endpoints only), then the human banner and the ready-to-
+	// paste AWS CLI block as plain text. Credentials never ride in
+	// structured log fields, where a log collector would sweep them up with
+	// everything else — the terminal the operator is looking at is the only
+	// place demo credentials belong.
+	announceDemo(os.Stdout, logger, demoBanner{
+		Dir:          demoDir,
+		Listen:       cfg.Listen,
+		AdminListen:  cfg.AdminListen,
+		DashboardURL: dashboardURL(cfg.AdminListen),
+		Credentials:  credentials,
+	})
 	printAWSCLIConfig(cfg.Listen, cfg.Bucket)
 
 	// Create server
@@ -161,8 +158,7 @@ func demo(fs *flag.FlagSet) {
 		}
 	}()
 
-	logger.Info("")
-	logger.Info("Press Ctrl-C to stop")
+	logger.Info("ARMOR demo running - press Ctrl-C to stop")
 
 	// Wait for interrupt signal
 	sig := <-quit
@@ -372,6 +368,55 @@ func dashboardURL(adminListen string) string {
 		adminListen = "127.0.0.1" + adminListen
 	}
 	return (&url.URL{Scheme: "http", Host: adminListen, Path: "/dashboard"}).String()
+}
+
+// demoBanner is everything the startup banner prints: where the demo lives,
+// where it listens, and the credentials it generated.
+type demoBanner struct {
+	Dir          string
+	Listen       string
+	AdminListen  string
+	DashboardURL string
+	Credentials  demoCredentials
+}
+
+// announceDemo emits the demo's complete startup output. The structured log
+// line carries only the endpoints — dir, listeners — so log pipelines keep
+// one clean record of where the demo is bound; the banner carries the
+// credentials and URLs as plain text for the human at the terminal.
+// Credentials must never appear on the structured side: that is the surface
+// a log collector ingests, and demo credentials are still credentials.
+func announceDemo(out io.Writer, logger *logging.Logger, banner demoBanner) {
+	logger.WithFields(map[string]interface{}{
+		"dir":          banner.Dir,
+		"listen":       banner.Listen,
+		"admin_listen": banner.AdminListen,
+	}).Info("ARMOR demo started")
+	printDemoBanner(out, banner)
+}
+
+// printDemoBanner writes the human banner: data directory, endpoints,
+// dashboard URL, and the credentials the demo generated. Plain text only —
+// never a structured log field.
+func printDemoBanner(w io.Writer, banner demoBanner) {
+	fmt.Fprintln(w, "")
+	fmt.Fprintln(w, "=== ARMOR demo ===")
+	fmt.Fprintf(w, "Data directory: %s\n", banner.Dir)
+	fmt.Fprintf(w, "S3 API:         http://%s\n", banner.Listen)
+	fmt.Fprintf(w, "Admin API:      http://%s\n", banner.AdminListen)
+	fmt.Fprintf(w, "Dashboard:      %s\n", banner.DashboardURL)
+	fmt.Fprintln(w, "")
+	fmt.Fprintln(w, "Dashboard basic auth:")
+	fmt.Fprintf(w, "  user:        %s\n", banner.Credentials.dashboardUser)
+	fmt.Fprintf(w, "  password:    %s\n", banner.Credentials.dashboardPass)
+	fmt.Fprintf(w, "  admin token: %s\n", banner.Credentials.adminToken)
+	fmt.Fprintln(w, "")
+	fmt.Fprintln(w, "S3 credentials:")
+	fmt.Fprintln(w, "  access key: armor")
+	fmt.Fprintln(w, "  secret key: armor-demo-secret")
+	fmt.Fprintln(w, "")
+	fmt.Fprintln(w, "Press Ctrl-C to stop")
+	fmt.Fprintln(w, "")
 }
 
 // printAWSCLIConfig prints the AWS CLI configuration for connecting to the demo server.
