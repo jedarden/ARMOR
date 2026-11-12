@@ -1335,25 +1335,29 @@ func assertAllPrefixed(t *testing.T, mb *mockBackend, wantNamespace string) {
 // TestMonitorCheckAppliesPrefix tests that the single-part canary is written
 // below the configured ADR-001 prefix rather than at the bucket root.
 func TestMonitorCheckAppliesPrefix(t *testing.T) {
-	mb := newMockBackend()
-	mek := make([]byte, 32)
-	rand.Read(mek)
+	for _, prefix := range []string{"tenants/acme/", "integration-tests/"} {
+		t.Run(prefix, func(t *testing.T) {
+			mb := newMockBackend()
+			mek := make([]byte, 32)
+			rand.Read(mek)
 
-	m := NewMonitor(Config{
-		Backend:    mb,
-		Bucket:     "test-bucket",
-		Prefix:     "tenants/acme/",
-		MEK:        mek,
-		BlockSize:  65536,
-		InstanceID: "test-instance",
-		CanarySize: 100,
-	})
+			m := NewMonitor(Config{
+				Backend:    mb,
+				Bucket:     "test-bucket",
+				Prefix:     prefix,
+				MEK:        mek,
+				BlockSize:  65536,
+				InstanceID: "test-instance",
+				CanarySize: 100,
+			})
 
-	if _, err := m.check(context.Background()); err != nil {
-		t.Fatalf("canary check failed: %v", err)
+			if _, err := m.check(context.Background()); err != nil {
+				t.Fatalf("canary check failed: %v", err)
+			}
+
+			assertAllPrefixed(t, mb, prefix+".armor/canary/test-instance/")
+		})
 	}
-
-	assertAllPrefixed(t, mb, "tenants/acme/.armor/canary/test-instance/")
 }
 
 // TestMonitorMultipartCheckAppliesPrefix tests that the multipart canary is

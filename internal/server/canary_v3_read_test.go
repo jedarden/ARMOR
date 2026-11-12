@@ -3,6 +3,9 @@ package server
 import (
 	"bytes"
 	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/jedarden/armor/internal/backend"
@@ -25,7 +28,7 @@ func TestCanaryV3UsesGetObjectReadPath(t *testing.T) {
 	}
 	cfg := &config.Config{
 		Bucket:             "canary-read",
-		Prefix:             "tenant/",
+		Prefix:             "integration-tests/",
 		MEK:                bytes.Repeat([]byte{0x42}, 32),
 		BlockSize:          crypto.DefaultBlockSize,
 		FormatWriteVersion: 3,
@@ -51,5 +54,39 @@ func TestCanaryV3UsesGetObjectReadPath(t *testing.T) {
 	status := m.GetStatus()
 	if status.Status != canary.StatusHealthy || status.MultipartHealthy != canary.StatusHealthy {
 		t.Fatalf("v3 canary through GetObject: small=%s (%s), multipart=%s (%s)", status.Status, status.LastError, status.MultipartHealthy, status.MultipartLastError)
+	}
+
+	// The integration gate probes the S3 listener without SigV4 credentials.
+	// Serving the monitor's actual state also proves its internal GetObject
+	// read found the canary under ARMOR_PREFIX exactly once.
+	s.canary = m
+	s.canaryDisabled = false
+	for _, listener := range []struct {
+		name    string
+		handler http.Handler
+	}{
+		{name: "s3", handler: s.Handler()},
+		{name: "admin", handler: s.AdminHandler()},
+	} {
+		t.Run(listener.name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			listener.handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/armor/canary", nil))
+			if rec.Code != http.StatusOK {
+				t.Fatalf("GET /armor/canary returned %d: %s", rec.Code, rec.Body.String())
+			}
+			var result canary.Result
+			if err := json.Unmarshal(rec.Body.Bytes(), &result); err != nil {
+				t.Fatalf("decode canary response: %v", err)
+			}
+			if result.Status != canary.StatusHealthy || result.MultipartHealthy != canary.StatusHealthy {
+				t.Fatalf("canary response: small=%s (%s), multipart=%s (%s)", result.Status, result.LastError, result.MultipartHealthy, result.MultipartLastError)
+			}
+
+			rec = httptest.NewRecorder()
+			listener.handler.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/armor/canary", nil))
+			if rec.Code != http.StatusMethodNotAllowed || rec.Header().Get("Allow") != http.MethodGet {
+				t.Fatalf("POST /armor/canary returned %d with Allow %q, want 405 with Allow GET", rec.Code, rec.Header().Get("Allow"))
+			}
+		})
 	}
 }
