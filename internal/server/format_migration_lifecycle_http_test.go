@@ -243,6 +243,12 @@ func TestMigrationHTTPOperationSurvivesDisconnectAndReportsFailures(t *testing.T
 	deadline := time.Now().Add(5 * time.Second)
 	for {
 		resp, body = request(ctx, http.MethodGet, "operation_id="+admitted.OperationID)
+		if resp.StatusCode == http.StatusInternalServerError && time.Now().Before(deadline) {
+			// Filesystem state writes can briefly expose an incomplete
+			// metadata sidecar; the CLI retries the same transient 5xx.
+			time.Sleep(20 * time.Millisecond)
+			continue
+		}
 		if resp.StatusCode != http.StatusOK {
 			t.Fatalf("watch status = %d, body = %s", resp.StatusCode, body)
 		}
