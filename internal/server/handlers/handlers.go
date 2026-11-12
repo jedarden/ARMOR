@@ -335,6 +335,13 @@ func (h *Handlers) WithLogger(logger *logging.Logger) {
 	h.logger = logger
 }
 
+// reservedNamespaceDeniedMsg is the refusal every client-facing operation
+// returns for keys under ARMOR's reserved .armor/ namespace. DeleteObjects
+// reuses it for the per-key <Error> entries of a bulk request, since its
+// keys travel in the request body where the HandleRoot guard cannot see
+// them.
+const reservedNamespaceDeniedMsg = "Access to .armor/ reserved namespace is denied"
+
 // HandleRoot routes S3 operations based on the request.
 func (h *Handlers) HandleRoot(w http.ResponseWriter, r *http.Request) {
 	// Parse bucket and key from the URL path. Routing below keys off the name
@@ -355,7 +362,7 @@ func (h *Handlers) HandleRoot(w http.ResponseWriter, r *http.Request) {
 	// Protect the .armor/ reserved namespace
 	// Client operations targeting keys with this prefix return 403 AccessDenied
 	if strings.HasPrefix(key, ".armor/") {
-		h.writeError(w, r, "AccessDenied", "Access to .armor/ reserved namespace is denied", 403)
+		h.writeError(w, r, "AccessDenied", reservedNamespaceDeniedMsg, 403)
 		return
 	}
 
@@ -3605,9 +3612,24 @@ func (h *Handlers) DeleteBucket(w http.ResponseWriter, r *http.Request, bucket s
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// maxDeleteObjectsKeys is the S3 limit on the number of objects a single
+// DeleteObjects request may name; a request above it is rejected with 400
+// MalformedXML before any key is evaluated or removed.
+const maxDeleteObjectsKeys = 1000
+
+// maxDeleteObjectsBodyBytes bounds the DeleteObjects request body before it
+// is parsed. A legitimate body names at most maxDeleteObjectsKeys keys, each
+// at most 1024 bytes of UTF-8 plus XML markup and entity escaping, so this
+// bound never rejects a valid request while capping what one request can
+// make the server buffer.
+const maxDeleteObjectsBodyBytes = 8 << 20 // 8 MiB
+
 // DeleteObjects handles S3 DeleteObjects (bulk delete).
 // The request body contains XML with a list of objects to delete.
-// Per-key ACL enforcement is performed for each key in the request body.
+// Per-key ACL enforcement is performed for each key in the request body,
+// and keys under the reserved .armor/ namespace are refused per key —
+// POST ?delete carries its keys in the body, so the HandleRoot namespace
+// guard (which only sees the URL key, empty here) cannot protect them.
 func (h *Handlers) DeleteObjects(w http.ResponseWriter, r *http.Request, bucket string) {
 	ctx := r.Context()
 
@@ -3629,14 +3651,28 @@ func (h *Handlers) DeleteObjects(w http.ResponseWriter, r *http.Request, bucket 
 
 	var deleteReq DeleteRequest
 
-	body, err := io.ReadAll(r.Body)
+	// Bound the body before parsing: a DeleteObjects body is a bounded list
+	// of keys, so an oversized one cannot be a legitimate request and must
+	// not be buffered whole.
+	body, err := io.ReadAll(io.LimitReader(r.Body, maxDeleteObjectsBodyBytes+1))
 	if err != nil {
 		h.writeErrorCause(w, r, "InternalError", fmt.Sprintf("Failed to read body: %v", err), 500, err)
+		return
+	}
+	if int64(len(body)) > maxDeleteObjectsBodyBytes {
+		h.writeError(w, r, "MalformedXML", fmt.Sprintf("Delete request body exceeds %d bytes", maxDeleteObjectsBodyBytes), 400)
 		return
 	}
 
 	if err := xml.Unmarshal(body, &deleteReq); err != nil {
 		h.writeError(w, r, "MalformedXML", fmt.Sprintf("Failed to parse XML: %v", err), 400)
+		return
+	}
+
+	// S3 caps a DeleteObjects request at 1000 keys; a longer one is rejected
+	// outright, before any key is evaluated or removed.
+	if len(deleteReq.Objects) > maxDeleteObjectsKeys {
+		h.writeError(w, r, "MalformedXML", fmt.Sprintf("Delete request contains more than %d keys", maxDeleteObjectsKeys), 400)
 		return
 	}
 
@@ -3654,20 +3690,32 @@ func (h *Handlers) DeleteObjects(w http.ResponseWriter, r *http.Request, bucket 
 	// CheckACL requires bucket, key, and verb. For DeleteObjects, the verb is "delete".
 	// If credential is nil (no auth), allow all deletions (backward compatibility).
 	var allowedKeys []string
-	var deniedKeys []string
+	type deniedKey struct {
+		key     string
+		message string
+	}
+	var deniedKeys []deniedKey
 
-	if cred == nil {
-		// No authentication - allow all deletions (backward compatible)
-		allowedKeys = originalKeys
-	} else {
+	for _, key := range originalKeys {
+		// The reserved .armor/ namespace is unreachable through every
+		// single-key operation (HandleRoot refuses it before dispatch);
+		// a bulk request must not become the bypass. Refuse the key per
+		// key — no delete, no tombstone — whatever the credential's ACL
+		// grants, and even when auth is disabled.
+		if strings.HasPrefix(key, ".armor/") {
+			deniedKeys = append(deniedKeys, deniedKey{key: key, message: reservedNamespaceDeniedMsg})
+			continue
+		}
+		if cred == nil {
+			// No authentication - allow all deletions (backward compatible)
+			allowedKeys = append(allowedKeys, key)
+			continue
+		}
 		// Check ACL for each key individually
-		for _, key := range originalKeys {
-			// Import CheckACL from server package
-			if err := acl.CheckACL(cred, bucket, key, "delete"); err != nil {
-				deniedKeys = append(deniedKeys, key)
-			} else {
-				allowedKeys = append(allowedKeys, key)
-			}
+		if err := acl.CheckACL(cred, bucket, key, "delete"); err != nil {
+			deniedKeys = append(deniedKeys, deniedKey{key: key, message: "Access Denied"})
+		} else {
+			allowedKeys = append(allowedKeys, key)
 		}
 	}
 
@@ -3725,16 +3773,17 @@ func (h *Handlers) DeleteObjects(w http.ResponseWriter, r *http.Request, bucket 
 
 	// Per-key errors are always reported: S3 quiet mode omits only the
 	// successful Deleted entries, so suppressing AccessDenied here would make
-	// a restricted credential's failed batch look fully successful.
-	for _, key := range deniedKeys {
+	// a restricted credential's failed batch look fully successful. Reserved
+	// namespace refusals share the entries, in request order.
+	for _, denied := range deniedKeys {
 		result.Error = append(result.Error, struct {
 			Key     string `xml:"Key"`
 			Code    string `xml:"Code"`
 			Message string `xml:"Message"`
 		}{
-			Key:     key,
+			Key:     denied.key,
 			Code:    "AccessDenied",
-			Message: "Access Denied",
+			Message: denied.message,
 		})
 	}
 

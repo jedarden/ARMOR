@@ -160,6 +160,8 @@ going stale silently.
 | `InvalidPart` | Part retry not supported (CTR counter derivation) | UploadPart re-sends a part number already received |
 | `InvalidPartSize` | Part size %d is not a multiple of the block size | A non-final multipart part is not block-aligned (ADR-015) |
 | `MalformedXML` | Failed to parse XML: [details] | Invalid XML in request body |
+| `MalformedXML` | Delete request body exceeds 8388608 bytes | DeleteObjects request body above the pre-parse size bound |
+| `MalformedXML` | Delete request contains more than 1000 keys | DeleteObjects naming more than 1000 keys (S3's batch limit) |
 | `MalformedXML` | No objects specified for deletion | DeleteObjects with empty object list |
 | `InvalidCopySource` | Invalid copy source format | Malformed x-amz-copy-source header |
 
@@ -362,6 +364,16 @@ All authentication/authorization errors return HTTP 403 with CORS headers. The t
 | Operation | HTTP 200 Success | HTTP 400 Errors | HTTP 5xx Errors |
 |-----------|------------------|-----------------|-----------------|
 | DeleteObjects (POST with ?delete) | Content-Type: application/xml | MalformedXML | InternalError |
+
+DeleteObjects reports per-key refusals inside the 200 `<DeleteResult>` body
+rather than as an HTTP error: a key under the reserved `.armor/` namespace is
+refused per key with an `<Error>` entry (`AccessDenied`) — the same refusal
+every single-key operation returns as a 403, applied to each body-named key
+because the request URL carries no key for the pre-dispatch guard to check —
+and an ACL-denied key reports `AccessDenied` the same way. Refused keys are
+neither deleted nor tombstoned. The request itself is rejected with 400
+`MalformedXML` when it names more than 1000 keys or its body exceeds the
+pre-parse size bound.
 
 #### Backend Error Propagation
 

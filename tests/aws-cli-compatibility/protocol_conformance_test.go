@@ -20,6 +20,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"testing"
@@ -373,6 +374,74 @@ func TestVerify_Delete(t *testing.T) {
 		t.Fatalf("idempotent DeleteObject: %v", err)
 	}
 	t.Logf("delete OK: GET NoSuchKey, HEAD NotFound, LIST empty, second DELETE idempotent")
+}
+
+// TestVerify_BulkDelete pins the DeleteObjects (POST ?delete) wire contract.
+// A mixed batch reports per-key results: ordinary keys come back as
+// <Deleted> and are gone, while keys under the reserved .armor/ namespace —
+// which every single-key operation refuses with 403 before dispatch — are
+// refused per key inside the 200 response as <Error> AccessDenied entries,
+// never as deletions. Requests naming more than 1000 keys are rejected
+// outright with 400 MalformedXML before any key is removed, matching S3's
+// documented batch limit.
+func TestVerify_BulkDelete(t *testing.T) {
+	endpoint := startArmorServer(t)
+	client := newSDKClient(t, endpoint)
+	ctx := context.Background()
+	bucket := compatBucket(t)
+	internalKey := ".armor/hmac/abc"
+	ordinaryKey := "verify/conformance/bulk-delete.bin"
+
+	if _, err := client.PutObject(ctx, &s3.PutObjectInput{
+		Bucket: &bucket, Key: &ordinaryKey, Body: bytes.NewReader(conformancePayload(2048)),
+	}); err != nil {
+		t.Fatalf("PutObject: %v", err)
+	}
+
+	out, err := client.DeleteObjects(ctx, &s3.DeleteObjectsInput{
+		Bucket: &bucket,
+		Delete: &types.Delete{Objects: []types.ObjectIdentifier{
+			{Key: &internalKey},
+			{Key: &ordinaryKey},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("DeleteObjects: %v", err)
+	}
+
+	if len(out.Deleted) != 1 || aws.ToString(out.Deleted[0].Key) != ordinaryKey {
+		t.Errorf("Deleted entries = %+v, want exactly the ordinary key %q", out.Deleted, ordinaryKey)
+	}
+	if len(out.Errors) != 1 {
+		t.Fatalf("Error entries = %+v, want exactly one, for the reserved-namespace key", out.Errors)
+	}
+	if got := aws.ToString(out.Errors[0].Key); got != internalKey {
+		t.Errorf("error entry key = %q, want %q", got, internalKey)
+	}
+	if got := aws.ToString(out.Errors[0].Code); got != "AccessDenied" {
+		t.Errorf("error entry code = %q, want AccessDenied", got)
+	}
+
+	// The ordinary key is really gone; the reserved key was never deletable
+	// through the API, so its survival is pinned by the handler-level test
+	// against the backend directly.
+	_, err = client.GetObject(ctx, &s3.GetObjectInput{Bucket: &bucket, Key: &ordinaryKey})
+	assertS3Error(t, err, "NoSuchKey", http.StatusNotFound)
+
+	// S3's documented batch limit: more than 1000 keys is MalformedXML, and
+	// none of the named keys may be removed by the rejected request.
+	over := make([]types.ObjectIdentifier, 1001)
+	prefix := "verify/conformance/bulk-over-limit/"
+	for i := range over {
+		key := fmt.Sprintf("%s%04d", prefix, i)
+		over[i] = types.ObjectIdentifier{Key: &key}
+	}
+	_, err = client.DeleteObjects(ctx, &s3.DeleteObjectsInput{
+		Bucket: &bucket, Delete: &types.Delete{Objects: over},
+	})
+	assertS3Error(t, err, "MalformedXML", http.StatusBadRequest)
+
+	t.Logf("bulk delete OK: reserved key refused per key, ordinary key deleted, >1000 keys MalformedXML")
 }
 
 // TestVerify_ObjectTagging pins the object-tagging wire contract: the tag

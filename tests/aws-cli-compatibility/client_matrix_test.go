@@ -189,7 +189,7 @@ var conformanceFloor = map[compatOperation][]string{
 	opReads:           {"TestVerify_Overwrite"},
 	opRangeReads:      {"TestVerify_RangeReads"},
 	opListing:         {"TestVerify_List"},
-	opOverwriteDelete: {"TestVerify_Overwrite", "TestVerify_Delete"},
+	opOverwriteDelete: {"TestVerify_Overwrite", "TestVerify_Delete", "TestVerify_BulkDelete"},
 	opMultipart:       {"TestVerify_MultipartRoundTrip", "TestVerify_ConcurrentTransfers"},
 	// The tagging subresource APIs and the copy tagging directive; no real
 	// client leg exercises them, so the SDK floor is the sole pin.
