@@ -1234,6 +1234,10 @@ func (s *Server) migrateFormat(w http.ResponseWriter, r *http.Request) {
 
 	// Parse query parameters
 	dryRun := r.URL.Query().Get("dry_run") == "true"
+	inventoryOnly := r.URL.Query().Get("inventory_only") == "true"
+	if inventoryOnly {
+		dryRun = true
+	}
 	includeStr := r.URL.Query().Get("include")
 	targetStr := r.URL.Query().Get("target")
 	concurrencyStr := r.URL.Query().Get("concurrency")
@@ -1282,35 +1286,8 @@ func (s *Server) migrateFormat(w http.ResponseWriter, r *http.Request) {
 
 	// Migrate toward the validated target (always the configured write version).
 	migrator := NewFormatMigrator(s.backend, s.config.Bucket, key.MEK, key.Name, targetVersion, includeVersions, s.manifestIndex()).WithKeyPrefix(s.config.Prefix)
-	// Preserve the inexpensive empty-bucket contract: there is no background
-	// object work to detach, so completing it inline keeps existing operators'
-	// probes deterministic. Any non-empty migration always follows the durable
-	// background path below.
-	if page, listErr := s.backend.List(r.Context(), s.config.Bucket, "", "", "", 1); listErr == nil {
-		hasObject := false
-		for _, obj := range page.Objects {
-			if !migrator.isInternalKey(obj.Key) {
-				hasObject = true
-				break
-			}
-		}
-		if !hasObject && !page.IsTruncated {
-			result, runErr := migrator.RunDurable(r.Context(), dryRun, concurrency)
-			if runErr != nil {
-				w.WriteHeader(http.StatusInternalServerError)
-				_ = json.NewEncoder(w).Encode(map[string]interface{}{"status": "failed", "error": runErr.Error(), "result": result})
-				return
-			}
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusOK)
-			_ = json.NewEncoder(w).Encode(result)
-			return
-		}
-	}
-
-	// The request owns validation and admission only. The worker uses a
-	// process-independent bucket lease and a background context so a client
-	// timeout cannot cancel object work halfway through a staged upload.
+	// Serialize admission in this process. The bucket lease protects across
+	// replicas; the persisted state provides the ID before this POST returns.
 	s.migrationMu.Lock()
 	if s.migrationRun {
 		s.migrationMu.Unlock()
@@ -1319,13 +1296,28 @@ func (s *Server) migrateFormat(w http.ResponseWriter, r *http.Request) {
 	}
 	s.migrationRun = true
 	s.migrationMu.Unlock()
+	admissionCtx, cancelAdmission := context.WithTimeout(r.Context(), 30*time.Second)
+	err = migrator.prepareDurable(admissionCtx, dryRun, inventoryOnly, concurrency)
+	cancelAdmission()
+	if err != nil {
+		s.migrationMu.Lock()
+		s.migrationRun = false
+		s.migrationMu.Unlock()
+		status := http.StatusInternalServerError
+		if strings.Contains(err.Error(), "lease held") || strings.Contains(err.Error(), "migration contract does not match") {
+			status = http.StatusConflict
+		}
+		http.Error(w, err.Error(), status)
+		return
+	}
+	operationID := migrator.GetState().ID
 	go func() {
 		defer func() {
 			s.migrationMu.Lock()
 			s.migrationRun = false
 			s.migrationMu.Unlock()
 		}()
-		if _, err := migrator.RunDurable(context.Background(), dryRun, concurrency); err != nil {
+		if _, err := migrator.runPreparedDurable(context.Background()); err != nil {
 			log.Printf("format migration failed: %v", err)
 		}
 	}()
@@ -1333,10 +1325,12 @@ func (s *Server) migrateFormat(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusAccepted)
 	json.NewEncoder(w).Encode(map[string]interface{}{
+		"operation_id":          operationID,
 		"status":                "in_progress",
 		"include_versions":      includeVersions,
 		"current_write_version": targetVersion,
 		"dry_run":               dryRun,
+		"inventory_only":        inventoryOnly,
 		"concurrency":           concurrency,
 	})
 }
@@ -1357,9 +1351,16 @@ func (s *Server) handleMigrationProgress(w http.ResponseWriter, r *http.Request)
 	// the loaded migration state.
 	migrator := NewFormatMigrator(s.backend, s.config.Bucket, key.MEK, key.Name, currentWriteVersion, []string{}, s.manifestIndex()).WithKeyPrefix(s.config.Prefix)
 
-	// Try to load existing state from backend
-	state, err := migrator.loadState(r.Context())
+	// A status request must stay bounded even when storage stalls; the CLI
+	// retries transient 5xx responses without cancelling the worker.
+	statusCtx, cancelStatus := context.WithTimeout(r.Context(), 30*time.Second)
+	state, err := migrator.loadState(statusCtx)
+	cancelStatus()
 	if err != nil {
+		if !migrationStateMissing(err) {
+			http.Error(w, fmt.Sprintf("load migration state: %v", err), http.StatusInternalServerError)
+			return
+		}
 		// No migration state found
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
@@ -1378,6 +1379,10 @@ func (s *Server) handleMigrationProgress(w http.ResponseWriter, r *http.Request)
 			"status":  "no_migration",
 			"message": "No migration in progress",
 		})
+		return
+	}
+	if operationID := r.URL.Query().Get("operation_id"); operationID != "" && operationID != state.ID {
+		http.Error(w, "migration operation not found", http.StatusNotFound)
 		return
 	}
 
