@@ -436,8 +436,17 @@ func TestColdLoadAsyncErrorDegradedWithFloor(t *testing.T) {
 	if c := srv.manifestCompactor(); c != nil {
 		t.Fatal("compactor started on an incomplete index")
 	}
-	if got := srv.manifestIndex().Seq(); got != 3 {
-		t.Fatalf("recovered sequence floor = %d, want 3", got)
+	// The recovered floor is a lower bound, not an exact snapshot: the
+	// degraded-mode writer resumes the moment the status flips and may
+	// publish the buffered mid-load write above the floor (Seq 3 -> 4)
+	// before this read. armor-build-qbgfm (43d9d714, 2026-11-12) red here
+	// with "recovered sequence floor = 4, want 3" purely from that
+	// interleaving; earlier runs were green by scheduling luck. The
+	// deterministic floor contract is asserted by the readyz reason below
+	// ("sequence recovered at 3") and the post-flush census pins the
+	// publication itself at delta-0000000004 without collisions.
+	if got := srv.manifestIndex().Seq(); got < 3 {
+		t.Fatalf("recovered sequence floor = %d, want >= 3", got)
 	}
 	if entry, ok := srv.manifestIndex().Get("b", objKey); !ok || entry.PlaintextSize != 42 {
 		t.Fatalf("mid-load write not replayed into the degraded index: ok=%v", ok)
