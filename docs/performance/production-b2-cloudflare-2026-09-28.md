@@ -226,6 +226,44 @@ No `0.1.2006` speedup claim is made. The rollback target is
 `0.1.2004@sha256:f39dbcaca179...` for ARMOR and
 `0.1.2004@sha256:572046ce8f6...` for restore-verifier.
 
+## Repeated paired release check — 2026-11-12
+
+The 0.1.2006 PUT regression was not reproducible in a controlled, repeated
+check. I built the `v0.1.2004` and `v0.1.2006` binaries from their tags and ran
+them locally against the dedicated `iad-ci/armor-test` B2 bucket, using the
+same fresh test-only MEK/auth pair and an isolated prefix. No production ARMOR
+instance was promoted. Both servers reported the manifest index loaded before
+the first sample; the successful samples were interleaved
+`2004-1, 2006-1, 2004-2, 2006-2, ...`.
+
+Each run used the existing `TestRemoteBaseline` harness with one 64 MiB v3
+single-PUT, five warm full GET samples, and five samples of each range shape.
+The table uses the server's structured request-completion durations from the
+five successful interleaved runs; throughput is response MiB divided by that
+duration. Every response was status-, byte-, and hash-verified by the harness.
+
+| ARMOR service row | `0.1.2004` n / p50 / p95 / MiB/s p50,p95 | `0.1.2006` n / p50 / p95 / MiB/s p50,p95 | backend request counter |
+|---|---:|---:|---|
+| single-PUT 64 MiB | 5 / 6.855 s / 52.090 s / 9.34, 10.97 | 5 / 6.765 s / 7.758 s / 9.46, 10.46 | not emitted |
+| full GET 64 MiB | 25 / 2.965 s / 3.709 s / 21.59, 25.33 | 25 / 2.881 s / 7.378 s / 22.21, 26.63 | not emitted |
+| aligned 64 KiB range | 25 / 0.581 s / 0.777 s / 0.11, 0.12 | 25 / 0.558 s / 0.744 s / 0.11, 0.11 | not emitted |
+| aligned 1 MiB range | 25 / 0.729 s / 0.806 s / 1.37, 1.43 | 25 / 0.728 s / 0.828 s / 1.37, 1.63 | not emitted |
+| aligned 8 MiB range | 25 / 1.481 s / 6.185 s / 5.40, 6.81 | 25 / 1.342 s / 2.757 s / 5.96, 7.55 | not emitted |
+
+The PUT median ratio is `6.765 / 6.855 = 0.99x`, well below the 1.5x
+regression threshold. The 0.1.2004 run itself had one 52.090 s PUT outlier,
+while 0.1.2006's slowest PUT was 7.758 s. The 2026-11-08 one-sample result
+most likely captured a similarly rare B2/backend or startup-contention stall;
+the data does not identify whether manifest cold-load overlap caused it. It
+does not represent a steady 0.1.2006 PUT regression.
+
+The ARMOR `/metrics` scrape was captured before and after every successful
+run. In both tag binaries, `armor_backend_requests_total` emitted its HELP and
+TYPE lines but no labeled samples, so the releases do not expose exact
+server-side backend request counts. `not emitted` above is an observability
+gap, not a claim of zero backend requests; the server request logs and harness
+verification establish the measured S3 rows independently.
+
 ## Release-status boundary
 
 The register cites the 2026-10-24 figures with these limits: one runner and
