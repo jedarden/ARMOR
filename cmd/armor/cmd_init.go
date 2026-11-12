@@ -17,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 
+	"golang.org/x/sys/unix"
 	"golang.org/x/term"
 )
 
@@ -184,8 +185,17 @@ func promptForInitValues(values *initValues, input *os.File, output io.Writer) e
 	return nil
 }
 
+// flushInitInput discards terminal input that arrived before a hidden prompt
+// was shown. Injectable so the discard contract is testable without a tty.
+var flushInitInput = func(fd int) error {
+	return unix.IoctlSetInt(fd, unix.TCFLSH, unix.TCIFLUSH)
+}
+
 // readInitPassword disables echo before showing the prompt, so a fast paste
 // cannot be echoed in the gap between showing the prompt and reading input.
+// Input that arrived before the prompt (a paste-ahead block) is discarded:
+// its lines were already echoed while the terminal was canonical, and leaving
+// them queued would starve this read or a later prompt's.
 func readInitPassword(input *os.File, output io.Writer, prompt string) (secret []byte, err error) {
 	fd := int(input.Fd())
 	state, err := term.MakeRaw(fd)
@@ -197,6 +207,8 @@ func readInitPassword(input *os.File, output io.Writer, prompt string) (secret [
 			err = restoreErr
 		}
 	}()
+	// Best-effort: a flush failure leaves only the pre-existing behavior.
+	_ = flushInitInput(fd)
 	fmt.Fprint(output, prompt)
 	secret, err = term.ReadPassword(fd)
 	fmt.Fprintln(output)

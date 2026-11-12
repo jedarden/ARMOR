@@ -119,7 +119,9 @@ your shell or set `ARMOR_VERSION` in `.env`.
 
    For scripts, add `-non-interactive` and provide credential values through
    the environment or protected input files. Never put a credential value in
-   an argv example. Existing non-empty values in `.env` are preserved.
+   an argv example. Answer each prompt as it appears; input pasted ahead of a
+   hidden prompt is discarded. Existing non-empty values in `.env` are
+   preserved.
 4. **Start and verify.** Compose passes the MEK and admin token from `.env` to
    the server. `armor check` loads that same environment and probes the bucket,
    Cloudflare path, and MEK/canary state. An empty new bucket can produce

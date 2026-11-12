@@ -7,8 +7,12 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
+	"time"
+
+	"golang.org/x/sys/unix"
 )
 
 func captureInitOutput(t *testing.T, f func()) (string, string) {
@@ -182,6 +186,98 @@ func TestInitFileIsTerminalRejectsDevNull(t *testing.T) {
 	defer input.Close()
 	if initFileIsTerminal(input) {
 		t.Fatal("null device must not be treated as an interactive terminal")
+	}
+}
+
+// TestReadInitPasswordDiscardsPasteAheadInput pins the hidden-prompt contract
+// on a real pty: input that arrived before the prompt was shown (a paste-ahead
+// block) is discarded, and only input typed after the prompt is read. Without
+// the flush, the queued stale bytes are returned instead and the prompts that
+// follow a hidden prompt can wedge on a mis-structured queue.
+func TestReadInitPasswordDiscardsPasteAheadInput(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("pty allocation is linux-only")
+	}
+	master, err := os.OpenFile("/dev/ptmx", os.O_RDWR, 0)
+	if err != nil {
+		t.Skipf("no ptmx available: %v", err)
+	}
+	defer master.Close()
+	// Unlock the pty for namespaces whose devpts starts locked (a no-op on
+	// ordinary Linux), then obtain the slave descriptor straight from the
+	// master, so no /dev/pts path lookup (restricted in some namespaces).
+	if err := unix.IoctlSetPointerInt(int(master.Fd()), unix.TIOCSPTLCK, 0); err != nil {
+		t.Skipf("unlock pty: %v", err)
+	}
+	slaveFd, _, errno := unix.Syscall(unix.SYS_IOCTL, master.Fd(), unix.TIOCGPTPEER, uintptr(unix.O_RDWR|unix.O_NOCTTY))
+	if errno != 0 {
+		t.Skipf("obtain pty slave: %v", errno)
+	}
+	slave := os.NewFile(slaveFd, "armor-init-test-ptmx-slave")
+	defer slave.Close()
+
+	// Queue a paste-ahead line while the terminal is still canonical.
+	if _, err := master.WriteString("stale-pasted-input\n"); err != nil {
+		t.Fatalf("queue stale input: %v", err)
+	}
+
+	masterText := make(chan string, 32)
+	go func() {
+		defer close(masterText)
+		buf := make([]byte, 256)
+		for {
+			n, err := master.Read(buf)
+			if n > 0 {
+				masterText <- string(buf[:n])
+			}
+			if err != nil {
+				return
+			}
+		}
+	}()
+
+	type passwordResult struct {
+		secret string
+		err    error
+	}
+	done := make(chan passwordResult, 1)
+	go func() {
+		// The real flow prompts on the same terminal it reads from.
+		secret, err := readInitPassword(slave, slave, "hidden prompt: ")
+		done <- passwordResult{string(secret), err}
+	}()
+
+	// The prompt is printed after the flush, so answering after it appears
+	// can only race with the program if the discard is missing.
+	var seen strings.Builder
+	deadline := time.After(5 * time.Second)
+	prompted := false
+	for !prompted {
+		select {
+		case chunk, ok := <-masterText:
+			if !ok {
+				t.Fatalf("pty closed before the prompt appeared; saw %q", seen.String())
+			}
+			seen.WriteString(chunk)
+			prompted = strings.Contains(seen.String(), "hidden prompt: ")
+		case <-deadline:
+			t.Fatalf("hidden prompt never appeared; saw %q", seen.String())
+		}
+	}
+	if _, err := master.WriteString("fresh-typed-input\n"); err != nil {
+		t.Fatalf("send fresh input: %v", err)
+	}
+
+	select {
+	case res := <-done:
+		if res.err != nil {
+			t.Fatalf("readInitPassword: %v", res.err)
+		}
+		if res.secret != "fresh-typed-input" {
+			t.Fatalf("hidden prompt returned %q; paste-ahead input must be discarded and post-prompt input read", res.secret)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("readInitPassword never returned after fresh input")
 	}
 }
 
