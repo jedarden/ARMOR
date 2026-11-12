@@ -162,7 +162,6 @@ going stale silently.
 | `MalformedXML` | Failed to parse XML: [details] | Invalid XML in request body |
 | `MalformedXML` | Delete request body exceeds 8388608 bytes | DeleteObjects request body above the pre-parse size bound |
 | `MalformedXML` | Delete request contains more than 1000 keys | DeleteObjects naming more than 1000 keys (S3's batch limit) |
-| `MalformedXML` | No objects specified for deletion | DeleteObjects with empty object list |
 | `InvalidCopySource` | Invalid copy source format | Malformed x-amz-copy-source header |
 
 **Headers:** `Content-Type: application/xml` (no CORS headers)
@@ -371,7 +370,9 @@ refused per key with an `<Error>` entry (`AccessDenied`) — the same refusal
 every single-key operation returns as a 403, applied to each body-named key
 because the request URL carries no key for the pre-dispatch guard to check —
 and an ACL-denied key reports `AccessDenied` the same way. Refused keys are
-neither deleted nor tombstoned. The request itself is rejected with 400
+neither deleted nor tombstoned. A well-formed request naming zero keys is
+accepted: 200 with an empty `<DeleteResult>`, in quiet mode as well, touching
+nothing. The request itself is rejected with 400
 `MalformedXML` when it names more than 1000 keys or its body exceeds the
 pre-parse size bound.
 
