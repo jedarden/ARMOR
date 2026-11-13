@@ -26,7 +26,7 @@ non-draft releases after the image appeared. GitOps commits `810b34733` and
 artifact checks do not prove a green end-to-end client gate or fleet rollout.
 The table identifies the last specific image proof where one is recorded.
 
-<!-- release: latest-green version: 0.1.2012 evidence: armor-fdab65fe -->
+<!-- release: latest-green version: 0.1.2012 evidence: armor-8226b892 -->
 **`v0.1.2012`** (`76a80d623abd62b47601a6e8a4fa11d0cbdcf06b`) is the latest fully
 published, compat-green release. The repaired `armor-build-manual-cnfsq` run
 completed successfully at 2026-11-13T00:40Z after the go-test resource fix in
