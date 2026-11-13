@@ -1,6 +1,6 @@
 # Release status and known limitations
 
-**Status date:** 2026-10-31 · **Source version:** see [`VERSION`](../VERSION)
+**Status date:** 2026-11-13 · **Source version:** see [`VERSION`](../VERSION)
 
 This page is the evidence boundary for operator documentation. `repository-tested`
 means the current tree has focused passing tests, not proof of a published image
@@ -26,34 +26,32 @@ non-draft releases after the image appeared. GitOps commits `810b34733` and
 artifact checks do not prove a green end-to-end client gate or fleet rollout.
 The table identifies the last specific image proof where one is recorded.
 
-<!-- release: latest-green version: 0.1.2004 evidence: armor-fdab65fe -->
-**`v0.1.2004`** (`armor-fdab65fe`) is the latest fully published, compat-green
-release. Revision `76117a5045bafb9580504eb149f61d37aee2a08a` carries the Barman
-pipe fixes (`f90e2a82`, `bb09ced0`) plus every accumulated fix through the
-lint cleanup. CI run `armor-build-g2sfr` passed every real-client
-compatibility leg — aws-cli, rclone, boto3, DuckDB, litestream, and
-barman-cloud (VictoriaLogs pod `armor-build-g2sfr-compat-suite-test-3288697442`,
-final `PASS` at 2026-10-29T11:54:04Z) — but the workflow's GitHub status still
-reads `failure`: its only red node was `publish-release`, which could not
-fetch its script because in-cluster Forgejo was mid-OOM-restart and the public
-fallback hit a stale webhook token (403). The publisher backfill ran manually
-with operator-sourced tokens after a `--dry-run` confirmed exactly three
-mutations — the Forgejo tag, the Forgejo release, and the mirrored GitHub
-tag/release — and `git ls-remote --tags origin` plus both release APIs confirm
-the tag and non-draft releases exist. `docker manifest inspect -v` independently
-confirms every digest against the published release notes:
-`ronaldraygun/armor:0.1.2004` `sha256:f39dbcaca179968764324127f15c98233970e5eaae90aaaacacc1a3a517466ab`,
-`ronaldraygun/armor-restore-verifier:0.1.2004` `sha256:572046ce8f6ab1024ee0614db1235afed95288462eec6735d4f41a0e0724f1f6`,
-`ronaldraygun/armor-fleet:0.1.2004` `sha256:9df3c871e2d33c15440b100cbb1dc56e9b42c6da8d87a82786efacb3456a35e6`,
-`ghcr.io/jedarden/armor:0.1.2004` `sha256:a31e567babcc012e26efe6e225721a7ea4ce69b5325116c21754ca8171abd942`.
-Declarative-config `22ac3fe76` added a retry to the `publish-release` step so
-a future Forgejo restart window does not need a manual backfill. `0.1.2003`
-and `0.1.2005` were cut (VERSION-only deltas) but never built: `0.1.2005`'s
-`armor-build-p5c9k` failed `golangci-lint` on a single-case `select` in
-`internal/manifest/loader_concurrency_test.go` (fixed on `main` in
-`2d98d437`); no image was ever pushed for either version, and they have no
-tag or release. Consumers should pin by the `0.1.2004` digests above, not by
-tag alone.
+<!-- release: latest-green version: 0.1.2012 evidence: armor-fdab65fe -->
+**`v0.1.2012`** (`76a80d623abd62b47601a6e8a4fa11d0cbdcf06b`) is the latest fully
+published, compat-green release. The repaired `armor-build-manual-cnfsq` run
+completed successfully at 2026-11-13T00:40Z after the go-test resource fix in
+declarative-config revision `80be9a652` (3 GiB memory request/limit and
+`GOMAXPROCS=4`). Its VictoriaLogs evidence query was
+`{cluster="iad-ci",namespace="argo-workflows"} kubernetes.pod_name:armor-build-manual-cnfsq`
+over the run window; the go-test pod completed without eviction and the final
+status pod posted `success` for the release revision. The real-client
+compatibility suite passed its AWS CLI, rclone, boto3, DuckDB/httpfs,
+litestream, and barman-cloud legs.
+
+The publisher created the Forgejo tag/release and mirrored GitHub release;
+`v0.1.2012` is present on `origin` and GitHub confirms the release is
+non-draft. Registry verification recorded these immutable manifests:
+
+| Image | Digest |
+|---|---|
+| `ronaldraygun/armor:0.1.2012` | `sha256:10d38bea6da5fd2123acaaab3e9dff047cd83edab407b8721726c8e13f22bfea` |
+| `ronaldraygun/armor-restore-verifier:0.1.2012` | `sha256:5ecdaccf85ce89a42931148b18a0dca7354792f82471311ac8752dfd0cad6cab` |
+| `ronaldraygun/armor-fleet:0.1.2012` | `sha256:727fda92c5a5e30233a8c3fb9573d203728e3a04c1d55eb25c907f51d99b95cd` |
+| `ghcr.io/jedarden/armor:0.1.2012` | `sha256:01581ac19e72429f91d2349c96acd959217ca92531e0e4fbb1335c10a4e213d5` |
+
+The exact-SHA `armor-integration` decision remains owned by `armor-033dd376`;
+this release record covers the armor-build gate only. Consumers should pin by
+the recorded digests, not by tag alone.
 
 ## Current release posture
 

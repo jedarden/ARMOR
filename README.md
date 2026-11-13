@@ -31,7 +31,7 @@ unset `ARMOR_VERSION` gets the same tag (the checkout's
 For the commands below, set the tag once:
 
 ```bash
-export ARMOR_VERSION=0.1.2004
+export ARMOR_VERSION=0.1.2012
 docker pull ghcr.io/jedarden/armor:"$ARMOR_VERSION"
 ```
 
