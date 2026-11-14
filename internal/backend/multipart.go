@@ -69,6 +69,14 @@ type MultipartState struct {
 	// at Complete — hence the interaction with the part-ordering contract.
 	PartPlaintextSHAs map[int]string `json:"part_plaintext_shas"`
 
+	// Per-part plaintext MD5 digests (hex), keyed by part number. UploadPart
+	// records the MD5 of the plaintext it received so CompleteMultipartUpload
+	// can build the S3 multipart ETag convention — md5(md5(part1)||…||md5
+	// (partN))-N over the client-uploaded bytes (ComputeCompositeETag).
+	// Empty for parts uploaded by servers predating the field; completion
+	// then keeps the backend's ETag rather than emitting a wrong composite.
+	PartPlaintextMD5s map[int]string `json:"part_plaintext_md5s,omitempty"`
+
 	// PartSize is the uniform part size P pinned from part NUMBER 1 (ADR-015,
 	// amended 2026-07-19 — originally "first arriving part", which failed under
 	// default aws-cli concurrency where the short final part arrives first). A
@@ -152,6 +160,10 @@ type PartDataV3 struct {
 	CiphertextLen    int64  `json:"ciphertext_len"`    // Length of encrypted part
 	BlockHMACsBase64 string `json:"block_hmacs_b64"`   // Base64-encoded concatenated HMACs for each block
 	PlaintextSHAHex  string `json:"plaintext_sha_hex"` // SHA-256 of plaintext part (hex)
+	// PlaintextMD5Hex is the MD5 of the plaintext part (hex), recorded for
+	// the S3 multipart composite ETag at completion. Empty for parts
+	// uploaded by servers predating the field.
+	PlaintextMD5Hex string `json:"plaintext_md5_hex,omitempty"`
 }
 
 // MultipartStateManager manages multipart upload state persistence.
