@@ -10,6 +10,8 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"encoding/base64"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"testing"
@@ -165,11 +167,23 @@ func TestCompleteMultipartUpload_V3_SinglePart(t *testing.T) {
 	for i, block := range part.Blocks {
 		if len(block) != 2 {
 			t.Errorf("Block %d: expected [hmac_b64, clen], got %d elements", i, len(block))
+			continue
 		}
-		// Verify clen is a valid integer
-		var clen int
-		if _, err := fmt.Sscanf(block[1], "%d", &clen); err != nil {
-			t.Errorf("Block %d: clen is not a valid integer: %s", i, block[1])
+		// Verify clen is base64 of a 4-byte big-endian uint32 (the sidecar
+		// encoding parseBlockLength consumes; the high bit is the block
+		// compression flag and masks to the actual length).
+		clenBytes, err := base64.StdEncoding.DecodeString(block[1])
+		if err != nil {
+			t.Errorf("Block %d: clen is not valid base64: %s (%v)", i, block[1], err)
+			continue
+		}
+		if len(clenBytes) < 4 {
+			t.Errorf("Block %d: clen decodes to %d bytes, want at least 4", i, len(clenBytes))
+			continue
+		}
+		clen := binary.BigEndian.Uint32(clenBytes) & 0x7FFFFFFF
+		if clen == 0 || uint64(clen) > uint64(part.PlaintextLen) {
+			t.Errorf("Block %d: clen %d out of plausible range (part plaintext %d)", i, clen, part.PlaintextLen)
 		}
 	}
 

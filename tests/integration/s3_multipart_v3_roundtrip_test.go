@@ -37,9 +37,21 @@ func TestV3MultipartRoundTrip(t *testing.T) {
 	testData := make([]byte, totalSize)
 	rand.Read(testData)
 
-	// Calculate expected checksums
-	expectedMD5 := md5.Sum(testData)
-	expectedETag := hex.EncodeToString(expectedMD5[:]) + "-3" // 3 parts
+	// Calculate the expected ETag with the S3 multipart convention:
+	// md5(md5(part1)||…||md5(partN))-N over the plaintext parts the client
+	// uploaded. (A bare whole-object MD5 with a "-N" suffix is not what S3
+	// produces — the composite is what lets a client verify a download from
+	// the per-part ETags it received.)
+	partMD5Hasher := md5.New()
+	for i := 0; i < numParts; i++ {
+		partStart := i * partSize
+		partEnd := partStart + partSize
+		if i == numParts-1 {
+			partEnd = len(testData) // Last part may be smaller
+		}
+		partMD5Hasher.Write(testData[partStart:partEnd])
+	}
+	expectedETag := fmt.Sprintf("%x-%d", partMD5Hasher.Sum(nil), numParts)
 
 	// Create multipart upload
 	createResp, err := client.CreateMultipartUpload(ctx, &s3.CreateMultipartUploadInput{
