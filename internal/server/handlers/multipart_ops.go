@@ -4,6 +4,7 @@ import (
 	"encoding/xml"
 	"fmt"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -208,6 +209,44 @@ func (h *Handlers) ListParts(w http.ResponseWriter, r *http.Request, bucket, key
 		}
 	}
 
+	// S3 pagination (armor-9a58cd90): the backend ListParts contract predates
+	// the max-parts and part-number-marker fields, so the page boundaries are
+	// applied here from the request's query parameters — the same shape
+	// ListMultipartUploads uses for its markers (armor-4e5b7a10). S3 lists
+	// parts in ascending part-number order, parts at or below the marker are
+	// excluded, MaxParts bounds the page, and IsTruncated +
+	// NextPartNumberMarker carry the cursor for the next page.
+	sort.Slice(result.Parts, func(i, j int) bool {
+		return result.Parts[i].PartNumber < result.Parts[j].PartNumber
+	})
+	partNumberMarker := 0
+	if raw := r.URL.Query().Get("part-number-marker"); raw != "" {
+		if parsed, parseErr := strconv.Atoi(raw); parseErr == nil && parsed > 0 {
+			partNumberMarker = parsed
+		}
+	}
+	filtered := result.Parts[:0]
+	for _, part := range result.Parts {
+		if partNumberMarker > 0 && part.PartNumber <= int32(partNumberMarker) {
+			continue
+		}
+		filtered = append(filtered, part)
+	}
+	maxParts := 1000
+	if raw := r.URL.Query().Get("max-parts"); raw != "" {
+		if parsed, parseErr := strconv.Atoi(raw); parseErr == nil && parsed > 0 {
+			maxParts = parsed
+		}
+	}
+	isTruncated := len(filtered) > maxParts
+	if isTruncated {
+		filtered = filtered[:maxParts]
+	}
+	nextPartNumberMarker := 0
+	if len(filtered) > 0 {
+		nextPartNumberMarker = int(filtered[len(filtered)-1].PartNumber)
+	}
+
 	// Build XML response with plaintext sizes
 	type Part struct {
 		PartNumber   int    `xml:"PartNumber"`
@@ -236,12 +275,13 @@ func (h *Handlers) ListParts(w http.ResponseWriter, r *http.Request, bucket, key
 		Key:                  key,
 		UploadID:             uploadID,
 		StorageClass:         "STANDARD",
-		PartNumberMarker:     result.NextPartNumberMarker,
-		NextPartNumberMarker: result.NextPartNumberMarker,
-		IsTruncated:          result.IsTruncated,
+		PartNumberMarker:     partNumberMarker,
+		NextPartNumberMarker: nextPartNumberMarker,
+		MaxParts:             maxParts,
+		IsTruncated:          isTruncated,
 	}
 
-	for _, part := range result.Parts {
+	for _, part := range filtered {
 		// Use plaintext size from state if available, otherwise use reported size
 		plaintextSize := part.Size
 		if size, ok := state.PartSizes[int(part.PartNumber)]; ok {
