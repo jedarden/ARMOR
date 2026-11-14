@@ -211,8 +211,11 @@ func (h *Handlers) headObjectFromManifest(w http.ResponseWriter, r *http.Request
 	// completion passes the gate while the manifest still describes the
 	// replaced generation (armor-9a58cd90). Inline ARMOR metadata on the
 	// ciphertext proves the stored object is a generation the manifest does
-	// not describe.
-	if ciphertextIsSelfDescribing(ciphertextInfo) {
+	// not describe — but only for a manifest describing a multipart
+	// generation: a single-PUT generation's own ciphertext always carries
+	// the inline metadata, so there the freshness gate stays authoritative
+	// (HEAD and GET must agree; see GetObject's manifest path).
+	if manifestMeta["x-amz-meta-armor-multipart"] == "true" && ciphertextIsSelfDescribing(ciphertextInfo) {
 		return false
 	}
 	if headErr != nil {

@@ -120,7 +120,18 @@ func (h *Handlers) GetObject(w http.ResponseWriter, r *http.Request, bucket, key
 		// ciphertext never carries it, so its presence proves the stored
 		// object is a self-describing single-PUT generation this manifest
 		// does not describe.
-		selfDescribing := ciphertextIsSelfDescribing(ciphertextInfo)
+		//
+		// That contradiction only exists for a manifest describing a
+		// MULTIPART generation: the ciphertext ARMOR writes for a single-PUT
+		// object carries the same inline metadata, so for such a manifest
+		// the bare check is vacuously true and would silently disable the
+		// freshness gate — a stale read would serve replaced ciphertext with
+		// a 200 instead of the retryable 500 the repair/quarantine flow is
+		// built around (manifest_repair_test.go,
+		// multipart_manifest_freshness_test.go). Fall through to the legacy
+		// read only when the manifest carries the multipart flag
+		// CompleteMultipartUpload stamps.
+		selfDescribing := manifestMeta["x-amz-meta-armor-multipart"] == "true" && ciphertextIsSelfDescribing(ciphertextInfo)
 		if headErr != nil && !selfDescribing {
 			var freshErr *ciphertextFreshnessError
 			if errors.As(headErr, &freshErr) {

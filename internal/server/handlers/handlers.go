@@ -509,9 +509,13 @@ func writeStoredMetadataHeaders(w http.ResponseWriter, metadata map[string]strin
 // ciphertextIsSelfDescribing reports whether a stored object carries its
 // ARMOR metadata inline, i.e. it was written by a plain PutObject rather
 // than assembled by CompleteMultipartUpload (whose ciphertext object never
-// carries metadata — ADR-016). Such an object is newer than any manifest
-// beside it and describes itself, so a stale manifest is no reason to
-// reject a read.
+// carries metadata — ADR-016). Beside a manifest describing a MULTIPART
+// generation such an object is a newer replacement the manifest does not
+// describe, and the read falls through to the legacy path. Beside a
+// manifest describing a single-PUT generation the check is vacuously true
+// — every single-PUT ciphertext carries the inline metadata — so callers
+// must not let it bypass the freshness gate there (see GetObject's
+// manifest path).
 func ciphertextIsSelfDescribing(info *backend.ObjectInfo) bool {
 	return info != nil && info.Metadata["x-amz-meta-armor-wrapped-dek"] != ""
 }
