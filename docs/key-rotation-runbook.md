@@ -181,6 +181,14 @@ remain bounded at 30 s regardless, so slowloris protection is unaffected.
 endpoint resumes from `.armor/rotation-state.json`. Already-processed objects
 are skipped.
 
+The response reports `processed_objects` only for successful re-wraps.
+`failed_objects` counts objects that could not be inspected or re-wrapped, and
+`failed_keys` lists up to the first 100 affected keys. A walk with failures
+returns HTTP 500 and `status: "completed_with_failures"`; those objects remain
+wrapped with their previous MEK. Do not treat that response as a successful
+rotation or proceed to retire a key. Fix the cause, then start a new rotation
+and verify a clean result.
+
 **Optional:** You can skip this step entirely. The ring allows old keys to work
 indefinitely, so rotation can be deferred to a convenient maintenance window
 or run as a background task.
@@ -244,8 +252,12 @@ transient backend error still skips that entry, but it is now counted; treat
 a non-zero `head_failures` as a reason to re-run rather than to declare
 success.
 
-**Retire the old key only when `objects_by_fp` shows 0 under the old
-fingerprint** (and `"legacy"` is accounted for). To retire:
+**Retire the old key only when the rotation response has
+`status: "completed"` and `failed_objects: 0`, and `objects_by_fp` shows 0
+under the old fingerprint** (with `"legacy"` accounted for and every reported
+CopyObject exception resolved). A non-zero `failed_objects` or any
+`completed_with_failures` status blocks retirement even if a manifest-based
+census appears clear. To retire:
 
 ```bash
 # Remove the old key from ARMOR_MEK_RING in OpenBao
@@ -298,6 +310,7 @@ multipart copy:
 {
   "status": "completed",
   "processed_objects": 4321,
+  "failed_objects": 0,
   "exceptions": 2,
   "exception_keys": ["data/warehouse/immense-1.parquet", "data/warehouse/immense-2.parquet"]
 }

@@ -11,6 +11,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"sort"
 	"strings"
 	"sync"
@@ -19,9 +21,11 @@ import (
 	"time"
 
 	"github.com/jedarden/armor/internal/backend"
+	"github.com/jedarden/armor/internal/config"
 	"github.com/jedarden/armor/internal/crypto"
 	"github.com/jedarden/armor/internal/keymanager"
 	"github.com/jedarden/armor/internal/manifest"
+	"github.com/jedarden/armor/internal/server/handlers"
 )
 
 // mockRotationBackend is a mock backend for testing key rotation.
@@ -487,6 +491,103 @@ func TestKeyRotationWithManifestIndex(t *testing.T) {
 		if len(dek) != 32 {
 			t.Errorf("invalid DEK length for %s: %d", key, len(dek))
 		}
+	}
+}
+
+func TestFingerprintRotationUsesLiveMetadataAfterCopyOverwrite(t *testing.T) {
+	const bucket = "test-bucket"
+	oldMEK := rotationTestMEK(0x41)
+	newMEK := rotationTestMEK(0x72)
+	mock := newMockRotationBackend()
+	oldKM, err := keymanager.New(oldMEK, nil, nil)
+	if err != nil {
+		t.Fatalf("New old key manager: %v", err)
+	}
+	cfg := &config.Config{BlockSize: 65536}
+	cache := backend.NewMetadataCache(100, 60)
+	footerCache := backend.NewFooterCache(100, 60)
+	oldHandlers := handlers.New(cfg, mock, cache, footerCache, oldKM, nil)
+
+	put := func(key string, plaintext []byte) {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodPut, "/"+bucket+"/"+key, bytes.NewReader(plaintext))
+		req.Header.Set("Content-Type", "text/plain")
+		w := httptest.NewRecorder()
+		oldHandlers.HandleRoot(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("PUT %s: status %d, body %s", key, w.Code, w.Body.String())
+		}
+	}
+	put("x", []byte("original plaintext"))
+	put("y", []byte("copied plaintext"))
+
+	// Capture the manifest entry created for x's first generation. The later
+	// CopyObject replaces x with y's ciphertext and metadata but does not update
+	// this lossy cache entry.
+	oldXInfo, err := mock.Head(context.Background(), bucket, "x")
+	if err != nil {
+		t.Fatalf("Head x before copy: %v", err)
+	}
+	oldXMeta, ok := backend.ParseARMORMetadata(oldXInfo.Metadata)
+	if !ok {
+		t.Fatal("x before copy is not ARMOR metadata")
+	}
+	idx := manifest.New()
+	idx.Put(bucket, "x", &manifest.Entry{
+		PlaintextSize:  oldXMeta.PlaintextSize,
+		ContentType:    oldXMeta.ContentType,
+		ETag:           oldXMeta.ETag,
+		IV:             oldXMeta.IV,
+		WrappedDEK:     oldXMeta.WrappedDEK,
+		MEKFingerprint: oldXMeta.MEKFingerprint,
+		BlockSize:      oldXMeta.BlockSize,
+		LastModified:   time.Now(),
+	})
+
+	copyReq := httptest.NewRequest(http.MethodPut, "/"+bucket+"/x", nil)
+	copyReq.Header.Set("x-amz-copy-source", "/"+bucket+"/y")
+	copyResponse := httptest.NewRecorder()
+	oldHandlers.HandleRoot(copyResponse, copyReq)
+	if copyResponse.Code != http.StatusOK {
+		t.Fatalf("CopyObject y onto x: status %d, body %s", copyResponse.Code, copyResponse.Body.String())
+	}
+	newXInfo, err := mock.Head(context.Background(), bucket, "x")
+	if err != nil {
+		t.Fatalf("Head x after copy: %v", err)
+	}
+	newXMeta, ok := backend.ParseARMORMetadata(newXInfo.Metadata)
+	if !ok {
+		t.Fatal("x after copy is not ARMOR metadata")
+	}
+	if bytes.Equal(oldXMeta.WrappedDEK, newXMeta.WrappedDEK) {
+		t.Fatal("CopyObject did not replace x's wrapped DEK; stale-manifest setup is invalid")
+	}
+
+	rotator := NewFingerprintRotator(mock, bucket, "default", newMEK, []keymanager.RingKeyEntry{{
+		MEK: oldMEK, Fingerprint: crypto.MEKFingerprint(oldMEK),
+	}}, idx)
+	result, err := rotator.Rotate(context.Background())
+	if err != nil {
+		t.Fatalf("Rotate: %v", err)
+	}
+	if result.FailedObjects != 0 || result.Status != "completed" {
+		t.Fatalf("rotation result = status %q, failed %d; want completed with no failures", result.Status, result.FailedObjects)
+	}
+
+	newRing := append([]byte(nil), oldMEK...)
+	newKM, err := keymanager.New(newMEK, nil, nil, map[string][]byte{"default": newRing})
+	if err != nil {
+		t.Fatalf("New active key manager: %v", err)
+	}
+	newHandlers := handlers.New(cfg, mock, backend.NewMetadataCache(100, 60), backend.NewFooterCache(100, 60), newKM, nil)
+	getReq := httptest.NewRequest(http.MethodGet, "/"+bucket+"/x", nil)
+	getResponse := httptest.NewRecorder()
+	newHandlers.HandleRoot(getResponse, getReq)
+	if getResponse.Code != http.StatusOK {
+		t.Fatalf("GET x after rotation: status %d, body %s", getResponse.Code, getResponse.Body.String())
+	}
+	if got := getResponse.Body.Bytes(); !bytes.Equal(got, []byte("copied plaintext")) {
+		t.Fatalf("GET x after rotation = %q, want copied plaintext", got)
 	}
 }
 

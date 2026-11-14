@@ -57,14 +57,19 @@ type RotationState struct {
 	StartTime time.Time `json:"start_time"`
 	// LastUpdated is when the state was last updated
 	LastUpdated time.Time `json:"last_updated"`
-	// Status is the current status: "in_progress", "completed", "failed", or
-	// "interrupted" (the walk stopped on a cancelled context). The first two of
-	// those are resumable — see isResumableRotationStatus.
+	// Status is the current status: "in_progress", "completed",
+	// "completed_with_failures", "failed", or "interrupted" (the walk stopped
+	// on a cancelled context). Only in-progress and interrupted walks are
+	// resumable — see isResumableRotationStatus.
 	Status string `json:"status"`
 	// TotalObjects is the total number of objects to rotate
 	TotalObjects int `json:"total_objects"`
 	// ProcessedObjects is the number of objects processed so far
 	ProcessedObjects int `json:"processed_objects"`
+	// FailedObjects is the cumulative number of objects the rotation could not
+	// inspect or re-wrap. FailedKeys contains up to 100 of those keys.
+	FailedObjects int      `json:"failed_objects,omitempty"`
+	FailedKeys    []string `json:"failed_keys,omitempty"`
 	// LastKey is the last object key processed (for resumption)
 	LastKey string `json:"last_key"`
 	// ErrorMessage contains any error that occurred
@@ -76,6 +81,10 @@ type RotationResult struct {
 	TotalObjects     int `json:"total_objects"`
 	ProcessedObjects int `json:"processed_objects"`
 	SkippedObjects   int `json:"skipped_objects"`
+	// FailedObjects counts objects whose metadata could not be inspected or
+	// whose DEK could not be re-wrapped. FailedKeys is capped at 100 entries.
+	FailedObjects int      `json:"failed_objects"`
+	FailedKeys    []string `json:"failed_keys,omitempty"`
 	// Exceptions is the number of objects that could not be re-wrapped via
 	// CopyObject — currently objects larger than B2CopyObjectSizeCeiling.
 	// These are NOT counted in ProcessedObjects or SkippedObjects and are NOT
@@ -105,10 +114,6 @@ type KeyRotator struct {
 	// the legacy behavior of rotating every ARMOR object for direct callers of
 	// NewKeyRotator.
 	targetKeyID string
-	// idx is the manifest index used to skip HeadObject calls during rotation.
-	// May be nil when the manifest is disabled or unavailable.
-	idx *manifest.Index
-
 	// keyPrefix is the ADR-001 shared-bucket prefix (normalized, trailing
 	// slash). The backend does not apply it — callers pass prefixed keys — so
 	// the rotator composes it into its own internal keys: rotation state
@@ -123,17 +128,17 @@ type KeyRotator struct {
 	statePath string // <keyPrefix>.armor/rotation-state.json
 }
 
-// NewKeyRotator creates a new key rotator. idx may be nil if the manifest
-// index is not available; rotation falls back to per-object HeadObject calls.
-func NewKeyRotator(b backend.Backend, bucket string, oldMEK, newMEK []byte, idx *manifest.Index) *KeyRotator {
-	return newKeyRotator(b, bucket, "", oldMEK, newMEK, nil, idx)
+// NewKeyRotator creates a new key rotator. idx is retained for source
+// compatibility; rotation reads the wrapped DEK from live object metadata
+// because manifest entries can be stale.
+func NewKeyRotator(b backend.Backend, bucket string, oldMEK, newMEK []byte, _ *manifest.Index) *KeyRotator {
+	return newKeyRotator(b, bucket, "", oldMEK, newMEK, nil)
 }
 
 // NewFingerprintRotator creates a rotator that re-wraps objects to the active
-// key's fingerprint. It walks the bucket (manifest first, HeadObject fallback)
-// and re-wraps only objects whose fingerprint ≠ the active key's fingerprint.
-// This is the new recommended rotation method.
-func NewFingerprintRotator(b backend.Backend, bucket, keyID string, activeMEK []byte, oldRing []keymanager.RingKeyEntry, idx *manifest.Index) *KeyRotator {
+// key's fingerprint. It reads each object's current metadata because manifest
+// entries can be stale. idx is retained for source compatibility.
+func NewFingerprintRotator(b backend.Backend, bucket, keyID string, activeMEK []byte, oldRing []keymanager.RingKeyEntry, _ *manifest.Index) *KeyRotator {
 	if keyID == "" {
 		keyID = "default"
 	}
@@ -145,12 +150,11 @@ func NewFingerprintRotator(b backend.Backend, bucket, keyID string, activeMEK []
 		oldRing:           oldRing,
 		targetFingerprint: crypto.MEKFingerprint(activeMEK),
 		targetKeyID:       keyID,
-		idx:               idx,
 		statePath:         ".armor/rotation-state.json",
 	}
 }
 
-func newKeyRotator(b backend.Backend, bucket, targetKeyID string, oldMEK, newMEK []byte, oldRing []keymanager.RingKeyEntry, idx *manifest.Index) *KeyRotator {
+func newKeyRotator(b backend.Backend, bucket, targetKeyID string, oldMEK, newMEK []byte, oldRing []keymanager.RingKeyEntry) *KeyRotator {
 	return &KeyRotator{
 		backend:     b,
 		bucket:      bucket,
@@ -158,7 +162,6 @@ func newKeyRotator(b backend.Backend, bucket, targetKeyID string, oldMEK, newMEK
 		newMEK:      newMEK,
 		oldRing:     oldRing,
 		targetKeyID: targetKeyID,
-		idx:         idx,
 		statePath:   ".armor/rotation-state.json",
 	}
 }
@@ -207,6 +210,8 @@ func (kr *KeyRotator) Rotate(ctx context.Context) (*RotationResult, error) {
 	kr.state.Status = "in_progress"
 	kr.state.LastUpdated = startTime
 	processedSoFar := kr.state.ProcessedObjects
+	failedSoFar := kr.state.FailedObjects
+	failedKeysSoFar := append([]string(nil), kr.state.FailedKeys...)
 	kr.stateMu.Unlock()
 
 	// Save initial state
@@ -219,6 +224,8 @@ func (kr *KeyRotator) Rotate(ctx context.Context) (*RotationResult, error) {
 		// Cumulative across runs: a resumed rotation reports every object
 		// re-wrapped so far, matching RotationState.ProcessedObjects.
 		ProcessedObjects: processedSoFar,
+		FailedObjects:    failedSoFar,
+		FailedKeys:       failedKeysSoFar,
 	}
 
 	// Count total objects first
@@ -288,8 +295,12 @@ func (kr *KeyRotator) Rotate(ctx context.Context) (*RotationResult, error) {
 				// safe when a bucket contains objects owned by other MEKs.
 				rawMeta, err = kr.objectMetadata(ctx, obj)
 				if err != nil {
+					if isRotationContextError(ctx, err) {
+						return kr.abortInterrupted(result, rotationContextCause(ctx, err), startTime)
+					}
 					log.Printf("Warning: failed to inspect object %s: %v", obj.Key, err)
-					result.SkippedObjects++
+					kr.recordObjectFailure(result, obj.Key)
+					kr.checkpointState(obj.Key, false)
 					continue
 				}
 				armorMeta, ok := backend.ParseARMORMetadata(rawMeta)
@@ -336,11 +347,13 @@ func (kr *KeyRotator) Rotate(ctx context.Context) (*RotationResult, error) {
 				// failure: the re-wrap did not happen, so LastKey must not
 				// advance past it or a resumed rotation would skip an object
 				// that is still old-wrapped. Stop here as interrupted.
-				if ctxErr := ctx.Err(); ctxErr != nil {
-					return kr.abortInterrupted(result, ctxErr, startTime)
+				if isRotationContextError(ctx, err) {
+					return kr.abortInterrupted(result, rotationContextCause(ctx, err), startTime)
 				}
 				log.Printf("Warning: failed to rotate key for %s: %v", obj.Key, err)
-				// Continue with other objects - rotation is best-effort
+				kr.recordObjectFailure(result, obj.Key)
+				kr.checkpointState(obj.Key, false)
+				continue
 			}
 
 			result.ProcessedObjects++
@@ -359,6 +372,9 @@ func (kr *KeyRotator) Rotate(ctx context.Context) (*RotationResult, error) {
 	// Mark rotation as complete
 	kr.stateMu.Lock()
 	kr.state.Status = "completed"
+	if result.FailedObjects > 0 {
+		kr.state.Status = "completed_with_failures"
+	}
 	kr.state.LastUpdated = time.Now()
 	kr.stateMu.Unlock()
 
@@ -368,7 +384,7 @@ func (kr *KeyRotator) Rotate(ctx context.Context) (*RotationResult, error) {
 
 	result.TotalObjects = kr.state.TotalObjects
 	result.Duration = time.Since(startTime)
-	result.Status = "completed"
+	result.Status = kr.state.Status
 
 	return result, nil
 }
@@ -421,12 +437,10 @@ func (kr *KeyRotator) rotateObjectWithMetadata(ctx context.Context, obj backend.
 		return ErrAlreadyUsingActiveKey
 	}
 
-	// Resolve the current wrapped DEK. Prefer the manifest fast-path (avoids
-	// re-parsing headers); fall back to parsing the raw metadata.
-	oldWrappedDEK := kr.wrappedDEKFromManifest(obj.Key)
-	if oldWrappedDEK == nil {
-		oldWrappedDEK = armorMeta.WrappedDEK
-	}
+	// The manifest index is a lossy cache and may refer to an earlier object
+	// generation at this key (for example after CopyObject overwrites it). Use
+	// the wrapped DEK from the live metadata fetched for this exact object.
+	oldWrappedDEK := armorMeta.WrappedDEK
 
 	// Unwrap DEK with fingerprint-based lookup
 	// For fingerprint-based rotation, we use the ring keys to unwrap
@@ -530,22 +544,39 @@ func (kr *KeyRotator) objectMetadata(ctx context.Context, obj backend.ObjectInfo
 	return info.Metadata, nil
 }
 
-// wrappedDEKFromManifest returns the wrapped DEK for the object from the
-// in-memory manifest index, or nil if the manifest is disabled or has no entry.
-func (kr *KeyRotator) wrappedDEKFromManifest(key string) []byte {
-	if kr.idx == nil {
-		return nil
+const maxRotationFailedKeys = 100
+
+// recordObjectFailure counts a failed object and captures a bounded sample of
+// keys in both the response and resumable state.
+func (kr *KeyRotator) recordObjectFailure(result *RotationResult, key string) {
+	result.FailedObjects++
+	if len(result.FailedKeys) < maxRotationFailedKeys {
+		result.FailedKeys = append(result.FailedKeys, key)
 	}
-	if entry, ok := kr.idx.Get(kr.bucket, key); ok {
-		return entry.WrappedDEK
+
+	kr.stateMu.Lock()
+	kr.state.FailedObjects++
+	if len(kr.state.FailedKeys) < maxRotationFailedKeys {
+		kr.state.FailedKeys = append(kr.state.FailedKeys, key)
 	}
-	return nil
+	kr.stateMu.Unlock()
+}
+
+func isRotationContextError(ctx context.Context, err error) bool {
+	return ctx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
+}
+
+func rotationContextCause(ctx context.Context, err error) error {
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return ctxErr
+	}
+	return err
 }
 
 // checkpointState advances LastKey to key and persists the rotation state.
 //
 // It runs after every object the walk has moved past — a completed re-wrap, an
-// already-active-fingerprint skip, or an oversized exception — so the persisted
+// already-active-fingerprint skip, a recorded failure, or an oversized exception — so the persisted
 // LastKey is always a true resume point. Persisting per object replaces the old
 // every-100-objects cadence, which threw away up to 99 completed re-wraps on a
 // kill. The cost is one small state Put per object, negligible next to the
@@ -592,10 +623,9 @@ func (kr *KeyRotator) abortInterrupted(result *RotationResult, cause error, star
 // isResumableRotationStatus reports whether a persisted rotation state may be
 // adopted by a later invocation. "in_progress" means the process died before it
 // could record an outcome; "interrupted" means the walk stopped on a cancelled
-// context. Both leave a LastKey that is a valid resume point. "completed" and
-// "failed" are deliberately not resumable: the first is finished, and the second
-// is an operator-visible terminal condition rather than one to silently resume
-// past.
+// context. Both leave a LastKey that is a valid resume point. "completed",
+// "completed_with_failures", and "failed" are deliberately not resumable: they
+// are terminal states rather than ones to silently resume past.
 func isResumableRotationStatus(status string) bool {
 	return status == "in_progress" || status == "interrupted"
 }

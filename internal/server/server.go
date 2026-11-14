@@ -977,7 +977,16 @@ func (s *Server) rotateKey(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
+	// A walk that finished but could not inspect or re-wrap some objects is
+	// not a success: it reports status "completed_with_failures" and the
+	// endpoint returns 500 with the full result so automation cannot mistake
+	// it for a rotation safe to retire a key on. See
+	// docs/key-rotation-runbook.md — retirement requires failed_objects == 0.
+	status := http.StatusOK
+	if result.FailedObjects > 0 {
+		status = http.StatusInternalServerError
+	}
+	w.WriteHeader(status)
 	json.NewEncoder(w).Encode(result)
 }
 
