@@ -28,6 +28,16 @@ func (h *Handlers) GetObject(w http.ResponseWriter, r *http.Request, bucket, key
 	// Apply prefix for backend operations
 	prefixedKey := h.applyPrefix(key)
 
+	// The manifest object itself (ADR-016) is ARMOR bookkeeping: a stored
+	// metadata JSON document, not encrypted payload. Serve it as an opaque
+	// passthrough — its body is plaintext JSON, so the decrypt path would
+	// fail on it (armor-9a58cd90), and probing for a manifest of the
+	// manifest would waste a round trip.
+	if strings.HasSuffix(key, manifestSuffix) {
+		h.serveManifestObject(w, r, bucket, key, prefixedKey)
+		return
+	}
+
 	// ADR-016: Try manifest first for multipart objects
 	var info *backend.ObjectInfo
 	var err error
@@ -35,6 +45,12 @@ func (h *Handlers) GetObject(w http.ResponseWriter, r *http.Request, bucket, key
 	// manifest path; on the legacy path info itself is the stored HEAD.
 	var ciphertextInfo *backend.ObjectInfo
 	var headErr error
+	// manifestOverwritten marks a manifest whose ciphertext was replaced by
+	// a newer self-describing single-PUT object (a plain PUT over a
+	// completed multipart upload); the read falls through to the legacy
+	// path instead of rejecting every read forever.
+	manifestOverwritten := false
+	fromManifest := false
 
 	// The manifest probe decides which object is served, but for every
 	// single-PUT object it is a miss that used to cost one full sequential
@@ -93,7 +109,19 @@ func (h *Handlers) GetObject(w http.ResponseWriter, r *http.Request, bucket, key
 		// same ciphertext object. The check is still performed on every
 		// request — nothing is cached or skipped here.
 		ciphertextInfo, headErr = h.headCiphertextForFreshness(ctx, bucket, manifestBody.CiphertextObject, manifestMeta[metaCompletedAt])
-		if headErr != nil {
+		// The self-describing check is deliberately OUTSIDE the freshness
+		// error branch: the timestamp gate truncates to whole seconds (B2
+		// precision), so a plain PUT landing in the same second as the
+		// multipart completion passes the gate while the manifest still
+		// describes the replaced generation — the read then pairs stale
+		// multipart metadata with the new stored object and fails on the
+		// sidecar size check (armor-9a58cd90). Inline ARMOR metadata on the
+		// ciphertext is authoritative regardless of timestamps: multipart
+		// ciphertext never carries it, so its presence proves the stored
+		// object is a self-describing single-PUT generation this manifest
+		// does not describe.
+		selfDescribing := ciphertextIsSelfDescribing(ciphertextInfo)
+		if headErr != nil && !selfDescribing {
 			var freshErr *ciphertextFreshnessError
 			if errors.As(headErr, &freshErr) {
 				// Retryable by design: an in-progress ADR-016 overwrite
@@ -102,36 +130,48 @@ func (h *Handlers) GetObject(w http.ResponseWriter, r *http.Request, bucket, key
 				// endpoints named in the message — the ones operators grep
 				// for during exactly this outage.
 				h.writeError(w, r, "InternalError", fmt.Sprintf("manifest verification failed; operator repair or quarantine is required: %v", freshErr.err), 500)
-			} else {
-				h.writeBackendError(w, r, "InternalError", fmt.Sprintf("Failed to head ciphertext object: %v", headErr), 500, headErr)
+				return
 			}
+			h.writeBackendError(w, r, "InternalError", fmt.Sprintf("Failed to head ciphertext object: %v", headErr), 500, headErr)
 			return
 		}
-
-		// Parse ARMOR metadata from manifest
-		armorMeta, ok := backend.ParseARMORMetadata(manifestMeta)
-		if !ok {
-			h.writeError(w, r, "InternalError", "Failed to parse ARMOR metadata from manifest", 500)
-			return
+		if selfDescribing {
+			// The ciphertext was replaced by a plain PutObject after this
+			// manifest was written (armor-9a58cd90) — either detected by the
+			// freshness gate above or missed by its second-precision
+			// truncation. Serve the replaced generation through the legacy
+			// path instead of failing the read or pairing the stale manifest
+			// with an object it does not describe.
+			manifestOverwritten = true
 		}
 
-		// Set info from manifest metadata
-		info = &backend.ObjectInfo{
-			Key:              manifestBody.CiphertextObject,
-			Size:             armorMeta.PlaintextSize,
-			StoredSize:       ciphertextInfo.StoredSize,
-			ContentType:      armorMeta.ContentType,
-			ETag:             armorMeta.ETag,
-			LastModified:     ciphertextInfo.LastModified,
-			Metadata:         manifestMeta,
-			IsARMOREncrypted: true,
-		}
-		// Warm the metadata cache for ListObjectsV2 size resolution, bound to
-		// the stored ciphertext generation the freshness HEAD just observed.
-		h.cache.SetVersioned(bucket, key, ciphertextInfo.ETag, armorMeta)
+		if !manifestOverwritten {
+			fromManifest = true
+			// Parse ARMOR metadata from manifest
+			armorMeta, ok := backend.ParseARMORMetadata(manifestMeta)
+			if !ok {
+				h.writeError(w, r, "InternalError", "Failed to parse ARMOR metadata from manifest", 500)
+				return
+			}
 
-		// Override prefixedKey to point to ciphertext object
-		prefixedKey = manifestBody.CiphertextObject
+			// Set info from manifest metadata
+			info = &backend.ObjectInfo{
+				Key:              manifestBody.CiphertextObject,
+				Size:             armorMeta.PlaintextSize,
+				StoredSize:       ciphertextInfo.StoredSize,
+				ContentType:      armorMeta.ContentType,
+				ETag:             armorMeta.ETag,
+				LastModified:     ciphertextInfo.LastModified,
+				Metadata:         manifestMeta,
+				IsARMOREncrypted: true,
+			}
+			// Warm the metadata cache for ListObjectsV2 size resolution, bound to
+			// the stored ciphertext generation the freshness HEAD just observed.
+			h.cache.SetVersioned(bucket, key, ciphertextInfo.ETag, armorMeta)
+
+			// Override prefixedKey to point to ciphertext object
+			prefixedKey = manifestBody.CiphertextObject
+		}
 	} else {
 		// Legacy path: no manifest, so the overlapped HEAD's result IS the
 		// decision input — wait for it here instead of issuing a second,
@@ -147,6 +187,14 @@ func (h *Handlers) GetObject(w http.ResponseWriter, r *http.Request, bucket, key
 				h.cache.SetVersioned(bucket, key, info.ETag, am)
 			}
 		}
+	}
+	if manifestOverwritten {
+		// Legacy serving of the replaced generation: use the authoritative
+		// ciphertext HEAD already in hand (it heads the same stored key the
+		// overlapped probe heads) and drain the probe's buffered result so
+		// the goroutine always exits.
+		<-legacyHeadCh
+		info, err = ciphertextInfo, nil
 	}
 
 	if err != nil && info == nil {
@@ -454,8 +502,15 @@ func (h *Handlers) GetObject(w http.ResponseWriter, r *http.Request, bucket, key
 	// metadata, and S3 clients expect x-amz-meta-* on GetObject responses.
 	// info.Metadata is the authoritative source on both paths: the manifest
 	// path set it to the manifest object's headers, the legacy path to the
-	// stored ciphertext's.
-	writeUserMetadataHeaders(w, info.Metadata)
+	// stored ciphertext's. On the manifest path the metadata truth is the
+	// ADR-016 manifest, so the descriptive x-amz-meta-armor-* fields echo
+	// too (crypto material stays private — writeStoredMetadataHeaders);
+	// single-PUT legacy objects keep the armor-private contract.
+	if fromManifest {
+		writeStoredMetadataHeaders(w, info.Metadata)
+	} else {
+		writeUserMetadataHeaders(w, info.Metadata)
+	}
 
 	// Uniform part size P for multipart objects written since bf-1v2ehf
 	// (x-amz-meta-armor-part-size). The full-object stream path needs it to
@@ -518,6 +573,65 @@ func (h *Handlers) GetObject(w http.ResponseWriter, r *http.Request, bucket, key
 		h.handleV3MultipartGet(w, r, bucket, key, prefixedKey, decryptor, armorMeta, plaintextSize, info.LastModified)
 	} else {
 		h.handleFullObjectStream(w, r, bucket, key, decryptor, armorMeta, plaintextSize, info.LastModified, isMultipart, multipartPartSize, isNonUniform, cumulativePartSizes, envelopeHeader, storedGen, singleFetchEnvelope)
+	}
+}
+
+// serveManifestObject serves the ADR-016 manifest object itself
+// (<key>.armor-manifest) as an opaque passthrough. The manifest is a stored
+// metadata JSON document, never encrypted payload, so the response carries
+// the stored bytes with the stored headers; its descriptive x-amz-meta-armor-*
+// fields echo so clients can inspect how the described object is armored
+// (crypto material stays private — writeStoredMetadataHeaders).
+func (h *Handlers) serveManifestObject(w http.ResponseWriter, r *http.Request, bucket, key, prefixedKey string) {
+	ctx := r.Context()
+
+	info, err := h.backend.Head(ctx, bucket, prefixedKey)
+	if err != nil {
+		code, message, status := backendFailureResponse(err)
+		h.writeBackendError(w, r, code, message, status, err)
+		return
+	}
+
+	if status := checkConditionalRequest(r, info.ETag, info.LastModified); status != 0 {
+		if status == http.StatusNotModified {
+			w.Header().Set("ETag", fmt.Sprintf(`"%s"`, info.ETag))
+			w.Header().Set("Last-Modified", info.LastModified.UTC().Format(http.TimeFormat))
+			w.WriteHeader(status)
+		} else {
+			h.writeError(w, r, "PreconditionFailed", "Precondition failed", status)
+		}
+		return
+	}
+
+	if r.Method == http.MethodHead {
+		// StoredSize, not Size: both backends rewrite Size to the described
+		// object's plaintext size for metadata carrying armor-version, which
+		// the manifest object's own metadata does (see HeadObject's branch).
+		w.Header().Set("Content-Length", strconv.FormatInt(info.StoredSize, 10))
+		w.Header().Set("Content-Type", info.ContentType)
+		w.Header().Set("ETag", fmt.Sprintf(`"%s"`, info.ETag))
+		w.Header().Set("Accept-Ranges", "bytes")
+		w.Header().Set("Last-Modified", info.LastModified.UTC().Format(http.TimeFormat))
+		writeStoredMetadataHeaders(w, info.Metadata)
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
+	body, _, err := h.backend.Get(ctx, bucket, prefixedKey)
+	if err != nil {
+		h.writeBackendError(w, r, "InternalError", fmt.Sprintf("Failed to get object: %v", err), 500, err)
+		return
+	}
+	defer body.Close()
+
+	w.Header().Set("Content-Length", strconv.FormatInt(info.Size, 10))
+	w.Header().Set("Content-Type", info.ContentType)
+	w.Header().Set("ETag", fmt.Sprintf(`"%s"`, info.ETag))
+	w.Header().Set("Last-Modified", info.LastModified.UTC().Format(http.TimeFormat))
+	writeStoredMetadataHeaders(w, info.Metadata)
+	w.WriteHeader(http.StatusOK)
+	if _, err := io.Copy(w, body); err != nil {
+		log.Printf("GET %s/%s: manifest object streaming error: %v", bucket, key, err)
 	}
 }
 

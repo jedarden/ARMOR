@@ -64,8 +64,11 @@ type ManifestRecorder interface {
 	// RecordPut records a successful PutObject or CompleteMultipartUpload.
 	// chainEntry is the provenance chain entry to embed in the delta line.
 	// May be nil if provenance is disabled for this key. userMetadata is the
-	// client-supplied x-amz-meta-* subset (ARMOR's reserved namespace
-	// excluded) that HeadObject's index fast path serves back.
+	// x-amz-meta-* subset that HeadObject's index fast path serves back: the
+	// client-supplied keys (ARMOR's reserved namespace excluded) for
+	// single-PUT objects, and ARMOR's descriptive fields in addition for
+	// multipart completions (armorDescriptiveMetadata — crypto material
+	// excluded), so the fast path agrees with the manifest read path.
 	RecordPut(bucket, key string, size int64, sha256Hex string, iv, wrappedDEK []byte, mekFingerprint string, blockSize int, contentType, etag string, chainEntry *manifest.ChainEntry, ciphertextSize int64, userMetadata map[string]string)
 	// RecordDelete records a successful DeleteObject.
 	RecordDelete(bucket, key string)
@@ -456,6 +459,61 @@ func writeUserMetadataHeaders(w http.ResponseWriter, metadata map[string]string)
 			w.Header().Set(lowerKey, value)
 		}
 	}
+}
+
+// armorCryptoMetadataKeys are the ARMOR metadata fields that carry decryption
+// material: the IV, the wrapped DEK (which embeds the MEK fingerprint), and
+// the key ID that selects the MEK. They stay private to the proxy on every
+// S3 response; a client never needs them to read an object, and echoing
+// them would hand the envelope's key material to anyone with read access.
+// Client-supplied x-amz-meta-armor-* keys cannot collide with these: the
+// request-side filters (userMetadata, clientMetadata) already exclude the
+// whole armor- namespace from stored client metadata.
+var armorCryptoMetadataKeys = map[string]bool{
+	"x-amz-meta-armor-iv":          true,
+	"x-amz-meta-armor-wrapped-dek": true,
+	"x-amz-meta-armor-key-id":      true,
+}
+
+// armorDescriptiveMetadata returns the x-amz-meta-* subset of a stored
+// metadata map that is safe to echo on an S3 response: the client-visible
+// user metadata plus ARMOR's descriptive fields (version, sizes, digest,
+// etag, multipart/part bookkeeping), with the crypto-material fields
+// (armorCryptoMetadataKeys) withheld. This is the metadata contract for
+// objects whose metadata truth lives in an ADR-016 manifest: HEAD and GET
+// of the logical object and of the manifest object itself expose the
+// descriptive fields so clients can see how an object is armored, without
+// exposing how to decrypt it.
+func armorDescriptiveMetadata(metadata map[string]string) map[string]string {
+	filtered := make(map[string]string, len(metadata))
+	for key, value := range metadata {
+		lowerKey := strings.ToLower(key)
+		if strings.HasPrefix(lowerKey, "x-amz-meta-") && !armorCryptoMetadataKeys[lowerKey] {
+			filtered[lowerKey] = value
+		}
+	}
+	return filtered
+}
+
+// writeStoredMetadataHeaders writes a stored object's echoable metadata —
+// armorDescriptiveMetadata — as response headers. Use it wherever the
+// response describes an ADR-016 manifest-backed object or a manifest object
+// itself; writeUserMetadataHeaders stays the contract for single-PUT
+// objects, whose envelope carries everything internally.
+func writeStoredMetadataHeaders(w http.ResponseWriter, metadata map[string]string) {
+	for key, value := range armorDescriptiveMetadata(metadata) {
+		w.Header().Set(key, value)
+	}
+}
+
+// ciphertextIsSelfDescribing reports whether a stored object carries its
+// ARMOR metadata inline, i.e. it was written by a plain PutObject rather
+// than assembled by CompleteMultipartUpload (whose ciphertext object never
+// carries metadata — ADR-016). Such an object is newer than any manifest
+// beside it and describes itself, so a stale manifest is no reason to
+// reject a read.
+func ciphertextIsSelfDescribing(info *backend.ObjectInfo) bool {
+	return info != nil && info.Metadata["x-amz-meta-armor-wrapped-dek"] != ""
 }
 
 // backendFailureResponse maps a backend Head/Get failure to the S3 error
