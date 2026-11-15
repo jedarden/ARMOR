@@ -1,6 +1,6 @@
 # Release status and known limitations
 
-**Status date:** 2026-11-13 · **Source version:** see [`VERSION`](../VERSION)
+**Status date:** 2026-11-15 · **Source version:** see [`VERSION`](../VERSION)
 
 This page is the evidence boundary for operator documentation. `repository-tested`
 means the current tree has focused passing tests, not proof of a published image
@@ -26,32 +26,48 @@ non-draft releases after the image appeared. GitOps commits `810b34733` and
 artifact checks do not prove a green end-to-end client gate or fleet rollout.
 The table identifies the last specific image proof where one is recorded.
 
-<!-- release: latest-green version: 0.1.2012 evidence: armor-8226b892 -->
-**`v0.1.2012`** (`76a80d623abd62b47601a6e8a4fa11d0cbdcf06b`) is the latest fully
-published, compat-green release. The repaired `armor-build-manual-cnfsq` run
-completed successfully at 2026-11-13T00:40Z after the go-test resource fix in
-declarative-config revision `80be9a652` (3 GiB memory request/limit and
-`GOMAXPROCS=4`). Its VictoriaLogs evidence query was
-`{cluster="iad-ci",namespace="argo-workflows"} kubernetes.pod_name:armor-build-manual-cnfsq`
-over the run window; the go-test pod completed without eviction and the final
-status pod posted `success` for the release revision. The real-client
-compatibility suite passed its AWS CLI, rclone, boto3, DuckDB/httpfs,
-litestream, and barman-cloud legs.
+<!-- release: latest-green version: 0.1.2013 evidence: armor-d3045e84 -->
+**`v0.1.2013`** (`e6d75023addda10fd5a059a9859a8a68cc6a8870`) is the latest fully
+published release, and the first since 0.1.2004 that is green on both
+release gates: the `armor-build` publication and the exact-SHA live-B2
+`armor-integration` run.
 
-The publisher created the Forgejo tag/release and mirrored GitHub release;
-`v0.1.2012` is present on `origin` and GitHub confirms the release is
-non-draft. Registry verification recorded these immutable manifests:
+`armor-build-j2hrn` ran 2026-11-15T03:44Z–04:20Z on the release commit and
+its final status pod posted `success` for it. Lint, the go-test leg, the four
+image builds and their registry checks all completed, and the real-client
+compatibility suite passed (`✓ Compatibility suite passed`). The VictoriaLogs
+evidence query is
+`{cluster="iad-ci",namespace="argo-workflows"} kubernetes.pod_name:armor-build-j2hrn`
+over that window.
+
+`armor-integration-manual-vlldd`, pinned to the same commit, finished at
+2026-11-15T03:57Z with `ok github.com/jedarden/armor/tests/integration` and
+`integration suite exit: 0`: 97 tests passed, none failed, 9 skipped by the
+workflow's documented `skip-tests` scope. This is the gate `armor-033dd376`
+tracked; 0.1.2006 through 0.1.2012 never passed it. The five failures that
+kept it red and their fixes are recorded on `armor-9a58cd90`.
+
+The publisher created the Forgejo tag and release and the mirrored GitHub
+release; `v0.1.2013` is present on `origin` at the release commit and GitHub
+reports the release as non-draft. The manifests pushed by the build are:
 
 | Image | Digest |
 |---|---|
-| `ronaldraygun/armor:0.1.2012` | `sha256:10d38bea6da5fd2123acaaab3e9dff047cd83edab407b8721726c8e13f22bfea` |
-| `ronaldraygun/armor-restore-verifier:0.1.2012` | `sha256:5ecdaccf85ce89a42931148b18a0dca7354792f82471311ac8752dfd0cad6cab` |
-| `ronaldraygun/armor-fleet:0.1.2012` | `sha256:727fda92c5a5e30233a8c3fb9573d203728e3a04c1d55eb25c907f51d99b95cd` |
-| `ghcr.io/jedarden/armor:0.1.2012` | `sha256:01581ac19e72429f91d2349c96acd959217ca92531e0e4fbb1335c10a4e213d5` |
+| `ronaldraygun/armor:0.1.2013` | `sha256:7e35bb42c9ece2c69a7be62aa40d27f39278422e9e491074135f923655a0cc16` |
+| `ronaldraygun/armor-restore-verifier:0.1.2013` | `sha256:f88fbb6a835d6fee55310cf1679c0bdea477fe54dbdec22184b390479b5a90e4` |
+| `ronaldraygun/armor-fleet:0.1.2013` | `sha256:23378d9cdddaecfb5448c9d049105ff9fc7be768f359b96918c60f556484baf9` |
+| `ghcr.io/jedarden/armor:0.1.2013` | `sha256:556541dac04c46adfff30fb02e9e2b5d829e5f30028ea27a02e6057c2164ad54` |
 
-The exact-SHA `armor-integration` decision remains owned by `armor-033dd376`;
-this release record covers the armor-build gate only. Consumers should pin by
-the recorded digests, not by tag alone.
+How each digest is known: all four are the digests the build's push steps
+reported, and the build's `verify-push` steps then found each tag in its
+registry. The server digest is also the one the compatibility suite pulled,
+and the GHCR digest was confirmed with an independent anonymous manifest
+read. The two private Docker Hub companion digests (`armor-restore-verifier`,
+`armor-fleet`) have no independent read beyond the build's own check.
+Consumers should pin by digest, not by tag alone.
+
+Nothing is deployed by this record. Every cluster still runs 0.1.2004; the
+rolls are `armor-80845beb` (iad-ci) and `armor-d2e8a35b` (the other fleets).
 
 ## Current release posture
 
