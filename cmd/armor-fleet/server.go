@@ -4,6 +4,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -16,6 +17,10 @@ import (
 
 	"github.com/jedarden/armor/internal/agentation"
 )
+
+// shutdownGrace is how long Run waits for in-flight requests after a stop
+// signal before closing the remaining connections.
+const shutdownGrace = 5 * time.Second
 
 // Server serves the fleet status HTTP endpoints.
 type Server struct {
@@ -53,12 +58,26 @@ func (s *Server) Run() error {
 
 	log.Println("Shutdown signal received")
 
-	// Graceful shutdown
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	// Graceful shutdown: in-flight requests get shutdownGrace to finish.
+	ctx, cancel := context.WithTimeout(context.Background(), shutdownGrace)
 	defer cancel()
 
 	if err := server.Shutdown(ctx); err != nil {
-		return fmt.Errorf("shutdown error: %w", err)
+		if !errors.Is(err, context.DeadlineExceeded) {
+			return fmt.Errorf("shutdown error: %w", err)
+		}
+		// The grace period ran out with connections still open. That is
+		// not a failed stop. Shutdown waits for every connection to go
+		// idle, and it only counts a connection that has never carried a
+		// request (a browser preconnect, a health dial) as idle once it is
+		// more than five seconds old — so one opened just before the
+		// signal always outlives a five-second grace. Close what is left
+		// and stop normally; reporting this as an error made a routine
+		// SIGTERM exit 1 (armor-a375f3f2).
+		log.Printf("Shutdown grace of %s elapsed with connections still open; closing them", shutdownGrace)
+		if err := server.Close(); err != nil {
+			return fmt.Errorf("shutdown error: %w", err)
+		}
 	}
 
 	log.Println("Server stopped")

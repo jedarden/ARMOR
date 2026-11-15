@@ -578,6 +578,20 @@ func TestFleetCLIReferenceStartupServesConsoleAndShutsDownCleanly(t *testing.T) 
 		}
 	}
 
+	// Hold a connection that never sends a request across the SIGTERM, the
+	// way a browser preconnect or a health dial does. http.Server.Shutdown
+	// does not count such a connection as idle until it is over five
+	// seconds old, so it used to outlive the five-second grace and turn a
+	// clean stop into "shutdown error: context deadline exceeded", exit 1.
+	// Whether the default transport left one behind was timing, which made
+	// this test fail under CI load (armor-verify-stwsl); holding one here
+	// makes the case deterministic (armor-a375f3f2).
+	unused, err := net.Dial("tcp", addr)
+	if err != nil {
+		t.Fatalf("open an unused connection to %s: %v", addr, err)
+	}
+	defer unused.Close()
+
 	// SIGTERM: the documented graceful shutdown, exit 0.
 	if err := cmd.Process.Signal(syscall.SIGTERM); err != nil {
 		t.Fatalf("send SIGTERM: %v", err)
