@@ -20,6 +20,21 @@ Entries before 0.1.1958 were written by hand on the Forgejo releases and are
 reproduced here; entries from 0.1.1958 on were reconstructed from git history
 on 2026-09-18 (bead armor-43ec803f).
 
+## 0.1.2013 (2026-11-15)
+
+- fix(fleet): a SIGTERM with an unused client connection is a clean stop, not exit 1 (armor-a375f3f2)
+- fix(handlers): serve manifest objects with the manifest content type on every backend (armor-e3aaf624)
+- fix(handlers): plaintext composite multipart ETag, redacted manifest reads (armor-e3aaf624, armor-dea98da8)
+- test(handlers): pin ListParts max-parts and part-number-marker paging (armor-57fbf566)
+- fix(handlers): gate the self-describing manifest fall-through on multipart manifests (armor-e3aaf624)
+- test(integration): land draft V3 multipart composite-ETag and sidecar clen-parse hunks (armor-e64ee5e4)
+- fix(handlers): apply S3 ListParts paging to the multipart state listing (armor-5233adab)
+- fix(handlers): serve manifest GET/HEAD passthrough and echo descriptive armor metadata (armor-429a7db2)
+- feat(backend): record per-part plaintext MD5s for composite multipart ETag (armor-3ad79b3d)
+- fix(rotation): count re-wrap failures and use live-metadata DEK (armor-7a5c1bae)
+- docs(release): align green evidence marker (armor-8226b892)
+- docs(release): record ARMOR 0.1.2012 green (armor-8226b892)
+
 ## 0.1.2012 (2026-11-12)
 
 - fix(server): de-flake ColdLoad degraded-floor Seq snapshot race (armor-6091b634)
