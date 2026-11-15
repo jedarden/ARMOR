@@ -235,7 +235,9 @@ a tool that drops object metadata).
 never its key material: the response headers omit `x-amz-meta-armor-iv`,
 `-wrapped-dek` and `-key-id`, and the body is the stored JSON with the same
 three keys removed from `metadata`. `Content-Length` and `ETag` describe the
-bytes served (the ETag is their MD5), so they differ from the stored object's.
+bytes served (the ETag is their MD5), so they differ from the stored object's,
+and `Content-Type` is always `application/x-armor-manifest+json` (B2 stores
+the object itself as `application/octet-stream`).
 An object at a `*.armor-manifest` key that does not parse as a manifest is
 refused with a 500 rather than passed through. Reads of the logical object
 itself carry the client's own `x-amz-meta-*` only: a multipart object reads

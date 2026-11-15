@@ -642,7 +642,12 @@ func (h *Handlers) serveManifestObject(w http.ResponseWriter, r *http.Request, b
 	}
 
 	w.Header().Set("Content-Length", strconv.Itoa(len(served)))
-	w.Header().Set("Content-Type", info.ContentType)
+	// The body parsed as a manifest, so it is served as one. The stored
+	// Content-Type is not usable: the B2 backend carries the type handed to
+	// Put as user metadata and stores every object as
+	// application/octet-stream, which is what a client saw on B2 while the
+	// filesystem backend returned the manifest type.
+	w.Header().Set("Content-Type", manifestContentType)
 	w.Header().Set("ETag", fmt.Sprintf(`"%s"`, etag))
 	w.Header().Set("Last-Modified", info.LastModified.UTC().Format(http.TimeFormat))
 	writeStoredMetadataHeaders(w, info.Metadata)

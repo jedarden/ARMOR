@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"encoding/xml"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -271,6 +272,44 @@ func TestCompletedMultipartContractUnderPrefix(t *testing.T) {
 		}
 		if _, ok := backend.ParseARMORMetadata(stored.Metadata); !ok {
 			t.Errorf("stored manifest body no longer parses as ARMOR metadata; keys: %d", len(stored.Metadata))
+		}
+	})
+
+	t.Run("manifest Content-Type does not depend on what the backend stored", func(t *testing.T) {
+		// B2 stores every object as application/octet-stream (the type
+		// handed to Put travels as user metadata), so on B2 the manifest
+		// used to be served with that type. Reproduce it by re-storing the
+		// manifest the way B2 reports it.
+		storedKey := contractPrefix + key + ".armor-manifest"
+		body, info, err := fs.Get(t.Context(), bucket, storedKey)
+		if err != nil {
+			t.Fatalf("backend Get manifest: %v", err)
+		}
+		raw, err := io.ReadAll(body)
+		body.Close()
+		if err != nil {
+			t.Fatalf("read stored manifest: %v", err)
+		}
+		meta := make(map[string]string, len(info.Metadata))
+		for k, v := range info.Metadata {
+			meta[k] = v
+		}
+		meta["Content-Type"] = "application/octet-stream"
+		if err := fs.Put(t.Context(), bucket, storedKey, bytes.NewReader(raw), int64(len(raw)), meta); err != nil {
+			t.Fatalf("backend Put manifest: %v", err)
+		}
+		for _, method := range []string{http.MethodHead, http.MethodGet} {
+			w := contractDo(h, method, manifestPath)
+			if w.Code != http.StatusOK {
+				t.Fatalf("manifest %s: status %d: %s", method, w.Code, w.Body.String())
+			}
+			if got := w.Header().Get("Content-Type"); got != "application/x-armor-manifest+json" {
+				t.Errorf("manifest %s Content-Type = %q with an octet-stream stored type", method, got)
+			}
+		}
+		// The object itself must still read correctly from that manifest.
+		if w := contractDo(h, http.MethodGet, objectPath); w.Code != http.StatusOK || !bytes.Equal(w.Body.Bytes(), plaintext) {
+			t.Errorf("GET object after re-storing its manifest: status %d, %d bytes", w.Code, w.Body.Len())
 		}
 	})
 
