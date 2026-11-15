@@ -97,21 +97,21 @@ func TestMultipartManifestCreation(t *testing.T) {
 	}
 
 	// Verify manifest metadata contains ARMOR fields
-	if headManifestResp.Metadata["Armor-Version"] == "" {
+	if headManifestResp.Metadata["armor-version"] == "" {
 		t.Error("Manifest missing x-amz-meta-armor-version")
 	}
-	if headManifestResp.Metadata["Armor-Ciphertext-Ref"] == "" {
+	if headManifestResp.Metadata["armor-ciphertext-ref"] == "" {
 		t.Error("Manifest missing x-amz-meta-armor-ciphertext-ref")
 	}
-	if headManifestResp.Metadata["Armor-Completed-At"] == "" {
+	if headManifestResp.Metadata["armor-completed-at"] == "" {
 		t.Error("Manifest missing x-amz-meta-armor-completed-at")
 	}
-	if headManifestResp.Metadata["Armor-Multipart"] != "true" {
+	if headManifestResp.Metadata["armor-multipart"] != "true" {
 		t.Error("Manifest missing x-amz-meta-armor-multipart flag")
 	}
 
 	// Verify ciphertext reference points to the correct object
-	ciphertextRef := headManifestResp.Metadata["Armor-Ciphertext-Ref"]
+	ciphertextRef := headManifestResp.Metadata["armor-ciphertext-ref"]
 	t.Logf("Manifest ciphertext-ref: %s", ciphertextRef)
 
 	// Read manifest body to verify JSON structure
@@ -165,9 +165,18 @@ func TestMultipartManifestCreation(t *testing.T) {
 
 	t.Logf("Ciphertext object size: %d", getCipherResp.ContentLength)
 
-	// Verify ciphertext object has NO ARMOR metadata (it should be opaque encrypted data)
-	if getCipherResp.Metadata["Armor-Version"] != "" {
-		t.Error("Ciphertext object should not have x-amz-meta-armor-version (metadata should be in manifest only)")
+	// The object read through ARMOR carries no ARMOR metadata: the format
+	// facts are on the manifest object only.
+	requireNoArmorMetadata(t, "GetObject of a completed multipart object", getCipherResp.Metadata)
+
+	// The manifest body served to a client never contains key material.
+	for _, private := range []string{"x-amz-meta-armor-iv", "x-amz-meta-armor-wrapped-dek", "x-amz-meta-armor-key-id"} {
+		if _, leaked := manifestBody.Metadata[private]; leaked {
+			t.Errorf("Manifest body exposes %s; key material must stay private", private)
+		}
+	}
+	if manifestBody.Metadata["x-amz-meta-armor-version"] == "" {
+		t.Error("Manifest body metadata missing x-amz-meta-armor-version")
 	}
 }
 
@@ -343,7 +352,7 @@ func TestMultipartManifestLargeObject(t *testing.T) {
 		t.Fatalf("Manifest object not found: %v", err)
 	}
 
-	t.Logf("Manifest exists for %s-byte object", headManifestResp.Metadata["Armor-Plaintext-Size"])
+	t.Logf("Manifest exists for %s-byte object", headManifestResp.Metadata["armor-plaintext-size"])
 
 	// Verify the object can be read back
 	getResp, err := client.GetObject(ctx, &s3.GetObjectInput{

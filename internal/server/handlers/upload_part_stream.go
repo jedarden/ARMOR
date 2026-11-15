@@ -3,6 +3,7 @@ package handlers
 import (
 	"bytes"
 	"context"
+	"crypto/md5"
 	"crypto/sha256"
 	"errors"
 	"fmt"
@@ -18,10 +19,11 @@ import (
 // the shared buffer pool; unknown or larger lengths spill to a temp file, so
 // resident memory per spilled part is the copy buffer, not the part.
 type uploadPartSource struct {
-	reader  io.ReadSeeker
-	size    int64
-	digest  [sha256.Size]byte
-	release func()
+	reader    io.ReadSeeker
+	size      int64
+	digest    [sha256.Size]byte
+	md5Digest [md5.Size]byte
+	release   func()
 }
 
 // partMemoryBudget bounds the aggregate plaintext bytes concurrent v3
@@ -124,9 +126,10 @@ func readUploadPartBodySeekable(ctx context.Context, body io.Reader, contentLeng
 			return nil, err
 		}
 		src := &uploadPartSource{
-			reader: bytes.NewReader(data),
-			size:   int64(len(data)),
-			digest: digest,
+			reader:    bytes.NewReader(data),
+			size:      int64(len(data)),
+			digest:    digest,
+			md5Digest: md5.Sum(data),
 		}
 		src.release = func() {
 			releaseBody()
@@ -146,7 +149,9 @@ func spoolUploadPartBody(body io.Reader, contentLength int64) (*uploadPartSource
 	if candidate, ok := body.(uploadPartDigestSource); ok && candidate.CanVerifyPayloadSHA256() {
 		source = candidate
 	}
+	var md5Digest [md5.Size]byte
 	hasher := sha256.New()
+	md5Hasher := md5.New()
 	reader := body
 	if source == nil {
 		reader = io.TeeReader(body, hasher)
@@ -155,7 +160,12 @@ func spoolUploadPartBody(body io.Reader, contentLength int64) (*uploadPartSource
 	if err != nil {
 		return nil, fmt.Errorf("create part spool: %w", err)
 	}
-	size, err := io.Copy(f, reader)
+	size, err := io.Copy(io.MultiWriter(f, md5Hasher), reader)
+	if err == nil {
+		var md5Sum [md5.Size]byte
+		md5Hasher.Sum(md5Sum[:0])
+		md5Digest = md5Sum
+	}
 	if err == nil && contentLength >= 0 && size != contentLength {
 		err = fmt.Errorf("request body is shorter than Content-Length")
 	}
@@ -177,7 +187,7 @@ func spoolUploadPartBody(body io.Reader, contentLength int64) (*uploadPartSource
 		}
 		if err == nil {
 			name := f.Name()
-			src := &uploadPartSource{reader: f, size: size, digest: digest}
+			src := &uploadPartSource{reader: f, size: size, digest: digest, md5Digest: md5Digest}
 			src.release = func() {
 				f.Close()
 				os.Remove(name)

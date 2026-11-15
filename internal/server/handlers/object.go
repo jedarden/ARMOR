@@ -22,39 +22,12 @@ func (h *Handlers) HeadObject(w http.ResponseWriter, r *http.Request, bucket, ke
 	ctx := r.Context()
 	prefixedKey := h.applyPrefix(key)
 
-	// The ADR-016 manifest object itself: serve the stored object's own
-	// headers (stored size, content type, etag) plus its descriptive
-	// x-amz-meta-armor-* metadata — crypto material stays private. The
-	// manifest is bookkeeping, not encrypted payload, so the manifest probe
-	// and the ARMOR parse below would describe the wrong object entirely.
+	// The ADR-016 manifest object itself is bookkeeping, not encrypted
+	// payload: the manifest probe and the ARMOR parse below would describe
+	// the wrong object entirely. HEAD and GET share one implementation so
+	// they cannot disagree on length, ETag or metadata.
 	if strings.HasSuffix(key, manifestSuffix) {
-		info, err := h.backend.Head(ctx, bucket, prefixedKey)
-		if err != nil {
-			code, message, status := backendFailureResponse(err)
-			h.writeBackendError(w, r, code, message, status, err)
-			return
-		}
-		if status := checkConditionalRequest(r, info.ETag, info.LastModified); status != 0 {
-			if status == http.StatusNotModified {
-				w.Header().Set("ETag", fmt.Sprintf(`"%s"`, info.ETag))
-				w.Header().Set("Last-Modified", info.LastModified.UTC().Format(http.TimeFormat))
-				w.WriteHeader(status)
-			} else {
-				h.writeError(w, r, "PreconditionFailed", "Precondition failed", status)
-			}
-			return
-		}
-		// StoredSize, not Size: both backends rewrite Size to the
-		// DESCRIBED object's plaintext size for anything carrying
-		// x-amz-meta-armor-version — which the manifest object itself
-		// does. The manifest's own stored length is what is served.
-		w.Header().Set("Content-Length", strconv.FormatInt(info.StoredSize, 10))
-		w.Header().Set("Content-Type", info.ContentType)
-		w.Header().Set("ETag", fmt.Sprintf(`"%s"`, info.ETag))
-		w.Header().Set("Accept-Ranges", "bytes")
-		w.Header().Set("Last-Modified", info.LastModified.UTC().Format(http.TimeFormat))
-		writeStoredMetadataHeaders(w, info.Metadata)
-		w.WriteHeader(http.StatusOK)
+		h.serveManifestObject(w, r, bucket, key, prefixedKey)
 		return
 	}
 
@@ -65,14 +38,9 @@ func (h *Handlers) HeadObject(w http.ResponseWriter, r *http.Request, bucket, ke
 	if h.manifest != nil {
 		if entry, ok := h.manifest.Lookup(bucket, key); ok {
 			if entry.UserMetadata != nil {
-				// Entries recorded by CompleteMultipartUpload carry ARMOR's
-				// descriptive x-amz-meta-armor-* fields too (crypto material
-				// excluded — armorDescriptiveMetadata), matching what the
-				// manifest read path serves; single-PUT entries carry only
-				// client user metadata, which the same filter passes through.
-				writeStoredMetadataHeaders(w, entry.UserMetadata)
+				writeUserMetadataHeaders(w, entry.UserMetadata)
 			} else if _, manifestMetadata, err := h.readManifest(ctx, bucket, key); err == nil {
-				writeStoredMetadataHeaders(w, manifestMetadata)
+				writeUserMetadataHeaders(w, manifestMetadata)
 			} else if backend.IsNotFound(err) {
 				// Legacy single-PUT entries have no per-key manifest. Their
 				// stored ciphertext still carries the client headers.
@@ -252,10 +220,7 @@ func (h *Handlers) headObjectFromManifest(w http.ResponseWriter, r *http.Request
 	w.Header().Set("ETag", fmt.Sprintf(`"%s"`, armorMeta.ETag))
 	w.Header().Set("Accept-Ranges", "bytes")
 	w.Header().Set("Last-Modified", ciphertextInfo.LastModified.UTC().Format(http.TimeFormat))
-	// The manifest is the metadata truth for a manifest-backed object, so
-	// its descriptive x-amz-meta-armor-* fields echo alongside the client's
-	// user metadata (crypto material stays private).
-	writeStoredMetadataHeaders(w, manifestMeta)
+	writeUserMetadataHeaders(w, manifestMeta)
 
 	w.WriteHeader(http.StatusOK)
 	return true

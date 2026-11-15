@@ -225,6 +225,22 @@ headers on the manifest object are authoritative):
  "completed_at": "2026-09-25T12:00:00Z", "metadata": {"...": "..."}}
 ```
 
+The stored body's `metadata` map is a full second copy of the headers below,
+key material included: `restore-verifier` and `armor verify-multipart` fall
+back to it when the manifest object's own headers are missing (a copy made by
+a tool that drops object metadata).
+
+**Reading a manifest through ARMOR.** `GET` and `HEAD` of
+`<client-key>.armor-manifest` return the manifest's descriptive fields and
+never its key material: the response headers omit `x-amz-meta-armor-iv`,
+`-wrapped-dek` and `-key-id`, and the body is the stored JSON with the same
+three keys removed from `metadata`. `Content-Length` and `ETag` describe the
+bytes served (the ETag is their MD5), so they differ from the stored object's.
+An object at a `*.armor-manifest` key that does not parse as a manifest is
+refused with a 500 rather than passed through. Reads of the logical object
+itself carry the client's own `x-amz-meta-*` only: a multipart object reads
+like a single-PUT one, and the manifest is the place to ask how it is armored.
+
 **Metadata carried on the manifest object** (superset of
 `backend.ARMORMetadata.ToMetadata`, plus the multipart completion fields):
 
@@ -234,7 +250,7 @@ headers on the manifest object are authoritative):
 | `x-amz-meta-armor-block-size` | encryption block size |
 | `x-amz-meta-armor-plaintext-size` | whole-object plaintext size |
 | `x-amz-meta-armor-plaintext-sha256` | combined per-part digest — `ComputeMultipartDigest` over the decrypted plaintext split at `part-size` boundaries, **not** a plain SHA-256 (v2; the part-size header makes the form unambiguous). Pre-bf-1v2ehf objects carry the empty-string SHA placeholder, which verifiers treat as "no digest declared" |
-| `x-amz-meta-armor-etag` | the S3-standard multipart composite — `md5(md5(part1)‖…‖md5(partN))-N` over the stored parts' digests (`backend.ComputeCompositeETag`). The `-N` suffix is the client-facing signal that the ETag is not a content MD5; the pre-armor-e8981148 bare digest of the concatenated ciphertext was read by rclone as a content MD5 and failed every download |
+| `x-amz-meta-armor-etag` | the S3-standard multipart composite — `md5(md5(part1)‖…‖md5(partN))-N` over the MD5s of the **plaintext** parts the client uploaded (`backend.ComputeCompositeETag`), so a client can check it against its own data. Each part's plaintext MD5 is recorded at `UploadPart`; an upload whose parts were written by a server that predates that record (before armor-dea98da8) keeps the backend's composite over the stored ciphertext parts. The `-N` suffix is the client-facing signal that the ETag is not a content MD5; the pre-armor-e8981148 bare digest of the concatenated ciphertext was read by rclone as a content MD5 and failed every download |
 | `x-amz-meta-armor-content-type` | original content type |
 | `x-amz-meta-armor-iv` | base64 IV (multipart objects have no header to carry it) |
 | `x-amz-meta-armor-wrapped-dek` | `v2:<fingerprint>:<base64>` (or legacy base64) |

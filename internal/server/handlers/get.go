@@ -3,6 +3,7 @@ package handlers
 import (
 	"bytes"
 	"context"
+	"crypto/md5"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -50,7 +51,6 @@ func (h *Handlers) GetObject(w http.ResponseWriter, r *http.Request, bucket, key
 	// completed multipart upload); the read falls through to the legacy
 	// path instead of rejecting every read forever.
 	manifestOverwritten := false
-	fromManifest := false
 
 	// The manifest probe decides which object is served, but for every
 	// single-PUT object it is a miss that used to cost one full sequential
@@ -157,7 +157,6 @@ func (h *Handlers) GetObject(w http.ResponseWriter, r *http.Request, bucket, key
 		}
 
 		if !manifestOverwritten {
-			fromManifest = true
 			// Parse ARMOR metadata from manifest
 			armorMeta, ok := backend.ParseARMORMetadata(manifestMeta)
 			if !ok {
@@ -513,15 +512,11 @@ func (h *Handlers) GetObject(w http.ResponseWriter, r *http.Request, bucket, key
 	// metadata, and S3 clients expect x-amz-meta-* on GetObject responses.
 	// info.Metadata is the authoritative source on both paths: the manifest
 	// path set it to the manifest object's headers, the legacy path to the
-	// stored ciphertext's. On the manifest path the metadata truth is the
-	// ADR-016 manifest, so the descriptive x-amz-meta-armor-* fields echo
-	// too (crypto material stays private — writeStoredMetadataHeaders);
-	// single-PUT legacy objects keep the armor-private contract.
-	if fromManifest {
-		writeStoredMetadataHeaders(w, info.Metadata)
-	} else {
-		writeUserMetadataHeaders(w, info.Metadata)
-	}
+	// stored ciphertext's. ARMOR's own x-amz-meta-armor-* namespace stays
+	// private on both: a multipart object reads exactly like a single-PUT
+	// one, and the manifest's descriptive fields are served only on the
+	// manifest object itself (serveManifestObject).
+	writeUserMetadataHeaders(w, info.Metadata)
 
 	// Uniform part size P for multipart objects written since bf-1v2ehf
 	// (x-amz-meta-armor-part-size). The full-object stream path needs it to
@@ -587,25 +582,57 @@ func (h *Handlers) GetObject(w http.ResponseWriter, r *http.Request, bucket, key
 	}
 }
 
-// serveManifestObject serves the ADR-016 manifest object itself
-// (<key>.armor-manifest) as an opaque passthrough. The manifest is a stored
-// metadata JSON document, never encrypted payload, so the response carries
-// the stored bytes with the stored headers; its descriptive x-amz-meta-armor-*
-// fields echo so clients can inspect how the described object is armored
-// (crypto material stays private — writeStoredMetadataHeaders).
+// manifestObjectMaxBytes bounds how much of a stored manifest object the S3
+// surface will read. A manifest is a few hundred bytes of JSON; anything
+// approaching this size at a *.armor-manifest key is not one.
+const manifestObjectMaxBytes = 1 << 20
+
+// serveManifestObject serves GET and HEAD of the ADR-016 manifest object
+// itself (<key>.armor-manifest). A manifest is ARMOR's bookkeeping JSON, not
+// encrypted payload, so it bypasses the decrypt path (which 500'd on it) and
+// the manifest probe.
+//
+// The client sees the manifest's descriptive fields and never its key
+// material. The response headers carry armorDescriptiveMetadata of the stored
+// headers, and the body is the stored JSON with the same filter applied to
+// its metadata map — the stored body deliberately keeps the IV and wrapped
+// DEK as a second copy for recovery (writeManifest). Content-Length and ETag
+// describe the bytes actually served, so HEAD and GET agree and a client
+// that checks a download against its ETag passes (armor-e3aaf624).
 func (h *Handlers) serveManifestObject(w http.ResponseWriter, r *http.Request, bucket, key, prefixedKey string) {
 	ctx := r.Context()
 
-	info, err := h.backend.Head(ctx, bucket, prefixedKey)
+	body, info, err := h.backend.Get(ctx, bucket, prefixedKey)
 	if err != nil {
 		code, message, status := backendFailureResponse(err)
 		h.writeBackendError(w, r, code, message, status, err)
 		return
 	}
+	stored, readErr := io.ReadAll(io.LimitReader(body, manifestObjectMaxBytes+1))
+	body.Close()
+	if readErr != nil {
+		h.writeBackendError(w, r, "InternalError", fmt.Sprintf("Failed to read manifest object: %v", readErr), 500, readErr)
+		return
+	}
+	var manifest backend.ManifestBody
+	if len(stored) > manifestObjectMaxBytes || json.Unmarshal(stored, &manifest) != nil {
+		// Not a manifest ARMOR wrote. Refusing is the only safe answer:
+		// the bytes cannot be redacted without parsing them.
+		h.writeError(w, r, "InternalError", "The manifest object at this key is not readable as an ARMOR manifest", 500)
+		return
+	}
+	manifest.Metadata = armorDescriptiveMetadata(manifest.Metadata)
+	served, err := json.Marshal(&manifest)
+	if err != nil {
+		h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to encode manifest object: %v", err), 500)
+		return
+	}
+	servedMD5 := md5.Sum(served)
+	etag := hex.EncodeToString(servedMD5[:])
 
-	if status := checkConditionalRequest(r, info.ETag, info.LastModified); status != 0 {
+	if status := checkConditionalRequest(r, etag, info.LastModified); status != 0 {
 		if status == http.StatusNotModified {
-			w.Header().Set("ETag", fmt.Sprintf(`"%s"`, info.ETag))
+			w.Header().Set("ETag", fmt.Sprintf(`"%s"`, etag))
 			w.Header().Set("Last-Modified", info.LastModified.UTC().Format(http.TimeFormat))
 			w.WriteHeader(status)
 		} else {
@@ -614,35 +641,17 @@ func (h *Handlers) serveManifestObject(w http.ResponseWriter, r *http.Request, b
 		return
 	}
 
-	if r.Method == http.MethodHead {
-		// StoredSize, not Size: both backends rewrite Size to the described
-		// object's plaintext size for metadata carrying armor-version, which
-		// the manifest object's own metadata does (see HeadObject's branch).
-		w.Header().Set("Content-Length", strconv.FormatInt(info.StoredSize, 10))
-		w.Header().Set("Content-Type", info.ContentType)
-		w.Header().Set("ETag", fmt.Sprintf(`"%s"`, info.ETag))
-		w.Header().Set("Accept-Ranges", "bytes")
-		w.Header().Set("Last-Modified", info.LastModified.UTC().Format(http.TimeFormat))
-		writeStoredMetadataHeaders(w, info.Metadata)
-		w.WriteHeader(http.StatusOK)
-		return
-	}
-
-	body, _, err := h.backend.Get(ctx, bucket, prefixedKey)
-	if err != nil {
-		h.writeBackendError(w, r, "InternalError", fmt.Sprintf("Failed to get object: %v", err), 500, err)
-		return
-	}
-	defer body.Close()
-
-	w.Header().Set("Content-Length", strconv.FormatInt(info.Size, 10))
+	w.Header().Set("Content-Length", strconv.Itoa(len(served)))
 	w.Header().Set("Content-Type", info.ContentType)
-	w.Header().Set("ETag", fmt.Sprintf(`"%s"`, info.ETag))
+	w.Header().Set("ETag", fmt.Sprintf(`"%s"`, etag))
 	w.Header().Set("Last-Modified", info.LastModified.UTC().Format(http.TimeFormat))
 	writeStoredMetadataHeaders(w, info.Metadata)
 	w.WriteHeader(http.StatusOK)
-	if _, err := io.Copy(w, body); err != nil {
-		log.Printf("GET %s/%s: manifest object streaming error: %v", bucket, key, err)
+	if r.Method == http.MethodHead {
+		return
+	}
+	if _, err := w.Write(served); err != nil {
+		log.Printf("GET %s/%s: manifest object write error: %v", bucket, key, err)
 	}
 }
 

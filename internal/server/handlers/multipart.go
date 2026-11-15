@@ -3,6 +3,7 @@ package handlers
 import (
 	"bytes"
 	"context"
+	"crypto/md5"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/binary"
@@ -634,8 +635,18 @@ func (h *Handlers) UploadPart(w http.ResponseWriter, r *http.Request, bucket, ke
 	}
 
 	// The plaintext SHA-256 was computed while reading, before in-place v3
-	// encryption changed the input buffer.
+	// encryption changed the input buffer. The plaintext MD5 travels the
+	// same way (v3 computes it during the spooled read; v2's ciphertext is
+	// separate, so its buffer is still intact) — it feeds the S3 multipart
+	// composite ETag at completion (armor-dea98da8).
 	partSHAHex := hex.EncodeToString(partSHA[:])
+	var partMD5Hex string
+	if formatVersion == 3 {
+		partMD5Hex = hex.EncodeToString(partSource.md5Digest[:])
+	} else {
+		partMD5Sum := md5.Sum(plaintext)
+		partMD5Hex = hex.EncodeToString(partMD5Sum[:])
+	}
 
 	if formatVersion == 3 {
 		// V3 format: save part data to a separate part-<n>.json file
@@ -646,6 +657,7 @@ func (h *Handlers) UploadPart(w http.ResponseWriter, r *http.Request, bucket, ke
 			CiphertextLen:    partCiphertextLen,
 			BlockHMACsBase64: backend.EncodeHMACToBase64(blockHMACs),
 			PlaintextSHAHex:  partSHAHex,
+			PlaintextMD5Hex:  partMD5Hex,
 		}
 
 		if err := manager.SavePartV3(ctx, uploadID, partData); err != nil {
@@ -663,6 +675,10 @@ func (h *Handlers) UploadPart(w http.ResponseWriter, r *http.Request, bucket, ke
 			state.PartPlaintextSHAs = make(map[int]string)
 		}
 		state.PartPlaintextSHAs[int(partNumber)] = partSHAHex
+		if state.PartPlaintextMD5s == nil {
+			state.PartPlaintextMD5s = make(map[int]string)
+		}
+		state.PartPlaintextMD5s[int(partNumber)] = partMD5Hex
 
 		if err := manager.SaveState(ctx, state); err != nil {
 			h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to update multipart state: %v", err), 500)
@@ -713,7 +729,12 @@ func (h *Handlers) writeManifest(ctx context.Context, bucket, key string, meta m
 	// Build manifest key: <prefixed-key>.armor-manifest
 	manifestKey := h.manifestKeyFor(key)
 
-	// Build manifest body (optional, for debugging)
+	// Build manifest body. The stored body keeps the FULL metadata set,
+	// crypto material included: it is the self-contained second copy the
+	// restore-verifier and `armor verify-multipart` fall back to when the
+	// manifest object's own metadata headers are lost (a copy made by a
+	// tool that drops object metadata). The S3 surface never serves this
+	// body as stored — serveManifestObject redacts it (armor-e3aaf624).
 	manifestBody := &backend.ManifestBody{
 		CiphertextObject: ciphertextRef,
 		UploadID:         uploadID,
@@ -944,6 +965,13 @@ func (h *Handlers) CompleteMultipartUpload(w http.ResponseWriter, r *http.Reques
 				state.PartPlaintextSHAs = make(map[int]string)
 			}
 			state.PartPlaintextSHAs[partNum] = partData.PlaintextSHAHex
+			if partData.PlaintextMD5Hex == "" {
+				continue
+			}
+			if state.PartPlaintextMD5s == nil {
+				state.PartPlaintextMD5s = make(map[int]string)
+			}
+			state.PartPlaintextMD5s[partNum] = partData.PlaintextMD5Hex
 		}
 
 		// Version 3 encrypts every part in its own counter namespace, so part
@@ -1161,6 +1189,32 @@ func (h *Handlers) CompleteMultipartUpload(w http.ResponseWriter, r *http.Reques
 			return
 		}
 		etag = info.ETag
+	}
+
+	// S3 multipart ETag convention (armor-dea98da8): md5(md5(part1)||…||md5
+	// (partN))-N over the PLAINTEXT parts the client uploaded — that is what
+	// lets a client verify a download against the ETags it received per part
+	// (rclone reads any bare digest as a content MD5, and a composite over
+	// ciphertext parts verifies nothing). The backend's ETag is a composite
+	// over its own stored ciphertext parts, which is not that value. When
+	// every part carries its recorded plaintext MD5, the client-facing ETag
+	// is the real convention; parts uploaded by servers predating the
+	// per-part MD5 record leave no composite to build, and the backend ETag
+	// stays.
+	partMD5s := make([]string, 0, len(completeReq.Parts))
+	allPartsHaveMD5 := true
+	for _, p := range completeReq.Parts {
+		md5Hex, ok := state.PartPlaintextMD5s[p.PartNumber]
+		if !ok || md5Hex == "" {
+			allPartsHaveMD5 = false
+			break
+		}
+		partMD5s = append(partMD5s, md5Hex)
+	}
+	if allPartsHaveMD5 && len(partMD5s) == len(completeReq.Parts) {
+		if composite, compositeErr := backend.ComputeCompositeETag(partMD5s); compositeErr == nil {
+			etag = composite
+		}
 	}
 
 	// The completed object is now visible to list operations. Invalidate all

@@ -192,24 +192,27 @@ func TestMultipart5GB_B2Integration(t *testing.T) {
 		t.Fatalf("HeadObject failed: %v", err)
 	}
 
-	// Check ARMOR metadata
-	multipartFlag := headResp.Metadata["Armor-Multipart"]
+	// Check ARMOR metadata. The format facts are on the manifest object;
+	// the logical object carries the client's metadata only.
+	requireNoArmorMetadata(t, "HeadObject of a completed multipart object", headResp.Metadata)
+	manifestMeta := headArmorManifest(t, ctx, client, testBucket, key)
+	multipartFlag := manifestMeta["armor-multipart"]
 	if multipartFlag != "true" {
 		t.Errorf("Expected ARMOR multipart flag 'true', got: %s", multipartFlag)
 	}
 
-	plaintextSize := headResp.Metadata["Armor-Plaintext-Size"]
+	plaintextSize := manifestMeta["armor-plaintext-size"]
 	if plaintextSize != fmt.Sprintf("%d", testObjectSize) {
 		t.Errorf("Expected plaintext size %d, got: %s", testObjectSize, plaintextSize)
 	}
 
-	plaintextSHA := headResp.Metadata["Armor-Plaintext-Sha256"]
+	plaintextSHA := manifestMeta["armor-plaintext-sha256"]
 	if plaintextSHA == "" || plaintextSHA == "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" {
 		t.Error("Expected real plaintext SHA-256, not placeholder (EmptyPlaintextSHA256Hex)")
 		t.Logf("Got plaintext SHA-256: %s", plaintextSHA)
 	}
 
-	armorVersion := headResp.Metadata["Armor-Version"]
+	armorVersion := manifestMeta["armor-version"]
 	if armorVersion != "3" {
 		t.Errorf("Expected ARMOR version 3, got: %s", armorVersion)
 	}
@@ -230,19 +233,19 @@ func TestMultipart5GB_B2Integration(t *testing.T) {
 		t.Log("✓ Manifest object found (ADR-016 compliant)")
 
 		// Verify manifest metadata
-		manifestVersion := manifestHead.Metadata["Armor-Version"]
+		manifestVersion := manifestHead.Metadata["armor-version"]
 		if manifestVersion != "3" {
 			t.Errorf("Expected manifest version 3, got: %s", manifestVersion)
 		}
 
-		ciphertextRef := manifestHead.Metadata["Armor-Ciphertext-Ref"]
+		ciphertextRef := manifestHead.Metadata["armor-ciphertext-ref"]
 		if ciphertextRef == "" {
 			t.Error("Expected ciphertext reference in manifest")
 		} else {
 			t.Logf("Manifest references ciphertext: %s", ciphertextRef)
 		}
 
-		completedAt := manifestHead.Metadata["Armor-Completed-At"]
+		completedAt := manifestHead.Metadata["armor-completed-at"]
 		if completedAt != "" {
 			t.Logf("Manifest completed-at: %s", completedAt)
 		}
@@ -484,9 +487,8 @@ func TestMultipart5GB_BoundaryEdgeCases(t *testing.T) {
 				t.Fatalf("HeadObject failed: %v", err)
 			}
 
-			plaintextSize := headResp.Metadata["Armor-Plaintext-Size"]
-			if plaintextSize != fmt.Sprintf("%d", tt.size) {
-				t.Errorf("Expected plaintext size %d, got: %s", tt.size, plaintextSize)
+			if got := aws.ToInt64(headResp.ContentLength); got != tt.size {
+				t.Errorf("Expected plaintext size %d, got: %d", tt.size, got)
 			}
 
 			// Cleanup

@@ -93,15 +93,15 @@ func TestCompleteMultipartUpload_V3_SinglePart(t *testing.T) {
 		t.Fatalf("HeadObject failed: %v", err)
 	}
 
-	// Check metadata contains version 3
-	version := headResp.Metadata["Armor-Version"]
-	if version != "3" {
+	// The object itself reads like any other: no ARMOR metadata on it.
+	requireNoArmorMetadata(t, "HeadObject of a completed multipart object", headResp.Metadata)
+
+	// The format facts live on the manifest object.
+	manifestMeta := headArmorManifest(t, ctx, client, bucket, key)
+	if version := manifestMeta["armor-version"]; version != "3" {
 		t.Errorf("Expected ARMOR version 3, got: %s", version)
 	}
-
-	// Check multipart flag is set
-	multipartFlag := headResp.Metadata["Armor-Multipart"]
-	if multipartFlag != "true" {
+	if multipartFlag := manifestMeta["armor-multipart"]; multipartFlag != "true" {
 		t.Errorf("Expected ARMOR multipart flag 'true', got: %s", multipartFlag)
 	}
 
@@ -314,15 +314,15 @@ func TestCompleteMultipartUpload_V3_TwoParts(t *testing.T) {
 		t.Fatalf("HeadObject failed: %v", err)
 	}
 
-	// Check metadata contains version 3
-	version := headResp.Metadata["Armor-Version"]
-	if version != "3" {
+	// The object itself reads like any other: no ARMOR metadata on it.
+	requireNoArmorMetadata(t, "HeadObject of a completed multipart object", headResp.Metadata)
+
+	// The format facts live on the manifest object.
+	manifestMeta := headArmorManifest(t, ctx, client, bucket, key)
+	if version := manifestMeta["armor-version"]; version != "3" {
 		t.Errorf("Expected ARMOR version 3, got: %s", version)
 	}
-
-	// Check multipart flag is set
-	multipartFlag := headResp.Metadata["Armor-Multipart"]
-	if multipartFlag != "true" {
+	if multipartFlag := manifestMeta["armor-multipart"]; multipartFlag != "true" {
 		t.Errorf("Expected ARMOR multipart flag 'true', got: %s", multipartFlag)
 	}
 

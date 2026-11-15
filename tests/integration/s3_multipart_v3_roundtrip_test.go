@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"math/rand"
+	"strings"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -42,6 +43,10 @@ func TestV3MultipartRoundTrip(t *testing.T) {
 	// uploaded. (A bare whole-object MD5 with a "-N" suffix is not what S3
 	// produces — the composite is what lets a client verify a download from
 	// the per-part ETags it received.)
+	//
+	// The digest of each part goes into the outer hash, not the part's
+	// bytes: hashing the bytes yields the whole-object MD5, which is the
+	// value this test used to expect and no S3 server returns.
 	partMD5Hasher := md5.New()
 	for i := 0; i < numParts; i++ {
 		partStart := i * partSize
@@ -49,9 +54,19 @@ func TestV3MultipartRoundTrip(t *testing.T) {
 		if i == numParts-1 {
 			partEnd = len(testData) // Last part may be smaller
 		}
-		partMD5Hasher.Write(testData[partStart:partEnd])
+		partDigest := md5.Sum(testData[partStart:partEnd])
+		partMD5Hasher.Write(partDigest[:])
 	}
 	expectedETag := fmt.Sprintf("%x-%d", partMD5Hasher.Sum(nil), numParts)
+
+	// S3 returns ETags as quoted strings and the SDK hands them over
+	// verbatim, so compare the entity tag without its quotes.
+	unquoteETag := func(etag *string) string {
+		if etag == nil {
+			return ""
+		}
+		return strings.Trim(*etag, "\"")
+	}
 
 	// Create multipart upload
 	createResp, err := client.CreateMultipartUpload(ctx, &s3.CreateMultipartUploadInput{
@@ -103,8 +118,8 @@ func TestV3MultipartRoundTrip(t *testing.T) {
 	}
 
 	// Verify ETag matches expected
-	if *completeResp.ETag != expectedETag {
-		t.Errorf("ETag mismatch: got %s, want %s", *completeResp.ETag, expectedETag)
+	if got := unquoteETag(completeResp.ETag); got != expectedETag {
+		t.Errorf("ETag mismatch: got %s, want %s", got, expectedETag)
 	}
 
 	// Test 1: Full object GET should return byte-identical data
@@ -135,8 +150,8 @@ func TestV3MultipartRoundTrip(t *testing.T) {
 			t.Errorf("ContentLength mismatch: got %d, want %d", *getResp.ContentLength, len(testData))
 		}
 
-		if getResp.ETag == nil || *getResp.ETag != expectedETag {
-			t.Errorf("ETag mismatch: got %s, want %s", *getResp.ETag, expectedETag)
+		if got := unquoteETag(getResp.ETag); got != expectedETag {
+			t.Errorf("ETag mismatch: got %s, want %s", got, expectedETag)
 		}
 	})
 
@@ -289,8 +304,8 @@ func TestV3MultipartRoundTrip(t *testing.T) {
 			t.Errorf("Downloaded data does not match new uploaded data (cache not invalidated)")
 		}
 
-		if getResp.ETag == nil || *getResp.ETag != newETag {
-			t.Errorf("ETag after overwrite mismatch: got %s, want %s", *getResp.ETag, newETag)
+		if got := unquoteETag(getResp.ETag); got != newETag {
+			t.Errorf("ETag after overwrite mismatch: got %s, want %s", got, newETag)
 		}
 	})
 }

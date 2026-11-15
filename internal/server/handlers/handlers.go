@@ -65,10 +65,7 @@ type ManifestRecorder interface {
 	// chainEntry is the provenance chain entry to embed in the delta line.
 	// May be nil if provenance is disabled for this key. userMetadata is the
 	// x-amz-meta-* subset that HeadObject's index fast path serves back: the
-	// client-supplied keys (ARMOR's reserved namespace excluded) for
-	// single-PUT objects, and ARMOR's descriptive fields in addition for
-	// multipart completions (armorDescriptiveMetadata — crypto material
-	// excluded), so the fast path agrees with the manifest read path.
+	// client-supplied keys, with ARMOR's reserved namespace excluded.
 	RecordPut(bucket, key string, size int64, sha256Hex string, iv, wrappedDEK []byte, mekFingerprint string, blockSize int, contentType, etag string, chainEntry *manifest.ChainEntry, ciphertextSize int64, userMetadata map[string]string)
 	// RecordDelete records a successful DeleteObject.
 	RecordDelete(bucket, key string)
@@ -476,14 +473,15 @@ var armorCryptoMetadataKeys = map[string]bool{
 }
 
 // armorDescriptiveMetadata returns the x-amz-meta-* subset of a stored
-// metadata map that is safe to echo on an S3 response: the client-visible
-// user metadata plus ARMOR's descriptive fields (version, sizes, digest,
-// etag, multipart/part bookkeeping), with the crypto-material fields
-// (armorCryptoMetadataKeys) withheld. This is the metadata contract for
-// objects whose metadata truth lives in an ADR-016 manifest: HEAD and GET
-// of the logical object and of the manifest object itself expose the
-// descriptive fields so clients can see how an object is armored, without
-// exposing how to decrypt it.
+// metadata map that is safe to show a client: the user metadata plus
+// ARMOR's descriptive fields (version, sizes, digest, etag, multipart/part
+// bookkeeping), with the crypto-material fields (armorCryptoMetadataKeys)
+// withheld. It is the contract for the ADR-016 manifest object itself and
+// nothing else: a manifest is ARMOR's own bookkeeping, so a client that asks
+// for one sees how the described object is armored, but never how to decrypt
+// it. Logical objects — single-PUT and multipart alike — keep the armor-
+// private contract (writeUserMetadataHeaders): the proxy stays transparent,
+// and the stored key (which embeds ARMOR_PREFIX) is not echoed on every read.
 func armorDescriptiveMetadata(metadata map[string]string) map[string]string {
 	filtered := make(map[string]string, len(metadata))
 	for key, value := range metadata {
@@ -495,11 +493,8 @@ func armorDescriptiveMetadata(metadata map[string]string) map[string]string {
 	return filtered
 }
 
-// writeStoredMetadataHeaders writes a stored object's echoable metadata —
-// armorDescriptiveMetadata — as response headers. Use it wherever the
-// response describes an ADR-016 manifest-backed object or a manifest object
-// itself; writeUserMetadataHeaders stays the contract for single-PUT
-// objects, whose envelope carries everything internally.
+// writeStoredMetadataHeaders writes a manifest object's echoable metadata —
+// armorDescriptiveMetadata — as response headers.
 func writeStoredMetadataHeaders(w http.ResponseWriter, metadata map[string]string) {
 	for key, value := range armorDescriptiveMetadata(metadata) {
 		w.Header().Set(key, value)
