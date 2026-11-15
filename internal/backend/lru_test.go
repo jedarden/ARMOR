@@ -328,20 +328,20 @@ func TestMultipartSidecarCache_ByteBound(t *testing.T) {
 	// Tiny budget: the first sidecar (many base64 block strings) fills it;
 	// the second must evict the first.
 	c := NewMultipartSidecarCache(1000, 60, 4096)
-	if err := c.Set("b", "k1", "e1", sidecar(4, 8)); err != nil {
+	if err := c.Set("b/k1@gen-1", sidecar(4, 8)); err != nil {
 		t.Fatalf("Set k1: %v", err)
 	}
-	if err := c.Set("b", "k2", "e2", sidecar(4, 8)); err != nil {
+	if err := c.Set("b/k2@gen-2", sidecar(4, 8)); err != nil {
 		t.Fatalf("Set k2: %v", err)
 	}
 
 	if got := c.Size(); got != 1 {
 		t.Fatalf("expected byte bound to hold one sidecar, got %d entries", got)
 	}
-	if c.Get("b", "k1", "e1") != nil {
+	if c.Get("b/k1@gen-1") != nil {
 		t.Error("expected k1 to be evicted by the byte bound")
 	}
-	if c.Get("b", "k2", "e2") == nil {
+	if c.Get("b/k2@gen-2") == nil {
 		t.Error("expected k2 to survive")
 	}
 }

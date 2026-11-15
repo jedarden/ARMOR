@@ -211,10 +211,11 @@ func (w *ttfbWriter) ttfb() time.Duration { return time.Duration(w.first.Load())
 func newStreamBenchSetup(b *testing.B, spec *genSpec, be backend.Backend) (*Handlers, *crypto.Decryptor, *backend.ARMORMetadata, int64) {
 	b.Helper()
 	cache := backend.NewMultipartSidecarCache(10, 60)
-	if err := cache.Set("bucket", "prefixed/key", v3RangeETag, spec.sidecar()); err != nil {
+	genKey := (v3TableKeyParts{ETag: v3RangeETag}).key("bucket", "prefixed/key")
+	if err := cache.Set(genKey, spec.sidecar()); err != nil {
 		b.Fatalf("cache.Set: %v", err)
 	}
-	entry := cache.Get("bucket", "prefixed/key", v3RangeETag)
+	entry := cache.Get(genKey)
 	decryptor, err := crypto.NewDecryptor(spec.dek, spec.iv, spec.blockSize)
 	if err != nil {
 		b.Fatalf("NewDecryptor: %v", err)
@@ -276,7 +277,7 @@ func runStreamGet(b *testing.B, h *Handlers, decryptor *crypto.Decryptor, meta *
 	b.Helper()
 	w := newTTFBWriter()
 	r := httptest.NewRequest("GET", "/bucket/key", nil)
-	h.handleV3MultipartGet(w, r, "bucket", "key", "prefixed/key", decryptor, meta, plaintextSize, time.Now())
+	h.handleV3MultipartGet(w, r, "bucket", "key", "prefixed/key", decryptor, meta, plaintextSize, time.Now(), v3TableKeyParts{ETag: v3RangeETag})
 	return w
 }
 
@@ -345,7 +346,8 @@ func TestV3MultipartGetFiveGiBLogicalObjectBoundedMemory(t *testing.T) {
 	spec := newGenSpec(t, []int{blocksPerGib, blocksPerGib, blocksPerGib, blocksPerGib, blocksPerGib, blocksPerGib}, blockSize)
 	be := &genBackend{NilBackend: backend.NewNilBackend(), spec: spec, delay: 0}
 	cache := backend.NewMultipartSidecarCache(10, 60)
-	if err := cache.Set("bucket", "prefixed/key", v3RangeETag, spec.sidecar()); err != nil {
+	genKey := (v3TableKeyParts{ETag: v3RangeETag}).key("bucket", "prefixed/key")
+	if err := cache.Set(genKey, spec.sidecar()); err != nil {
 		t.Fatalf("cache.Set: %v", err)
 	}
 	decryptor, err := crypto.NewDecryptor(spec.dek, spec.iv, spec.blockSize)
@@ -380,7 +382,7 @@ func TestV3MultipartGetFiveGiBLogicalObjectBoundedMemory(t *testing.T) {
 	w := newTTFBWriter()
 	r := httptest.NewRequest("GET", "/bucket/key", nil)
 	started := time.Now()
-	h.handleV3MultipartGet(w, r, "bucket", "key", "prefixed/key", decryptor, meta, spec.totalPlain, time.Now())
+	h.handleV3MultipartGet(w, r, "bucket", "key", "prefixed/key", decryptor, meta, spec.totalPlain, time.Now(), v3TableKeyParts{ETag: v3RangeETag})
 	elapsed := time.Since(started)
 	close(stop)
 

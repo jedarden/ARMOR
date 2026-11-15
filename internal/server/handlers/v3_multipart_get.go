@@ -15,6 +15,13 @@ import (
 
 // handleV3MultipartGet handles full GET requests for v3 multipart objects.
 //
+// gen must be the stored-object generation of the ciphertext HEAD this request
+// already performed (GetObject's freshness head) — it is the sidecar cache's
+// version key, and the composite multipart ETag in armorMeta is NOT one: that
+// ETag is a pure function of the plaintext, so a same-plaintext overwrite
+// reproduces it while replacing the ciphertext and every block HMAC
+// (armor-a6d3dd64).
+//
 // The parts of a v3 multipart object are contiguous in the stored ciphertext,
 // so the whole object is fetched with ONE ranged request and decrypted block
 // by block as the bytes arrive. The backend's bounded pipelined range reader
@@ -31,7 +38,7 @@ import (
 // against the declared length — the client observes a broken transfer
 // instead of a clean-EOF truncated success, and no XML error body is
 // appended to partial plaintext.
-func (h *Handlers) handleV3MultipartGet(w http.ResponseWriter, r *http.Request, bucket, key, prefixedKey string, decryptor *crypto.Decryptor, armorMeta *backend.ARMORMetadata, plaintextSize int64, lastModified time.Time) {
+func (h *Handlers) handleV3MultipartGet(w http.ResponseWriter, r *http.Request, bucket, key, prefixedKey string, decryptor *crypto.Decryptor, armorMeta *backend.ARMORMetadata, plaintextSize int64, lastModified time.Time, gen v3TableKeyParts) {
 	ctx := r.Context()
 
 	var sidecar *backend.MultipartSidecarEntry
@@ -56,7 +63,7 @@ func (h *Handlers) handleV3MultipartGet(w http.ResponseWriter, r *http.Request, 
 		sidecarCh := make(chan sidecarResult, 1)
 		bodyCh := make(chan bodyResult, 1)
 		go func() {
-			loaded, loadErr := h.loadV3MultipartSidecar(parallelCtx, bucket, key, prefixedKey, armorMeta.ETag)
+			loaded, loadErr := h.loadV3MultipartSidecar(parallelCtx, bucket, key, prefixedKey, gen)
 			sidecarCh <- sidecarResult{sidecar: loaded, err: loadErr}
 		}()
 		go func() {
@@ -83,7 +90,7 @@ func (h *Handlers) handleV3MultipartGet(w http.ResponseWriter, r *http.Request, 
 		// Direct unit-test callers may omit CiphertextSize. Keep a sidecar-first
 		// fallback for that helper contract; production GetObject always sets it
 		// from the authoritative HEAD.
-		sidecar, err = h.loadV3MultipartSidecar(ctx, bucket, key, prefixedKey, armorMeta.ETag)
+		sidecar, err = h.loadV3MultipartSidecar(ctx, bucket, key, prefixedKey, gen)
 		if err != nil {
 			h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to load v3 sidecar: %v", err), 500)
 			return
@@ -227,14 +234,31 @@ func streamV3MultipartBlocks(out io.Writer, body io.Reader, sidecar *backend.Mul
 
 // loadV3MultipartSidecar loads the v3 multipart sidecar with caching.
 //
-// The sidecar is named sha256 of the CLIENT key, because CompleteMultipartUpload
-// calls SaveHMACTableV3 with the client key while the assembled ciphertext is
-// stored under the prefixed key. Both forms are therefore required: key names
-// the sidecar, prefixedKey addresses the ciphertext and keys the cache.
-func (h *Handlers) loadV3MultipartSidecar(ctx context.Context, bucket, key, prefixedKey, etag string) (*backend.MultipartSidecarEntry, error) {
-	// Check cache first
-	if cached := h.multipartSidecarCache.Get(bucket, prefixedKey, etag); cached != nil {
-		return cached, nil
+// The cache is keyed by the stored-object generation gen, rendered over the
+// prefixed ciphertext key — the same tuple the v3 block-table cache uses. The
+// composite multipart ETag cannot play this role: it is md5 of the per-part
+// PLAINTEXT MD5s, so re-uploading the same plaintext to the same key leaves it
+// unchanged while the ciphertext (fresh per-upload IV) and every block HMAC
+// change, and a cached entry from the previous generation would fail the very
+// first GET after the overwrite with an HMAC verification error
+// (armor-a6d3dd64). An empty generation bypasses the cache on both the read
+// and the store side, exactly like loadV3BlockTable.
+//
+// The sidecar itself is named sha256 of the CLIENT key, because
+// CompleteMultipartUpload calls SaveHMACTableV3 with the client key while the
+// assembled ciphertext is stored under the prefixed key. Both forms are
+// therefore required: key names the sidecar, prefixedKey addresses the
+// ciphertext (and keys the cache through the generation).
+func (h *Handlers) loadV3MultipartSidecar(ctx context.Context, bucket, key, prefixedKey string, gen v3TableKeyParts) (*backend.MultipartSidecarEntry, error) {
+	// Check cache first. gen.key is empty only when gen is the zero value.
+	genKey := ""
+	if gen != (v3TableKeyParts{}) {
+		genKey = gen.key(bucket, prefixedKey)
+	}
+	if genKey != "" {
+		if cached := h.multipartSidecarCache.Get(genKey); cached != nil {
+			return cached, nil
+		}
 	}
 
 	// LoadHMACTableV3 derives the sidecar key from the object key itself.
@@ -245,10 +269,16 @@ func (h *Handlers) loadV3MultipartSidecar(ctx context.Context, bucket, key, pref
 		return nil, fmt.Errorf("failed to load v3 sidecar from B2: %w", err)
 	}
 
+	if genKey == "" {
+		// No stored-generation identity for this request: serve the fresh load
+		// without caching it rather than sharing one entry across generations.
+		return backend.NewMultipartSidecarEntry(sidecar)
+	}
+
 	// Build and cache the entry
-	if err := h.multipartSidecarCache.Set(bucket, prefixedKey, etag, sidecar); err != nil {
+	if err := h.multipartSidecarCache.Set(genKey, sidecar); err != nil {
 		return nil, fmt.Errorf("failed to cache sidecar: %w", err)
 	}
 
-	return h.multipartSidecarCache.Get(bucket, prefixedKey, etag), nil
+	return h.multipartSidecarCache.Get(genKey), nil
 }

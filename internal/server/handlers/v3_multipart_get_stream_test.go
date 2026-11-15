@@ -39,7 +39,7 @@ func runV3MultipartGetHandler(t *testing.T, fx *v3RangeFixture, beb backend.Back
 
 	r := httptest.NewRequest("GET", "/bucket/key", nil)
 	w := httptest.NewRecorder()
-	h.handleV3MultipartGet(w, r, "bucket", "key", "prefixed/key", decryptor, armorMeta, int64(len(fx.plaintext)), time.Now())
+	h.handleV3MultipartGet(w, r, "bucket", "key", "prefixed/key", decryptor, armorMeta, int64(len(fx.plaintext)), time.Now(), fx.gen)
 	return w
 }
 
@@ -146,10 +146,11 @@ func TestV3MultipartGetCompressedBlocksRoundTrip(t *testing.T) {
 	})
 
 	cache := backend.NewMultipartSidecarCache(10, 60)
-	if err := cache.Set("bucket", "prefixed/key", v3RangeETag, sidecar); err != nil {
+	genKey := (v3TableKeyParts{ETag: v3RangeETag}).key("bucket", "prefixed/key")
+	if err := cache.Set(genKey, sidecar); err != nil {
 		t.Fatalf("cache.Set: %v", err)
 	}
-	entry := cache.Get("bucket", "prefixed/key", v3RangeETag)
+	entry := cache.Get(genKey)
 
 	var ciphertext []byte
 	ciphertext = append(ciphertext, cipher0...)
@@ -164,6 +165,7 @@ func TestV3MultipartGetCompressedBlocksRoundTrip(t *testing.T) {
 		entry:      entry,
 		ciphertext: ciphertext,
 		plaintext:  want,
+		gen:        v3TableKeyParts{ETag: v3RangeETag},
 	}
 
 	w := runV3MultipartGetHandler(t, fx, newRangeBackend(ciphertext))
@@ -273,7 +275,7 @@ func TestV3MultipartGetYieldsVerifiedPlaintextBeforeFirstPartArrives(t *testing.
 	go func() {
 		defer close(done)
 		r := httptest.NewRequest("GET", "/bucket/key", nil)
-		h.handleV3MultipartGet(w, r, "bucket", "key", "prefixed/key", decryptor, armorMeta, int64(len(fx.plaintext)), time.Now())
+		h.handleV3MultipartGet(w, r, "bucket", "key", "prefixed/key", decryptor, armorMeta, int64(len(fx.plaintext)), time.Now(), fx.gen)
 	}()
 
 	// body accumulates every emission, starting with the TTFB block: the
@@ -559,7 +561,7 @@ func TestV3MultipartGetClientCancellationStopsStreamAndReleasesBackend(t *testin
 	}
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		h.handleV3MultipartGet(w, r, "bucket", "key", "prefixed/key", decryptor, armorMeta, int64(len(fx.plaintext)), time.Now())
+		h.handleV3MultipartGet(w, r, "bucket", "key", "prefixed/key", decryptor, armorMeta, int64(len(fx.plaintext)), time.Now(), fx.gen)
 	}))
 	defer srv.Close()
 
@@ -616,10 +618,11 @@ func TestV3MultipartGetWholeObjectAddressBeyondUint32(t *testing.T) {
 	}
 
 	cache := backend.NewMultipartSidecarCache(10, 60)
-	if err := cache.Set("bucket", "prefixed/key", v3RangeETag, sidecar); err != nil {
+	genKey := (v3TableKeyParts{ETag: v3RangeETag}).key("bucket", "prefixed/key")
+	if err := cache.Set(genKey, sidecar); err != nil {
 		t.Fatalf("cache.Set: %v", err)
 	}
-	entry := cache.Get("bucket", "prefixed/key", v3RangeETag)
+	entry := cache.Get(genKey)
 	// The checked int64 cumulative offsets must already carry the >5GiB
 	// total: the handler's single whole-object range is addressed from them,
 	// so a uint32-class wrap here would fetch the wrong bytes.
@@ -646,7 +649,7 @@ func TestV3MultipartGetWholeObjectAddressBeyondUint32(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewDecryptor: %v", err)
 	}
-	h.handleV3MultipartGet(w, r, "bucket", "key", "prefixed/key", decryptor, armorMeta, partCiphertextLen*partCount, time.Now())
+	h.handleV3MultipartGet(w, r, "bucket", "key", "prefixed/key", decryptor, armorMeta, partCiphertextLen*partCount, time.Now(), v3TableKeyParts{ETag: v3RangeETag})
 
 	offsets, lengths := be.recorded()
 	if len(offsets) != 1 {

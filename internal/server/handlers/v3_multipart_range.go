@@ -14,8 +14,10 @@ import (
 
 // handleV3MultipartRangeRequest handles range requests for v3 multipart objects.
 // It maps plaintext offsets to parts and blocks, fetches only what's needed,
-// and returns the requested plaintext range.
-func (h *Handlers) handleV3MultipartRangeRequest(w http.ResponseWriter, r *http.Request, bucket, key, prefixedKey string, decryptor *crypto.Decryptor, armorMeta *backend.ARMORMetadata, plaintextSize int64, lastModified time.Time, rangeStart, rangeEnd int64) {
+// and returns the requested plaintext range. gen must be the stored-object
+// generation of this request's authoritative ciphertext HEAD — the sidecar
+// cache's version key (see loadV3MultipartSidecar, armor-a6d3dd64).
+func (h *Handlers) handleV3MultipartRangeRequest(w http.ResponseWriter, r *http.Request, bucket, key, prefixedKey string, decryptor *crypto.Decryptor, armorMeta *backend.ARMORMetadata, plaintextSize int64, lastModified time.Time, rangeStart, rangeEnd int64, gen v3TableKeyParts) {
 	ctx := r.Context()
 
 	// Parquet footer fast path (armor-c3199f1c): serve tail ranges from the
@@ -28,7 +30,7 @@ func (h *Handlers) handleV3MultipartRangeRequest(w http.ResponseWriter, r *http.
 	blockSize := armorMeta.BlockSize
 
 	// Load the v3 sidecar (with caching)
-	sidecar, err := h.loadV3MultipartSidecar(ctx, bucket, key, prefixedKey, armorMeta.ETag)
+	sidecar, err := h.loadV3MultipartSidecar(ctx, bucket, key, prefixedKey, gen)
 	if err != nil {
 		h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to load v3 sidecar: %v", err), 500)
 		return

@@ -344,7 +344,7 @@ func (h *Handlers) GetObject(w http.ResponseWriter, r *http.Request, bucket, key
 			// V3 multipart uploads allow independently-sized parts and therefore
 			// do not have a uniform part-size metadata value. The sidecar is the
 			// authoritative source for their part boundaries.
-			sidecar, loadErr := h.loadV3MultipartSidecar(ctx, bucket, key, prefixedKey, armorMeta.ETag)
+			sidecar, loadErr := h.loadV3MultipartSidecar(ctx, bucket, key, prefixedKey, storedGen)
 			if loadErr != nil {
 				h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to load v3 sidecar: %v", loadErr), 500)
 				return
@@ -566,7 +566,7 @@ func (h *Handlers) GetObject(w http.ResponseWriter, r *http.Request, bucket, key
 				h.writeError(w, r, "InvalidRange", fmt.Sprintf("Invalid range: %v", err), 416)
 				return
 			}
-			h.handleV3MultipartRangeRequest(w, r, bucket, key, prefixedKey, decryptor, armorMeta, plaintextSize, info.LastModified, start, end)
+			h.handleV3MultipartRangeRequest(w, r, bucket, key, prefixedKey, decryptor, armorMeta, plaintextSize, info.LastModified, start, end, storedGen)
 		} else {
 			h.handleRangeRequest(w, r, bucket, key, decryptor, armorMeta, plaintextSize, info.LastModified, isMultipart, envelopeHeader, storedGen)
 		}
@@ -576,7 +576,7 @@ func (h *Handlers) GetObject(w http.ResponseWriter, r *http.Request, bucket, key
 	// Full object download - dispatch based on version and multipart status
 	if isMultipart && armorMeta.Version == 3 {
 		prefixedKey := h.applyPrefix(key)
-		h.handleV3MultipartGet(w, r, bucket, key, prefixedKey, decryptor, armorMeta, plaintextSize, info.LastModified)
+		h.handleV3MultipartGet(w, r, bucket, key, prefixedKey, decryptor, armorMeta, plaintextSize, info.LastModified, storedGen)
 	} else {
 		h.handleFullObjectStream(w, r, bucket, key, decryptor, armorMeta, plaintextSize, info.LastModified, isMultipart, multipartPartSize, isNonUniform, cumulativePartSizes, envelopeHeader, storedGen, singleFetchEnvelope)
 	}

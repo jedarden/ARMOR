@@ -192,10 +192,19 @@ impossible without it — there is no geometry fallback.
    succeeds and before the object manifest is written (§6). v3 uploads save
    the per-part structure; v1/v2 uploads save the flattened table.
 2. **Read on every GET/Range** of a multipart object, through the §3.1 probe
-   order. The server caches sidecars in process keyed by
-   `(bucket, prefixed ciphertext key, etag)`
-   (`internal/backend/multipart_sidecar_cache.go`) so repeated range reads
-   cost one backend GET.
+   order. The server caches sidecars in process keyed by the stored-object
+   generation of the ciphertext HEAD the request already performed — the same
+   `(VersionID, ETag, StoredSize, LastModified)` tuple the v3 block-table
+   cache keys on — plus `(bucket, prefixed ciphertext key)`. The composite
+   multipart ETag deliberately plays no part in the key: it is a pure
+   function of the plaintext, so a same-plaintext overwrite reproduces it
+   while replacing the ciphertext and every block HMAC, and a cache keyed on
+   it would serve the previous generation's sidecar to the first GET after
+   the overwrite (an HMAC-verification failure at part 1 block 0;
+   armor-a6d3dd64). A request with no stored-generation identity bypasses the
+   cache rather than sharing an entry across generations
+   (`internal/backend/multipart_sidecar_cache.go`), so repeated range reads
+   still cost one backend GET.
 3. **Never re-written** by the server afterwards. Rotation and migration
    rewrite the *ciphertext* and its metadata but leave the sidecar untouched —
    its name is a function of the client key, which does not change.

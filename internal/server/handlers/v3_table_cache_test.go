@@ -383,7 +383,7 @@ func TestV3MultipartRangeFooterCacheHit(t *testing.T) {
 	start := plaintextSize - int64(len("PAR1-FOOTER-BYTES"))
 	r := httptest.NewRequest("GET", "/bucket/key", nil)
 	w := httptest.NewRecorder()
-	h.handleV3MultipartRangeRequest(w, r, "bucket", "key", "prefixed/key", decryptor, armorMeta, plaintextSize, time.Now(), start, plaintextSize-1)
+	h.handleV3MultipartRangeRequest(w, r, "bucket", "key", "prefixed/key", decryptor, armorMeta, plaintextSize, time.Now(), start, plaintextSize-1, v3TableKeyParts{})
 
 	if w.Code != 206 {
 		t.Fatalf("status = %d, body %s", w.Code, w.Body.String())

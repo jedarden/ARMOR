@@ -30,6 +30,10 @@ type v3RangeFixture struct {
 	plaintext  []byte
 	partPlain  [][]byte
 	partCipher [][]byte
+	// gen is the stored-object generation the fixture's handler calls pass as
+	// the sidecar cache version — the production caller derives it from the
+	// authoritative ciphertext HEAD (armor-a6d3dd64).
+	gen v3TableKeyParts
 }
 
 const v3RangeETag = "etag-v3-range-test"
@@ -90,10 +94,12 @@ func newV3RangeFixture(t *testing.T, blocksPerPart []int, blockSize int) *v3Rang
 	}
 
 	fx.sidecar = sidecar
-	if err := fx.cache.Set("bucket", "prefixed/key", v3RangeETag, sidecar); err != nil {
+	fx.gen = v3TableKeyParts{ETag: v3RangeETag, StoredSize: int64(len(fx.ciphertext))}
+	genKey := fx.gen.key("bucket", "prefixed/key")
+	if err := fx.cache.Set(genKey, sidecar); err != nil {
 		t.Fatalf("cache.Set: %v", err)
 	}
-	fx.entry = fx.cache.Get("bucket", "prefixed/key", v3RangeETag)
+	fx.entry = fx.cache.Get(genKey)
 	if fx.entry == nil {
 		t.Fatal("sidecar cache entry missing after Set")
 	}
@@ -214,7 +220,7 @@ func runV3RangeHandler(t *testing.T, fx *v3RangeFixture, beb backend.Backend, ra
 
 	r := httptest.NewRequest("GET", "/bucket/key", nil)
 	w := httptest.NewRecorder()
-	h.handleV3MultipartRangeRequest(w, r, "bucket", "key", "prefixed/key", decryptor, armorMeta, int64(len(fx.plaintext)), time.Now(), rangeStart, rangeEnd)
+	h.handleV3MultipartRangeRequest(w, r, "bucket", "key", "prefixed/key", decryptor, armorMeta, int64(len(fx.plaintext)), time.Now(), rangeStart, rangeEnd, fx.gen)
 	return w
 }
 
@@ -342,10 +348,11 @@ func TestV3MultipartRunCiphertextOffsetBeyondUint32(t *testing.T) {
 	}
 
 	cache := backend.NewMultipartSidecarCache(10, 60)
-	if err := cache.Set("bucket", "prefixed/key", v3RangeETag, sidecar); err != nil {
+	genKey := (v3TableKeyParts{ETag: v3RangeETag}).key("bucket", "prefixed/key")
+	if err := cache.Set(genKey, sidecar); err != nil {
 		t.Fatalf("cache.Set: %v", err)
 	}
-	entry := cache.Get("bucket", "prefixed/key", v3RangeETag)
+	entry := cache.Get(genKey)
 	if entry == nil {
 		t.Fatal("sidecar cache entry missing after Set")
 	}

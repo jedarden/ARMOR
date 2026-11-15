@@ -19,7 +19,11 @@ const defaultSidecarCacheMaxBytes = 64 << 20
 
 // MultipartSidecarCache is a cache for v3 multipart sidecar data.
 // It stores parsed sidecar information with prefix sums for efficient range mapping.
-// Cache entries are invalidated when the object's ETag changes (object overwritten).
+// Entries are keyed by the caller-rendered stored-object generation (the same
+// v3TableKeyParts tuple the v3 block-table cache uses), so an overwrite —
+// including a same-plaintext re-upload, whose composite multipart ETag is a
+// pure function of the plaintext and therefore unchanged — simply lands on a
+// new key and the stale generation's entry is never hit again (armor-a6d3dd64).
 // Bounded by entries and total bytes via the shared lruCache.
 type MultipartSidecarCache struct {
 	lru *lruCache[*MultipartSidecarEntry]
@@ -28,7 +32,6 @@ type MultipartSidecarCache struct {
 // MultipartSidecarEntry represents a cached v3 multipart sidecar.
 type MultipartSidecarEntry struct {
 	Sidecar         *HMACTableSidecarV3
-	ETag            string  // ETag of the object when cached
 	PartPrefixSums  []int64 // Cumulative plaintext lengths per part: [0, len(part1), len(part1)+len(part2), ...]
 	BlockPrefixSums [][]int64
 	// Per-part cumulative ciphertext lengths per block. int64, not uint32:
@@ -104,31 +107,38 @@ func (c *MultipartSidecarCache) Stats() CacheStats {
 	return c.lru.stats()
 }
 
-// Get retrieves cached sidecar data for an object.
-// Returns nil if not cached, expired, or ETag doesn't match (object was overwritten).
-func (c *MultipartSidecarCache) Get(bucket, key, etag string) *MultipartSidecarEntry {
-	entry, ok := c.lru.get(cacheKey(bucket, key), func(e *MultipartSidecarEntry) bool {
-		// ETag coherence: the object may have been overwritten since this
-		// entry was written.
-		return e.ETag == etag
-	})
+// Get retrieves cached sidecar data for a rendered stored-object generation
+// key. An empty key never hits: callers without an authoritative stored-object
+// HEAD must not share entries across requests. Returns nil if not cached or
+// expired.
+func (c *MultipartSidecarCache) Get(genKey string) *MultipartSidecarEntry {
+	if genKey == "" {
+		return nil
+	}
+	entry, ok := c.lru.get(genKey, func(*MultipartSidecarEntry) bool { return true })
 	if !ok {
 		return nil
 	}
 	return entry
 }
 
-// Set stores sidecar data in the cache.
-func (c *MultipartSidecarCache) Set(bucket, key, etag string, sidecar *HMACTableSidecarV3) error {
+// Set stores sidecar data under a rendered stored-object generation key.
+// An empty key is refused: a sidecar cached without a generation would be
+// shared by every later request for the object, pairing one stored object's
+// block HMACs with another's ciphertext (armor-a6d3dd64).
+func (c *MultipartSidecarCache) Set(genKey string, sidecar *HMACTableSidecarV3) error {
+	if genKey == "" {
+		return fmt.Errorf("refusing to cache a v3 sidecar without a stored-object generation key")
+	}
+
 	// Build prefix sums
 	partPrefixSums, blockPrefixSums, ciphertextPrefixSums, err := buildPrefixSums(sidecar)
 	if err != nil {
 		return fmt.Errorf("failed to build prefix sums: %w", err)
 	}
 
-	c.lru.set(cacheKey(bucket, key), &MultipartSidecarEntry{
+	c.lru.set(genKey, &MultipartSidecarEntry{
 		Sidecar:              sidecar,
-		ETag:                 etag,
 		PartPrefixSums:       partPrefixSums,
 		BlockPrefixSums:      blockPrefixSums,
 		CiphertextPrefixSums: ciphertextPrefixSums,
@@ -137,9 +147,12 @@ func (c *MultipartSidecarCache) Set(bucket, key, etag string, sidecar *HMACTable
 	return nil
 }
 
-// Delete removes an entry from the cache.
-func (c *MultipartSidecarCache) Delete(bucket, key string) {
-	c.lru.remove(cacheKey(bucket, key))
+// Delete removes the entry for a rendered stored-object generation key.
+func (c *MultipartSidecarCache) Delete(genKey string) {
+	if genKey == "" {
+		return
+	}
+	c.lru.remove(genKey)
 }
 
 // Clear removes all entries from the cache.
